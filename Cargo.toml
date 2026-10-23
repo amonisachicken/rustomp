@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rustomp-plugin", "tools/netlist/nlgen"]
+members = ["crates/rustomp-dsp", "crates/rustomp-plugin", "tools/netlist/nlgen"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,6 +8,9 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["amonisachicken"]
 repository = "https://github.com/amonisachicken/rustomp"
+
+[workspace.dependencies]
+rustomp-dsp = { path = "crates/rustomp-dsp" }
 
 [profile.release]
 opt-level = 3

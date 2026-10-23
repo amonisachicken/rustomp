@@ -1,0 +1,9 @@
+[package]
+name = "rustomp-dsp"
+description = "rustomp 的电路建模 DSP 核心（WDF + 牛顿法）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
