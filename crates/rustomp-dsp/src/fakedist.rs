@@ -33,6 +33,16 @@
 
 use crate::diode::Diode1n4148;
 
+/// 牛顿迭代上限
+const MAX_NEWTON_ITERS: u32 = 24;
+/// 残差收敛阈值（安培）
+const NEWTON_TOL: f64 = 1e-10;
+/// 牛顿单步最大电压变化（阻尼，防止瞬态把解甩飞）
+const MAX_STEP: f64 = 0.10;
+/// 状态变量绝对值上限（电容电压 / 支路电流）
+const MAX_STATE: f64 = 60.0;
+const MAX_CURRENT: f64 = 10.0;
+
 /// 元件值（Ω / F），全部来自网表。
 #[derive(Debug, Clone, Copy)]
 pub struct ComponentValues {
@@ -132,6 +142,8 @@ pub struct Fakedist {
     v_out: f64,
     d_prev: f64,
     v_inm_prev: f64,
+    /// 上一次求解用掉的牛顿迭代次数（诊断用）
+    pub last_iters: u32,
 }
 
 impl Fakedist {
@@ -169,6 +181,7 @@ impl Fakedist {
             v_out: 0.5 * 4.5,
             d_prev: 0.0,
             v_inm_prev: 0.5 * 4.5,
+            last_iters: 0,
         };
         s.recompute();
         s.reset();
@@ -263,42 +276,57 @@ impl Fakedist {
         let g_f = 1.0 / rf;
 
         // 牛顿求 F(v_inm) = i_branch + (u)/Rf + i_clip(u) = 0，u = (1+beta)*v_inm - A
+        //
+        // 三步防护（缺一不可，见 DEVLOG E12）：
+        //   1. **阻尼**：单步不超过 MAX_STEP，否则大信号瞬态时会被指数项甩飞；
+        //   2. **残差判据**：收敛要求残差确实变小，不能只看步长；
+        //   3. **失败兜底**：跑到迭代上限仍未收敛 → 判定为运放饱和，令 u = 0
+        //      （v_inm = v_out），而不是把发散的数值写进状态。
         let mut v_inm = self.v_inm_prev;
-        for _ in 0..12 {
+        let mut converged = false;
+        self.last_iters = 0;
+        for _ in 0..MAX_NEWTON_ITERS {
+            self.last_iters += 1;
             let u = (1.0 + self.beta) * v_inm - a;
             let i_br = self.g_branch * (v_inm - self.vc2) - self.i2 * self.g2_r5_inv;
             let (i_cl, g_cl) = self.clipper(u);
             let f = i_br + u * g_f + i_cl;
+            if f.abs() <= NEWTON_TOL {
+                converged = true;
+                break;
+            }
             let df = self.g_branch + (1.0 + self.beta) * (g_f + g_cl);
-            let step = f / df;
+            let mut step = f / df;
+            step = step.clamp(-MAX_STEP, MAX_STEP);
             v_inm -= step;
-            if step.abs() <= 1e-9 * (1.0 + v_inm.abs()) {
+            if !v_inm.is_finite() {
                 break;
             }
         }
+        if !converged {
+            // 兜底：运放饱和，反馈节点跟随输出，不再产生巨大电流
+            v_inm = a / (1.0 + self.beta);
+        }
         let i_br = self.g_branch * (v_inm - self.vc2) - self.i2 * self.g2_r5_inv;
 
-        // 更新 R5+C2 分支状态
-        self.i2 = i_br;
-        self.vc2 = v_inm - c.r5 * i_br;
+        // 更新 R5+C2 分支状态（限幅：物理上电容电压不可能超过供电量级）
+        self.i2 = i_br.clamp(-MAX_CURRENT, MAX_CURRENT);
+        self.vc2 = (v_inm - c.r5 * i_br).clamp(-MAX_STATE, MAX_STATE);
 
         // ---------- 3. 运放输出 ----------
-        let v_out_prev = self.v_out;
+        // 注意：这里**不能**对 v_out 做硬钳位。
+        // 之前 clamp(0,9) 在状态里造成前后不一致（求解时没钳、存下来却钳了），
+        // 一旦瞬态把输出推到轨外，就会锁死成 ~10 kHz 极限环。
+        // 物理上限由反馈环里的二极管负责，不需要再补一刀。
         self.v_out = a - self.beta * v_inm;
-        // 供电路由钳位（OP07 单电源，输出不可能超出 0..9V）
-        self.v_out = self.v_out.clamp(0.0, 9.0);
-        // 压摆率限制（只在极端情况下起作用）
-        self.v_out = self
-            .v_out
-            .clamp(v_out_prev - self.slew_step, v_out_prev + self.slew_step);
         self.d_prev = v_inp - v_inm;
         self.v_inm_prev = v_inm;
 
         // ---------- 4. 输出级：C3 + LEVEL 电位器 ----------
         let g3 = 2.0 * c.c3 / t;
         let n1 = (g3 * (self.v_out - self.vc3) - self.i3) / (g3 + 1.0 / self.r_level_total);
-        self.vc3 = self.v_out - n1;
-        self.i3 = n1 / self.r_level_total;
+        self.vc3 = (self.v_out - n1).clamp(-MAX_STATE, MAX_STATE);
+        self.i3 = (n1 / self.r_level_total).clamp(-MAX_CURRENT, MAX_CURRENT);
 
         // 抽头 = 分压比 = 位置（线性电位器）
         n1 * self.params.level
@@ -312,6 +340,7 @@ impl Fakedist {
             vc1: self.vc1,
             vc2: self.vc2,
             vc3: self.vc3,
+            iters: self.last_iters,
         }
     }
 }
@@ -323,4 +352,5 @@ pub struct Probe {
     pub vc1: f64,
     pub vc2: f64,
     pub vc3: f64,
+    pub iters: u32,
 }

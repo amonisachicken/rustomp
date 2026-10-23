@@ -8,6 +8,9 @@ use crate::oversample::Oversampler4x;
 /// 过采样倍数。
 pub const OVERSAMPLING: usize = 4;
 
+/// 输出电平保护阈值（远超任何可能的合法信号）
+const GUARD_LIMIT: f64 = 100.0;
+
 /// 单声道处理引擎。
 pub struct Engine {
     dsp: Fakedist,
@@ -47,6 +50,9 @@ impl Engine {
     }
 
     /// 处理一个基带样本。
+    ///
+    /// 兜底：万一出现非有限值或离谱电平（数值意外），**立刻复位到直流工作点**
+    /// 并本样本输出静音。绝不让一个坏样本变成永久自激。
     #[inline]
     pub fn process(&mut self, x: f64) -> f64 {
         let mut up = [0.0f64; OVERSAMPLING];
@@ -54,7 +60,12 @@ impl Engine {
         for v in up.iter_mut() {
             *v = self.dsp.process(*v);
         }
-        self.os.downsample(&up)
+        let y = self.os.downsample(&up);
+        if !y.is_finite() || y.abs() > GUARD_LIMIT {
+            self.reset();
+            return 0.0;
+        }
+        y
     }
 
     /// 内部电路（测试/调试用）。
@@ -114,6 +125,67 @@ mod tests {
     #[test]
     fn latency_is_constant() {
         assert_eq!(Engine::latency_samples(), 15);
+    }
+
+    /// 瞬态鲁棒性（回归测试）：曾经在噪声突发 / 直流阶跃后锁死成 ~10 kHz 自激。
+    ///
+    /// 根因：牛顿在大信号下被指数项甩飞 → 状态被污染到 1e16 → 硬钳位维持成极限环。
+    /// 修复：阻尼牛顿 + 残差判据 + 失败兜底 + 去掉破坏一致性的 v_out 钳位。
+    #[test]
+    fn no_self_oscillation_after_transients() {
+        // 输入停止后，输出必须回落到接近 0；且全程有界
+        let cases: [(&str, Box<dyn Fn(usize, f64) -> f64>); 4] = [
+            ("直流阶跃", Box::new(|_, t: f64| if (1.0..2.0).contains(&t) { 3.0 } else { 0.0 })),
+            ("脉冲", Box::new(|_, t: f64| if (1.0..1.001).contains(&t) { 5.0 } else { 0.0 })),
+            ("噪声突发", Box::new(|i: usize, t: f64| {
+                if (1.0..2.0).contains(&t) {
+                    let mut s = i as u64;
+                    s ^= s << 13;
+                    s ^= s >> 7;
+                    s ^= s << 17;
+                    ((s % 2000) as f64 / 1000.0 - 1.0) * 2.0
+                } else {
+                    0.0
+                }
+            })),
+            ("方波", Box::new(|_, t: f64| if (t * 220.0).fract() < 0.5 { 2.0 } else { -2.0 })),
+        ];
+        for (name, gen) in cases.iter() {
+            for &gain in &[0.0, 0.5, 1.0] {
+                let fs = 48_000.0;
+                let mut e = Engine::new(fs);
+                e.set_params(Params { gain, level: 0.5 });
+                let n = (4.0 * fs) as usize;
+                let mut peak = 0.0f64;
+                let mut tail = 0.0f64;
+                let mut zc = 0u32;
+                let mut prev = 0.0;
+                for i in 0..n {
+                    let t = i as f64 / fs;
+                    let y = e.process(gen(i, t));
+                    assert!(y.is_finite(), "{name} gain={gain} 出现非有限值");
+                    peak = peak.max(y.abs());
+                    if i > n * 19 / 20 {
+                        tail = tail.max(y.abs());
+                        if (prev >= 0.0) != (y >= 0.0) {
+                            zc += 1;
+                        }
+                        prev = y;
+                    }
+                }
+                assert!(peak < 20.0, "{name} gain={gain} 电平失控 peak={peak}");
+                // 末尾 5% 是纯静音输入，方波除外（它一直在响）
+                if *name != "方波" {
+                    assert!(
+                        tail < 0.05,
+                        "{name} gain={gain} 输入停止后仍有 {tail:.3} 输出（自激）"
+                    );
+                } else {
+                    let zcr = zc as f64 / (n as f64 * 0.05);
+                    assert!(zcr < 0.05, "{name} gain={gain} 尾段过零率 {zcr:.3} 异常（自激）");
+                }
+            }
+        }
     }
 
     /// 宿主采样率 44.1k / 48k / 96k / 192k 下都必须给出同样的稳态结果。

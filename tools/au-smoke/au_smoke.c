@@ -122,6 +122,40 @@ static int verify_plist_declaration(const char *bundle, const char *want_type,
     return 0;
 }
 
+
+// 打印 AU 的通道/总线配置 —— 决定宿主把它当"效果器"还是"乐器"
+static void print_bus_info(AudioUnit inst) {
+    AudioComponentDescription desc;
+    AudioComponentGetDescription(AudioComponentInstanceGetComponent(inst), &desc);
+    printf("[info] 注册的组件类型: %c%c%c%c / %c%c%c%c / %c%c%c%c\n",
+           (int)(desc.componentType >> 24) & 0xff, (int)(desc.componentType >> 16) & 0xff,
+           (int)(desc.componentType >> 8) & 0xff, (int)desc.componentType & 0xff,
+           (int)(desc.componentSubType >> 24) & 0xff, (int)(desc.componentSubType >> 16) & 0xff,
+           (int)(desc.componentSubType >> 8) & 0xff, (int)desc.componentSubType & 0xff,
+           (int)(desc.componentManufacturer >> 24) & 0xff, (int)(desc.componentManufacturer >> 16) & 0xff,
+           (int)(desc.componentManufacturer >> 8) & 0xff, (int)desc.componentManufacturer & 0xff);
+
+    UInt32 n = 0, sz = sizeof(n);
+    if (AudioUnitGetProperty(inst, kAudioUnitProperty_BusCount, kAudioUnitScope_Input, 0, &n, &sz) == noErr)
+        printf("[info] 输入总线数: %u\n", (unsigned)n);
+    sz = sizeof(n);
+    if (AudioUnitGetProperty(inst, kAudioUnitProperty_BusCount, kAudioUnitScope_Output, 0, &n, &sz) == noErr)
+        printf("[info] 输出总线数: %u\n", (unsigned)n);
+
+    // 支持的通道组合
+    AUChannelInfo info[32];
+    UInt32 isz = sizeof(info);
+    if (AudioUnitGetProperty(inst, kAudioUnitProperty_SupportedNumChannels,
+                             kAudioUnitScope_Global, 0, info, &isz) == noErr) {
+        UInt32 cnt = isz / sizeof(AUChannelInfo);
+        printf("[info] SupportedNumChannels: %u 组\n", (unsigned)cnt);
+        for (UInt32 i = 0; i < cnt && i < 8; i++)
+            printf("        in=%d out=%d\n", info[i].inChannels, info[i].outChannels);
+    } else {
+        printf("[warn] 读不到 SupportedNumChannels\n");
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc < 6) {
         fprintf(stderr,
@@ -213,6 +247,7 @@ int main(int argc, char **argv) {
           "挂输入总线回调");
 
     CHECK(AudioUnitInitialize(inst), "AudioUnitInitialize（会真正加载内嵌 CLAP）");
+    print_bus_info(inst);
 
     // 读取参数数量，确认插件身份与参数链路
     AudioUnitParameterID ids[64];
