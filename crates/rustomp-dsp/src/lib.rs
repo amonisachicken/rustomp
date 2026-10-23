@@ -15,6 +15,6 @@ pub mod engine;
 pub mod oversample;
 
 pub use circuit::Circuit;
-pub use devices::{Bjt, Diode, AC127, AC128, BC549C, D_1N34A, D_1N4007, D_1N4148};
+pub use devices::{Bjt, Diode, Jfet, AC127, AC128, BC549C, D_1N34A, D_1N4007, D_1N4148, J201};
 pub use engine::Engine;
 pub use oversample::Oversampler4x;

@@ -2235,6 +2235,47 @@ BC549C 在 `Ic≈4.6 mA` 处偏 +0.67%。可能原因是未建模的 `Nk=0.6339`
 
 ---
 
+## E37：器件库第三块——JFET（Shichman-Hodges D3）（2026-10-23）
+
+### 37.1 模型内容
+
+`crates/rustomp-dsp/src/devices/jfet.rs`：
+
+```
+vov = Vgs − Vto
+饱和区 (vov ≤ Vds): Id = Beta·vov²·(1 + Lambda·Vds)
+三极管区 (vov > Vds): Id = Beta·Vds·(2·vov − Vds)·(1 + Lambda·Vds)
+```
++ 体电阻 `Rd/Rs`：因为电流只有一条通路，压降是 `Id` 的一维反馈，所以**只需标量牛顿**
+（比 BJT 的 2 维简单一个量级）。`vds < 0` 时按对称性交换漏源。
+库内型号：`J201`（`Beta=1.621m, Vto=-0.6, Lambda=2.236m, Rd=Rs=1`）。
+
+### 37.2 对拍结果：**完全一致（0.00%）**
+
+| 测试 | 点 | 误差 |
+|---|---|---|
+| 转移特性（Vds=5V，Vgs −0.55…0） | 5 点 | **+0.00%** |
+| 输出特性（Vgs=0，Vds 0.2/0.5/1/3） | 4 点 | **+0.00%** |
+
+注意三极管区那两点（Vds=0.2、0.5 V）也精确一致 —— 说明 `Rd/Rs` 的一维牛顿解法是对的
+（这两点若省掉体电阻会差 10~20%）。
+
+### 37.3 器件库当前状态
+
+| 器件 | 静态模型 | 对拍 |
+|---|---|---|
+| 二极管 `1N4148` / `1N34A` / `1N4007` | ✅ D2 | 0.00% |
+| BJT `BC549C` / `AC127` / `AC128` | ✅ D3 | ≤0.09%（BC549C 大电流点 0.67%） |
+| JFET `J201` | ✅ D3 | 0.00% |
+| MOSFET `2N7000` | ⬜ DSP 侧待做（SPICE 侧手写子电路已标定） | — |
+| 通用运放 | ⬜ 随 MNA 装配器 | — |
+
+### 37.4 下一步
+
+`Nmos`（DSP 侧，按已标定的 2N7000 参数）→ 运放 → **MNA 装配器**（那时器件模型才真正被"用起来"）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2503,6 +2544,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **器件库第三块：JFET**（E37）：Shichman-Hodges 静态 D3 + Rd/Rs 的一维牛顿；`J201` 转移/输出特性与 ngspice **0.00%**（含三极管区） |
 | 2026-10-23 | **器件库第二块：BJT**（E36）：Gummel-Poon 静态 D3（含 Rb/Re/Rc 的 2 维内层牛顿）+ BC549C/AC127/AC128；Ic 与 Ib 对拍：Ge 两管 ≤0.01%、BC549C ≤0.09%（大电流点 0.67%，疑 Nk 未建模，不猜）；踩坑三条（手推雅可比错、PNP 电压约定、Ib 测错） |
 | 2026-10-23 | **器件库第一块：二极管**（E35）：`devices/` 拆成 parsed/handwritten/reference 三段 + `build.sh`；手写 2N7000 子电路（Id@Vgs=5V=0.221A，Rds≈6Ω）与实测 1N4007（Cjo=15p）；Rust 侧通用 `Diode` + 三个型号，V-I 与 ngspice **误差 0.00%**（发现并修正 VT 应为 27°C） |
 | 2026-10-23 | **导入分立器件模型**（E34）：新增 `tools/meta/ltspice_models.py`（按 ngspice 参数白名单清洗），产出 `devices/{devices.lib,devices.json,REPORT.md}`；锗管/锗二极管/1N4007 均验证可用（Ge: Vbe=0.142V, hFE≈130；1N34A Vf@1mA=0.253V）；发现 2N7000 的 VDMOS 格式 ngspice 不支持，运放只有符号无模型 |

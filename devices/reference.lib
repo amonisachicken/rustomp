@@ -1,3 +1,4 @@
 * 参考模型（从 breadspice models.lib 迁入，GPL-3；用于对拍，保持自包含）
 .model 1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n)
 .model BC549C NPN(Is=7.049f Xti=3 Eg=1.11 Vaf=23.89 Bf=493.2 Ise=99.2f Ne=1.829 Ikf=.1542 Nk=.6339 Xtb=1.5 Br=2.886 Isc=7.371p Nc=1.508 Ikr=5.426 Rc=1.175 Cjc=5.5p Mjc=.3132 Vjc=.4924 Fc=.5 Cje=11.5p Mje=.6558 Vje=.5 Tr=10n Tf=420.3p Itf=1.374 Xtf=39.42 Vtf=10)
+.model J201 NJF(Beta=1.621m Betatce=-500m Rd=1 Rs=1 Lambda=2.236m Vto=-600m Vtotc=-2.5m Is=114.5f Xti=3 Cgd=4.667p M=227.1m Pb=500m Fc=500m Cgs=2.992p Kf=0.6042f Af=1)

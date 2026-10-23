@@ -246,6 +246,7 @@ could not find a valid modelname
 |---|---|---|
 | `D_1N4148` / `D_1N34A` / `D_1N4007` | `devices::Diode`（静态 **D2**：`Is / N / Rs`） | **V-I 与 ngspice 完全一致（0.00%）**，覆盖 1 µA~10 mA 五个数量级 |
 | `BC549C` / `AC127` / `AC128` | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc`） | **Ic 与 Ib 均对拍**：AC127/AC128 ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下） |
+| `J201` | `devices::Jfet`（静态 **D3**：Shichman-Hodges + `Rd/Rs`） | **转移 + 输出特性均 0.00%**（含三极管区 Vds=0.2/0.5 V） |
 
 > 精度说明（BJT）：
 > - 实现了 `Is/Bf/Nf/Vaf/Ikf/Ise/Ne/Br/Nr/Var/Ikr/Isc/Nc` 与 `Rb/Re/Rc`；

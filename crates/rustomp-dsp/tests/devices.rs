@@ -138,3 +138,38 @@ fn bjts_match_ngspice_dc() {
     compare_bjt(&oracle, rustomp_dsp::AC127, "AC127", true, &[0.05, 0.10, 0.15, 0.20]);
     compare_bjt(&oracle, rustomp_dsp::AC128, "AC128", false, &[0.05, 0.10, 0.15, 0.20]);
 }
+
+// ---------------------------------------------------------------- JFET
+
+#[test]
+fn jfet_matches_ngspice_dc() {
+    let Some(oracle) = Oracle::discover() else {
+        eprintln!("跳过：本机没有 ngspice");
+        return;
+    };
+    println!("\n=== J201：转移特性（Vds=5V，扫 Vgs）===");
+    let mut worst = 0.0f64;
+    for &vg in &[-0.55, -0.45, -0.30, -0.15, 0.0] {
+        let netlist = format!("{LIB}\nVG g 0 {vg}\nVD d 0 5\nJ1 d g 0 J201\n.op\n.end\n");
+        let raw = oracle.run_netlist(&netlist).expect("ngspice 运行失败");
+        let i_spice = raw.get("i(vd)").map(|v| v.last().unwrap().abs()).unwrap_or(0.0);
+        let i_ours = rustomp_dsp::J201.drain_current(vg, 5.0);
+        if i_spice < 1e-9 {
+            continue;
+        }
+        let rel = (i_ours - i_spice).abs() / i_spice;
+        worst = worst.max(rel);
+        println!("  Vgs={vg:+.2}  ngspice Id={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+    }
+    println!("=== J201：输出特性（Vgs=0，扫 Vds）===");
+    for &vd in &[0.2, 0.5, 1.0, 3.0] {
+        let netlist = format!("{LIB}\nVG g 0 0\nVD d 0 {vd}\nJ1 d g 0 J201\n.op\n.end\n");
+        let raw = oracle.run_netlist(&netlist).expect("ngspice 运行失败");
+        let i_spice = raw.get("i(vd)").map(|v| v.last().unwrap().abs()).unwrap_or(0.0);
+        let i_ours = rustomp_dsp::J201.drain_current(0.0, vd);
+        let rel = (i_ours - i_spice).abs() / i_spice;
+        worst = worst.max(rel);
+        println!("  Vds={vd:.1}  ngspice Id={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+    }
+    assert!(worst < 0.05, "J201 最大相对误差 {:.2}% 超过 5%", worst * 100.0);
+}
