@@ -1,0 +1,170 @@
+diff --git a/src/detail/auv2/auv2_base_classes.h b/src/detail/auv2/auv2_base_classes.h
+index 3dccebf..e2a643a 100644
+--- a/src/detail/auv2/auv2_base_classes.h
++++ b/src/detail/auv2/auv2_base_classes.h
+@@ -965,6 +965,8 @@ class WrapAsAUV2 : public ausdk::AUBase,
+   uint32_t _midi_preferred_dialect = 0;
+   uint32_t _midi_supported_dialects = 0;
+   bool _midi_wants_midi_input = false;  // takes any input
++  // rustomp patch: 是否真的具备 MIDI 能力（供 GetPropertyInfo 判断是否对外宣称 MIDI 属性）
++  bool hasMIDI() const { return _midi_wants_midi_input || !_midi_outports.empty(); }
+   bool _midi_understands_midi2 = false;
+   // rolling counter feeding the NoteInstanceID/note_id handed out by StartNote
+   int32_t _noteInstanceCounter = 0;
+diff --git a/src/wrapasauv2.cpp b/src/wrapasauv2.cpp
+index 2c451b6..c2af7ed 100644
+--- a/src/wrapasauv2.cpp
++++ b/src/wrapasauv2.cpp
+@@ -987,6 +987,9 @@ OSStatus WrapAsAUV2::GetPropertyInfo(AudioUnitPropertyID inID, AudioUnitScope in
+         }
+         break;
+       case kMusicDeviceProperty_InstrumentCount:
++        // rustomp patch: MusicDevice 专属属性。效果器宣称它会让 Logic
++        // 把插件当成乐器/音乐设备（只出现在软件乐器插槽）。
++        if (_autype != AUV2_Type::aumu_musicdevice) return kAudioUnitErr_InvalidProperty;
+         outDataSize = sizeof(UInt32);
+         outWritable = false;
+         return noErr;
+@@ -1007,12 +1010,14 @@ OSStatus WrapAsAUV2::GetPropertyInfo(AudioUnitPropertyID inID, AudioUnitScope in
+         return noErr;
+ #ifdef DUAL_SCHEDULING_ENABLED
+       case kMusicDeviceProperty_DualSchedulingMode:
++        if (_autype != AUV2_Type::aumu_musicdevice) return kAudioUnitErr_InvalidProperty;
+         outWritable = true;
+         outDataSize = sizeof(UInt32);
+         return noErr;
+         break;
+ #endif
+       case kMusicDeviceProperty_SupportsStartStopNote:
++        if (_autype != AUV2_Type::aumu_musicdevice) return kAudioUnitErr_InvalidProperty;
+         outWritable = true;
+         outDataSize = sizeof(UInt32);
+         return noErr;
+@@ -1027,28 +1032,37 @@ OSStatus WrapAsAUV2::GetPropertyInfo(AudioUnitPropertyID inID, AudioUnitScope in
+         return noErr;
+         break;
+ 
++      // rustomp patch (see patches/README.md):
++      // 只有当被托管的 CLAP 真的声明了 note port 时才对外宣称支持 MIDI 属性。
++      // 否则 Logic 会把一个纯音频效果器标记为 MIDIProtocol=1，
++      // 进而归类成 "MIDI 控制效果器"（在 Logic 里只出现在软件乐器插槽）。
+       case kAudioUnitProperty_MIDIOutputCallbackInfo:
++        if (_midi_outports.empty()) return kAudioUnitErr_InvalidProperty;
+         outDataSize = sizeof(CFArrayRef);
+         outWritable = false;
+         return noErr;
+         break;
+       case kAudioUnitProperty_MIDIOutputCallback:
++        if (_midi_outports.empty()) return kAudioUnitErr_InvalidProperty;
+         outWritable = true;
+         outDataSize = sizeof(AUMIDIOutputCallbackStruct);
+         return noErr;
+         break;
+ #if AUSDK_MIDI2_AVAILABLE
+       case kAudioUnitProperty_AudioUnitMIDIProtocol:
++        if (!hasMIDI()) return kAudioUnitErr_InvalidProperty;
+         outWritable = false;
+         outDataSize = sizeof(SInt32);
+         return noErr;
+         break;
+       case kAudioUnitProperty_MIDIOutputEventListCallback:
++        if (_midi_outports.empty()) return kAudioUnitErr_InvalidProperty;
+         outWritable = true;
+         outDataSize = sizeof(AUMIDIEventListBlock);
+         return noErr;
+         break;
+       case kAudioUnitProperty_HostMIDIProtocol:
++        if (!hasMIDI()) return kAudioUnitErr_InvalidProperty;
+         outWritable = true;
+         outDataSize = sizeof(SInt32);
+         return noErr;
+@@ -1465,8 +1479,14 @@ bool WrapAsAUV2::applyConfigurationFromBusFormats()
+ {
+   // Nothing to reconcile unless the PostConstructor probe found alternate
+   // layouts: without them ValidFormat pinned every bus to its port's count.
+-  if (_channelCapsCache.empty() || !_plugin->_ext._audioports ||
+-      !_plugin->_ext._configurable_audio_ports)
++  // rustomp patch: 也接受旧的 clap.audio-ports-config（nih-plug 只实现这个），
++  // 否则「支持 mono+stereo 的效果器」在 AU 侧只报 stereo，
++  // 宿主（如 Logic）会把它从单声道通道条的插入菜单里过滤掉。
++  if (_channelCapsCache.empty() || !_plugin->_ext._audioports)
++    return true;
++  const bool hasPortsConfig =
++      _plugin->_plugin->get_extension(_plugin->_plugin, CLAP_EXT_AUDIO_PORTS_CONFIG) != nullptr;
++  if (!_plugin->_ext._configurable_audio_ports && !hasPortsConfig)
+     return true;
+ 
+   // What the host settled on, every bus of it. AU elements map 1:1 to the CLAP
+@@ -1522,8 +1542,26 @@ bool WrapAsAUV2::applyConfigurationFromBusFormats()
+ 
+   if (!mismatch) return true;
+ 
+-  const bool applied = _plugin->_ext._configurable_audio_ports->apply_configuration(
+-      _plugin->_plugin, requests.data(), static_cast<uint32_t>(requests.size()));
++  bool applied = false;
++  if (_plugin->_ext._configurable_audio_ports)
++  {
++    applied = _plugin->_ext._configurable_audio_ports->apply_configuration(
++        _plugin->_plugin, requests.data(), static_cast<uint32_t>(requests.size()));
++  }
++  else if (auto apc = (const clap_plugin_audio_ports_config_t *)
++               _plugin->_plugin->get_extension(_plugin->_plugin, CLAP_EXT_AUDIO_PORTS_CONFIG))
++  {
++    // rustomp patch: 用 clap.audio-ports-config 的 select() 选到匹配的配置
++    const uint32_t numCfg = apc->count(_plugin->_plugin);
++    for (uint32_t ci = 0; ci < numCfg && !applied; ++ci)
++    {
++      clap_audio_ports_config_t cfg;
++      if (!apc->get(_plugin->_plugin, ci, &cfg)) continue;
++      if (cfg.main_input_channel_count != mainInChannels) continue;
++      if (cfg.main_output_channel_count != mainOutChannels) continue;
++      applied = apc->select(_plugin->_plugin, cfg.id);
++    }
++  }
+ 
+   if (!applied)
+   {
+@@ -2675,6 +2713,43 @@ void WrapAsAUV2::PostConstructor()
+     }
+   }
+ 
++  // rustomp patch：若插件没有实现 clap.configurable-audio-ports（nih-plug 只有较旧的
++  // clap.audio-ports-config），就用后者枚举可选布局。否则「支持 mono+stereo 的效果器」
++  // 在 AU 侧只会宣传 stereo，Logic 会把它从单声道通道条的插入菜单里过滤掉。
++  // 只处理「单主输入 + 单主输出」的常见情形；多总线插件不做臆测。
++  if (_channelCapsCache.empty() && _inputPortCache.size() == 1 &&
++      _outputPortCache.size() == 1)
++  {
++    auto apc = (const clap_plugin_audio_ports_config_t *)_plugin->_plugin->get_extension(
++        _plugin->_plugin, CLAP_EXT_AUDIO_PORTS_CONFIG);
++    if (apc)
++    {
++      const uint32_t numCfg = apc->count(_plugin->_plugin);
++      for (uint32_t ci = 0; ci < numCfg; ++ci)
++      {
++        clap_audio_ports_config_t cfg;
++        if (!apc->get(_plugin->_plugin, ci, &cfg)) continue;
++        const uint32_t in = cfg.main_input_channel_count;
++        const uint32_t out = cfg.main_output_channel_count;
++        if (in == 0 || out == 0) continue;
++        const bool already =
++            std::any_of(_channelCapsCache.begin(), _channelCapsCache.end(),
++                        [in, out](const ChannelCapsCache &c)
++                        { return c.inputChannels == in && c.outputChannels == out; });
++        if (already) continue;
++        ChannelCapsCache caps{};
++        caps.inputChannels = in;
++        caps.outputChannels = out;
++        caps.inputBusChannels.push_back(in);
++        caps.outputBusChannels.push_back(out);
++        _channelCapsCache.push_back(caps);
++      }
++      if (!_channelCapsCache.empty())
++        LOGINFO("[clap-wrapper] PostConstructor: {} layouts from clap.audio-ports-config",
++                _channelCapsCache.size());
++    }
++  }
++
+   // A plugin can legitimately declare no audio output ports (a note effect such
+   // as an arpeggiator, or a plugin with no audio-ports extension at all). The AU
+   // model — and auval / Logic — still require at least one audio output element

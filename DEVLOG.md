@@ -899,6 +899,38 @@ Logic 把「类型=aufx 且支持 MIDI」的插件归类为 **"MIDI 控制效果
 [ ok ] 未宣称支持 MIDI（纯音频效果器）→ Logic 会归到 Audio FX
 ```
 
+### 13.3c 还没解决：真正的原因是**声道布局**
+
+清缓存重扫后，用户反馈：**插件管理器里能看到、且正确归类为 effect**，
+但音频轨（单声道）的插入菜单里依然没有。
+
+→ 说明分类已经正确，问题在别处。继续查：
+
+| 检查 | 结果 |
+|---|---|
+| CLAP 的 `clap.audio-ports-config` | **2 个**：Stereo(2/2)、**Mono(1/1)** |
+| AU 的 `SupportedNumChannels` | **只有 1 组：{2,2}** ← 差异在这里 |
+
+**根因**：clap-wrapper 只通过 `clap.configurable-audio-ports`（新扩展）枚举可选布局，
+而 **nih-plug 只实现较旧的 `clap.audio-ports-config`**。于是 `_channelCapsCache` 为空，
+AU 退回按端口数推导 → 只报 `{2,2}`。Logic 的插入菜单按通道条声道数过滤：
+**单声道音轨需要 in=1 的配置**，我们没有 → 插件从菜单消失；
+插件管理器读静态信息，所以照常显示。也解释了"拖过去能用"（Logic 强行适配）。
+
+**修复**（同一补丁的第二部分）：
+
+- `PostConstructor()`：`_channelCapsCache` 为空且插件有 `clap.audio-ports-config` 时，
+  用它枚举布局（仅限「单主输入 + 单主输出」，多总线不臆测）；
+- `applyConfigurationFromBusFormats()`：宿主选定布局与某个 config 匹配时调用
+  `apc->select(plugin, cfg.id)` 真正切换（在 `activateCLAP` 之前，符合规范）。
+
+**验证**：
+
+```
+SupportedNumChannels: 2 组 → in=2 out=2 / in=1 out=1
+单声道渲染 RMS=0.354240 ✓    立体声渲染 RMS=0.354240 ✓
+```
+
 ### 13.4 用户侧还需做一步：清掉 Logic 里的旧缓存
 
 Logic 缓存里已经有错误的 `MIDIProtocol=1`，需要让它重新扫。两种办法（选一）：
@@ -1101,6 +1133,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **修复 Logic 菜单里找不到（E13 续）**：真因是声道布局——nih-plug 有 Mono+Stereo 两种 `audio-ports-config`，但 clap-wrapper 只认 `configurable-audio-ports`，导致 AU 只报 `{2,2}`，单声道音轨的插入菜单把它过滤掉。补丁让 wrapper 用 `audio-ports-config` 枚举并 `select()`；实测 AU 现在同时报 2/2 与 1/1，单/立体声渲染均正常 |
 | 2026-10-23 | **修复 Logic 分类错误**（E13）：clap-wrapper 无条件宣称 MIDI 属性 → Logic 缓存 `MIDIProtocol=1` → 被当成 MIDI 控制效果器只出现在软件乐器槽。用 `patches/0001-*` 让 AU 只在真有 note port 时才宣称 MIDI；au-smoke 增加该检查 |
 | 2026-10-23 | **修复自激 bug**（E12）：定位到牛顿无阻尼 + `v_out` 硬钳位不一致 + 状态无限幅，三者叠加导致瞬态后 ~10kHz 极限环；改为阻尼牛顿+残差判据+失败兜底+状态限幅+去掉钳位+引擎级复位。精度不变（h2 3.915→3.915），新增瞬态回归测试。同时取证：AU 是标准 `aufx`（1 进 1 出、{2,2}），Logic 插槽异常需对照实验 |
 | 2026-10-23 | **4x 过采样 + 插件接线完成**（E11）：`Rustomp Fuzz`（aufx/RFz1/Amch）已安装；发现 **1x 直接跑 48k 电路会失效**（3kHz 以上输出归零），4x 是正确性下限；THD 27.648% vs 基线 27.616% |

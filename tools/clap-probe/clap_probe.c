@@ -75,6 +75,20 @@ int main(int argc, char **argv) {
                 }
             }
         }
+        const clap_plugin_audio_ports_config_t *apc =
+            (const clap_plugin_audio_ports_config_t *)p->get_extension(p, CLAP_EXT_AUDIO_PORTS_CONFIG);
+        if (apc) {
+            uint32_t c = apc->count(p);
+            printf("    audio-ports-config 数量: %u\n", c);
+            for (uint32_t j = 0; j < c; j++) {
+                clap_audio_ports_config_t cfg;
+                if (apc->get(p, j, &cfg))
+                    printf("      [%u] id=%u name=%s in=%u out=%u\n", j, cfg.id, cfg.name,
+                           cfg.main_input_channel_count, cfg.main_output_channel_count);
+            }
+        } else {
+            printf("    没有 audio-ports-config 扩展\n");
+        }
         const clap_plugin_params_t *pp =
             (const clap_plugin_params_t *)p->get_extension(p, CLAP_EXT_PARAMS);
         if (pp) printf("    参数数: %u\n", pp->count(p));
