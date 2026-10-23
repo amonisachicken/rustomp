@@ -1,6 +1,6 @@
 [package]
 name = "rustomp-plugin"
-description = "rustomp 效果器插件的 nih-plug 外壳（M0 骨架）"
+description = "rustomp 插件外壳：nih-plug + egui（示例插件 Sparklin Drive）"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
