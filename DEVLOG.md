@@ -542,6 +542,85 @@ oracle 链路已经不存在"工具缺失"风险了：ngspice 能出 THD/频响/
 
 ---
 
+## E9：用 breadspice 生成权威网表并跑通基线（2026-10-23）✅
+
+用户提供了 `fakedist.bread`（breadspice 面包板工程）并指定**以它为准**。
+
+### 9.1 管线跑通（一条命令）
+
+```bash
+./scripts/make-netlist.sh circuits/fakedist    # .bread → circuit.json → netlist.cir
+./scripts/sim-baseline.sh circuits/fakedist    # op / ac / tran+THD / 波形统计
+```
+
+| 步骤 | 工具 | 产物 |
+|---|---|---|
+| `.bread` → `Circuit` JSON | `tools/netlist/bread_to_circuit.py`（复刻前端的 node→net 规则） | `circuit.json` |
+| `Circuit` → ngspice 网表 | `tools/netlist/nlgen`（**直接调用 breadspice 后端 `build_netlist`**，git 依赖锁 rev `eda7ef8`） | `netlist.cir`（21 器件） |
+| 网表 → 基线 | `scripts/sim-baseline.sh` + ngspice-47 | `baseline.txt` |
+
+复用面包板后端的 `build_netlist` 而不是自己重写：电位器展开成两段电阻、运放按引脚名排序、
+模型库注入这些细节由上游保证。
+
+### 9.2 电路识别（详见 `circuits/fakedist/CIRCUIT.md`）
+
+单电源 9V · OP07 单运放 · **反馈环内非对称二极管削波**：
+
+```
+IN ─C1 4.7n─► IN+ ─ OP07 ─ OUT ─C3 1µF─► P2 500k(LEVEL) ─► 出
+               │            │
+      R5 4.7k ─┴─ C2 47n    └─► P1 500k（可变电阻 = 增益）
+               │                  │
+              IN- ◄───────────────┘
+               └─ 削波环：D1(1 只) ∥ (D2+D3 串联反向)
+```
+
+三个**必须建模**的要点：
+
+1. **削波在反馈环里**（TS/RAT 式软削波），而非对地硬削波；增益本身被压缩。
+2. **1 只 vs 2 只二极管的非对称环** → 偶次谐波 + 直流偏移。
+   仿真里 `v(t5L)`（串联对的中点）在 3.88–4.91 V 摆动 → 证明该支路真在导通。
+3. **C3(1µF) × P2(500k) ≈ 0.5 s 的直流恢复** → "blocking distortion"，是音色的组成部分。
+
+### 9.3 基线数据（已入 `baseline.txt`）
+
+| 项 | 值 |
+|---|---|
+| DC 增益 | **1.0000**（C2 隔直，验证拓扑没错） |
+| 频响峰值 | **+28.42 dB @ 2.72 kHz**（P1=250k 时的理论值 1+250k/4.7k≈54×，再乘音量电位器 1/2 分压 ✓） |
+| −3 dB 带宽 | 682 Hz ~ 10.8 kHz（高频滚降来自 OP07 的 GBW 0.6MHz / 压摆率 0.25V/µs） |
+| THD @0.2 V 峰值 | **27.57 %** |
+| THD @1 mV 峰值 | **0.283 %**（≈线性 → 削波确实来自二极管） |
+| 输出摆幅（相对 4.5 V） | −1.04 / +0.62 V（**不对称**，1 vs 2 二极管 ✓） |
+
+### 9.4 踩坑
+
+**9.4.1 测量窗口太短会得到错的基线**
+非对称削波给 C3 充电，而放电时间常数 ≈ 0.5 s。只跑到 40 ms 时输出均值是 **−0.089 V**（还在充），
+跑到 3 s 才是 **+0.00001 V**。→ 基线脚本默认 `.tran 5u 3 2.98`（只保存最后 20 ms）。
+
+**9.4.2 保存全程 rawfile 会爆**
+`.tran 1u 3 0` 在 1 µs 步长下产生 300 万点、**2.38 GB** rawfile、77 秒。
+用 `start` 参数只保存尾窗 → 3.1 MB / 5.9 秒。**以后再也不要 `-r` 保存全程。**
+
+**9.4.3 ngspice ASCII rawfile 的格式细节**
+`Values:` 之后**只有每个数据点的第一行带序号**（`0<TAB><TAB>v0`），后续变量行只有值；
+且点序号是 0,1,2… 递增（不是每点都写 0）。我第一版解析器按"每行都有序号"写，结果解析出 0 个点。
+→ `tools/oracle/spice_raw.py` 已按正确规则实现，是后续所有对拍的基础。
+
+**9.4.4 节点名大小写**
+网表里写 `n_t27R`，ngspice 输出里一律小写 `n_t27r`。比对时要统一转小写
+（`sim-baseline.sh` 已处理，否则 grep 不到输出节点）。
+
+### 9.5 待确认（4 点，见 CIRCUIT.md §4）
+
+1. 三只二极管的环是否有意（1 vs 2 非对称）？
+2. P1/P2 的 taper（A/B/C）？
+3. 基准测试用电位器的哪个位置（网表里是 50% = 250k）？
+4. 单电源 9V、V− 接地，确认？
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -723,6 +802,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **breadspice 管线跑通 + 基线建立**（E9）：`.bread → circuit.json → netlist.cir → op/ac/tran+THD` 一条命令；电路识别为「OP07 反馈环非对称二极管削波」；基线 THD 27.57%@0.2V、峰值增益 +28.42dB@2.72kHz；发现 0.5s 直流恢复（blocking distortion）与 3 个测量/解析坑 |
 | 2026-10-23 | **ngspice 验证并装进 PATH**（E8）：ngspice-47 可用，`.tran`/`.four`(THD)/ASCII rawfile 实测通过；新增 `scripts/build-ngspice.sh`、`tools/oracle/smoke/`（含基线数字：1kHz/1V/10k/47nF → THD 0.3538%，基波 0.3199V） |
 | 2026-10-23 | **导入 v1 网表**（E7）：判定为 EasyEDA Pro / PADS-PowerPCB ASCII（非 SPICE），写了 `tools/netlist/easyeda_asc.py` 解析器，生成 `circuits/v1-fuzz/{netlist.json,NETLIST.md,CIRCUIT.md}`。发现 3 个硬问题：无 OP07/1N4148、LED2 与 1N4007 同向并联疑似符号方向相反、9 处元件值冲突 |
 | 2026-10-23 | **M0-a 完成**（E4）：workspace + nih-plug 空插件 + 通用二进制 CLAP/VST3 + clap-wrapper AUv2 + 安装 + 冒烟测试通过。新增 `scripts/fetch-third-party.sh`、`scripts/build-au.sh`、`tools/au-smoke`、`cmake/CMakeLists.txt`。踩坑：AudioUnitSDK 需 1.1.0、制造商码需大写、bundle id 被 nih-plug 写死、AU 参数名走 cfNameString。发现本机 registrar 缓存损坏（E5，新增 R13/R14/R15）。**ngspice-47 编译成功**（前置依赖：Homebrew readline 8.3，系统 4.2 无 `rl_reset_after_signal`） |

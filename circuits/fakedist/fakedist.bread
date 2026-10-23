@@ -1,0 +1,664 @@
+{
+  "format": "breadspice-bread",
+  "version": 1,
+  "items": [
+    {
+      "symbolId": "op07",
+      "instance": {
+        "id": "c1",
+        "kind": "opamp",
+        "refdes": "U1",
+        "value": "OP07",
+        "pins": [
+          {
+            "name": "OFFSET",
+            "x": -14.4,
+            "y": -14.4,
+            "node": "t9e"
+          },
+          {
+            "name": "IN-",
+            "x": -14.4,
+            "y": -4.8,
+            "node": "t10e"
+          },
+          {
+            "name": "IN+",
+            "x": -14.4,
+            "y": 4.8,
+            "node": "t11e"
+          },
+          {
+            "name": "V-",
+            "x": -14.4,
+            "y": 14.4,
+            "node": "t12e"
+          },
+          {
+            "name": "NC",
+            "x": 14.4,
+            "y": -14.4,
+            "node": "t9f"
+          },
+          {
+            "name": "V+",
+            "x": 14.4,
+            "y": -4.8,
+            "node": "t10f"
+          },
+          {
+            "name": "OUT",
+            "x": 14.4,
+            "y": 4.8,
+            "node": "t11f"
+          },
+          {
+            "name": "OFFSET",
+            "x": 14.4,
+            "y": 14.4,
+            "node": "t12f"
+          }
+        ],
+        "x": 446.64,
+        "y": 322.67999999999995,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "gnd",
+      "instance": {
+        "id": "c2",
+        "kind": "gnd",
+        "refdes": "G1",
+        "value": "",
+        "pins": [
+          {
+            "name": "gnd",
+            "x": 0,
+            "y": -8,
+            "node": "rail_Lm_25"
+          }
+        ],
+        "x": 363.2434387207031,
+        "y": 546.0722045898438,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "battery",
+      "instance": {
+        "id": "c3",
+        "kind": "power",
+        "refdes": "B1",
+        "value": "9",
+        "unit": "V",
+        "pins": [
+          {
+            "name": "+",
+            "x": 0,
+            "y": -10,
+            "node": "rail_Lp_11"
+          },
+          {
+            "name": "−",
+            "x": 0,
+            "y": 10,
+            "node": "rail_Lm_17"
+          }
+        ],
+        "x": 325.20233154296875,
+        "y": 394.1894836425781,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "vsine",
+      "instance": {
+        "id": "c4",
+        "kind": "vsine",
+        "refdes": "S1",
+        "value": "",
+        "pins": [
+          {
+            "name": "+",
+            "x": 0,
+            "y": -9,
+            "node": "t21a"
+          },
+          {
+            "name": "−",
+            "x": 0,
+            "y": 9,
+            "node": "rail_Lm_23"
+          }
+        ],
+        "x": 383.5320129394531,
+        "y": 451.9408264160156,
+        "rotation": 0,
+        "params": {
+          "freq": "1k",
+          "ac": "0.2",
+          "dc": "0",
+          "phase": "0"
+        }
+      }
+    },
+    {
+      "symbolId": "wire",
+      "instance": {
+        "id": "c5",
+        "kind": "wire",
+        "refdes": "W1",
+        "value": "",
+        "pins": [
+          {
+            "name": "1",
+            "x": 365.03999999999996,
+            "y": 337.08,
+            "node": "rail_Lm_10"
+          },
+          {
+            "name": "2",
+            "x": 393.84,
+            "y": 337.08,
+            "node": "t12a"
+          }
+        ],
+        "x": 384.24,
+        "y": 337.08,
+        "rotation": 0,
+        "color": "#2563eb"
+      }
+    },
+    {
+      "symbolId": "wire",
+      "instance": {
+        "id": "c6",
+        "kind": "wire",
+        "refdes": "W2",
+        "value": "",
+        "pins": [
+          {
+            "name": "1",
+            "x": 470.64,
+            "y": 317.88,
+            "node": "t10g"
+          },
+          {
+            "name": "2",
+            "x": 528.24,
+            "y": 298.68,
+            "node": "rail_Rp_6"
+          }
+        ],
+        "x": 485.03999999999996,
+        "y": 317.88,
+        "rotation": 0,
+        "color": "#2563eb"
+      }
+    },
+    {
+      "symbolId": "capacitor",
+      "instance": {
+        "id": "c7",
+        "kind": "capacitor",
+        "refdes": "C1",
+        "value": "4.7",
+        "unit": "nF",
+        "pins": [
+          {
+            "name": "1",
+            "x": 0,
+            "y": -9.45,
+            "node": "t11c"
+          },
+          {
+            "name": "2",
+            "x": 0,
+            "y": 9.45,
+            "node": "t21c"
+          }
+        ],
+        "x": 413.11956787109375,
+        "y": 380.0853576660156,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "resistor",
+      "instance": {
+        "id": "c9",
+        "kind": "resistor",
+        "refdes": "R2",
+        "value": "47",
+        "unit": "kΩ",
+        "pins": [
+          {
+            "name": "1",
+            "x": 0,
+            "y": -13.11,
+            "node": "rail_Rp_11"
+          },
+          {
+            "name": "2",
+            "x": 0,
+            "y": 13.11,
+            "node": "t19h"
+          }
+        ],
+        "x": 484.41143798828125,
+        "y": 373.322509765625,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "resistor",
+      "instance": {
+        "id": "c10",
+        "kind": "resistor",
+        "refdes": "R3",
+        "value": "47",
+        "unit": "kΩ",
+        "pins": [
+          {
+            "name": "1",
+            "x": 0,
+            "y": -13.11,
+            "node": "t19i"
+          },
+          {
+            "name": "2",
+            "x": 0,
+            "y": 13.11,
+            "node": "rail_Rm_21"
+          }
+        ],
+        "x": 488.9200134277344,
+        "y": 430.52508544921875,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "resistor",
+      "instance": {
+        "id": "c11",
+        "kind": "resistor",
+        "refdes": "R4",
+        "value": "470",
+        "unit": "kΩ",
+        "pins": [
+          {
+            "name": "1",
+            "x": 0,
+            "y": -13.11,
+            "node": "t11d"
+          },
+          {
+            "name": "2",
+            "x": 0,
+            "y": 13.11,
+            "node": "t19g"
+          }
+        ],
+        "x": 445.2431945800781,
+        "y": 376.9857482910156,
+        "rotation": 353.60078874314615
+      }
+    },
+    {
+      "symbolId": "potentiometer",
+      "instance": {
+        "id": "c12",
+        "kind": "potentiometer",
+        "refdes": "P1",
+        "value": "500",
+        "unit": "kΩ",
+        "pins": [
+          {
+            "name": "1",
+            "x": -19.44,
+            "y": 39.12,
+            "node": "t10a"
+          },
+          {
+            "name": "2",
+            "x": -0.24,
+            "y": 39.12,
+            "node": "t1a"
+          },
+          {
+            "name": "3",
+            "x": 23.76,
+            "y": 39.12,
+            "node": "t1a"
+          }
+        ],
+        "x": 247.9532928466797,
+        "y": 253.90065002441406,
+        "rotation": 270,
+        "params": {
+          "percent": "0.500"
+        }
+      }
+    },
+    {
+      "symbolId": "diode-1n4148",
+      "instance": {
+        "id": "c13",
+        "kind": "diode",
+        "refdes": "D1",
+        "value": "1N4148",
+        "pins": [
+          {
+            "name": "a",
+            "x": 0,
+            "y": -12,
+            "node": "t1b"
+          },
+          {
+            "name": "k",
+            "x": 0,
+            "y": 12,
+            "node": "t10b"
+          }
+        ],
+        "x": 393.3882141113281,
+        "y": 271.38922119140625,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "diode-1n4148",
+      "instance": {
+        "id": "c14",
+        "kind": "diode",
+        "refdes": "D2",
+        "value": "1N4148",
+        "pins": [
+          {
+            "name": "a",
+            "x": 0,
+            "y": -12,
+            "node": "t5c"
+          },
+          {
+            "name": "k",
+            "x": 0,
+            "y": 12,
+            "node": "t1d"
+          }
+        ],
+        "x": 415.97332763671875,
+        "y": 250.62545776367188,
+        "rotation": 180
+      }
+    },
+    {
+      "symbolId": "diode-1n4148",
+      "instance": {
+        "id": "c15",
+        "kind": "diode",
+        "refdes": "D3",
+        "value": "1N4148",
+        "pins": [
+          {
+            "name": "a",
+            "x": 0,
+            "y": -12,
+            "node": "t10c"
+          },
+          {
+            "name": "k",
+            "x": 0,
+            "y": 12,
+            "node": "t5b"
+          }
+        ],
+        "x": 413.7876892089844,
+        "y": 291.42437744140625,
+        "rotation": 180
+      }
+    },
+    {
+      "symbolId": "wire",
+      "instance": {
+        "id": "c16",
+        "kind": "wire",
+        "refdes": "W3",
+        "value": "",
+        "pins": [
+          {
+            "name": "1",
+            "x": 432.24,
+            "y": 231.48,
+            "node": "t1e"
+          },
+          {
+            "name": "2",
+            "x": 470.64,
+            "y": 327.47999999999996,
+            "node": "t11g"
+          }
+        ],
+        "x": 451.44,
+        "y": 231.48,
+        "rotation": 0,
+        "color": "#2563eb"
+      }
+    },
+    {
+      "symbolId": "resistor",
+      "instance": {
+        "id": "c17",
+        "kind": "resistor",
+        "refdes": "R5",
+        "value": "4.7",
+        "unit": "kΩ",
+        "pins": [
+          {
+            "name": "1",
+            "x": 0,
+            "y": -13.11,
+            "node": "t1f"
+          },
+          {
+            "name": "2",
+            "x": 0,
+            "y": 13.11,
+            "node": "t10d"
+          }
+        ],
+        "x": 440.0155944824219,
+        "y": 272.1177673339844,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "capacitor",
+      "instance": {
+        "id": "c18",
+        "kind": "capacitor",
+        "refdes": "C2",
+        "value": "47",
+        "unit": "nF",
+        "pins": [
+          {
+            "name": "1",
+            "x": 0,
+            "y": -9.45,
+            "node": "t1j"
+          },
+          {
+            "name": "2",
+            "x": 0,
+            "y": 9.45,
+            "node": "rail_Rm_6"
+          }
+        ],
+        "x": 509.9566345214844,
+        "y": 254.2682342529297,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "capacitor",
+      "instance": {
+        "id": "c19",
+        "kind": "capacitor",
+        "refdes": "C3",
+        "value": "1",
+        "unit": "µF",
+        "pins": [
+          {
+            "name": "1",
+            "x": 0,
+            "y": -9.45,
+            "node": "t11g"
+          },
+          {
+            "name": "2",
+            "x": 0,
+            "y": 9.45,
+            "node": "t24g"
+          }
+        ],
+        "x": 468.0648498535156,
+        "y": 362.4582824707031,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "potentiometer",
+      "instance": {
+        "id": "c20",
+        "kind": "potentiometer",
+        "refdes": "P2",
+        "value": "500",
+        "unit": "kΩ",
+        "pins": [
+          {
+            "name": "1",
+            "x": -19.44,
+            "y": 39.12,
+            "node": "rail_Rm_16"
+          },
+          {
+            "name": "2",
+            "x": -0.24,
+            "y": 39.12,
+            "node": "t27j"
+          },
+          {
+            "name": "3",
+            "x": 23.76,
+            "y": 39.12,
+            "node": "t24h"
+          }
+        ],
+        "x": 595.197265625,
+        "y": 450.2488098144531,
+        "rotation": 90,
+        "params": {
+          "percent": "0.500"
+        }
+      }
+    },
+    {
+      "symbolId": "oscilloscope",
+      "instance": {
+        "id": "c21",
+        "kind": "oscilloscope",
+        "refdes": "X1",
+        "value": "",
+        "pins": [
+          {
+            "name": "tip",
+            "x": 0,
+            "y": -8,
+            "node": "t27g"
+          },
+          {
+            "name": "gnd",
+            "x": 0,
+            "y": 8,
+            "node": "rail_Rm_25"
+          }
+        ],
+        "x": 506.6781311035156,
+        "y": 503.7974548339844,
+        "rotation": 0
+      }
+    },
+    {
+      "symbolId": "wire-curve",
+      "instance": {
+        "id": "c22",
+        "kind": "wire",
+        "refdes": "W4",
+        "value": "",
+        "pins": [
+          {
+            "name": "1",
+            "x": 355.44,
+            "y": 250.67999999999998,
+            "node": "rail_Lp_2"
+          },
+          {
+            "name": "2",
+            "x": 528.24,
+            "y": 241.07999999999998,
+            "node": "rail_Rp_1"
+          }
+        ],
+        "x": 374.64,
+        "y": 250.67999999999998,
+        "rotation": 0,
+        "control": {
+          "x": 381.0028076171875,
+          "y": 161.0135040283203
+        },
+        "color": "#2563eb"
+      }
+    },
+    {
+      "symbolId": "wire-curve",
+      "instance": {
+        "id": "c23",
+        "kind": "wire",
+        "refdes": "W5",
+        "value": "",
+        "pins": [
+          {
+            "name": "1",
+            "x": 365.03999999999996,
+            "y": 250.67999999999998,
+            "node": "rail_Lm_2"
+          },
+          {
+            "name": "2",
+            "x": 537.84,
+            "y": 260.28,
+            "node": "rail_Rm_3"
+          }
+        ],
+        "x": 384.24,
+        "y": 250.67999999999998,
+        "rotation": 0,
+        "control": {
+          "x": 484.8215637207031,
+          "y": 193.79837036132812
+        },
+        "color": "#2563eb"
+      }
+    }
+  ],
+  "sim": {
+    "analysis": "tran",
+    "params": {
+      "step": 0.00001,
+      "start": 0.19,
+      "duration": 0.01
+    },
+    "custom": true
+  }
+}

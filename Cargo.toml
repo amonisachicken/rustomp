@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rustomp-plugin"]
+members = ["crates/rustomp-plugin", "tools/netlist/nlgen"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,3 +1,6 @@
+> ⚠️ **已被 `../fakedist/` 取代（2026-10-23）。** 用户确认以 breadspice 工程 `fakedist.bread` 为准，
+> 本文件是早期基于 EasyEDA PCB 导出（`source.asc`）的解读，仅作历史参考。
+
 # v1 电路解读（**待核对**）
 
 > 来源：`source.asc`（EasyEDA Pro 导出的 PADS-PowerPCB ASCII，PCB 版）
