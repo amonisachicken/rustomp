@@ -1,0 +1,9 @@
+* 1N4148 削波级: Vin - Rs - + - C - gnd, + - D - gnd
+.model D1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n)
+V1 in 0 SIN(0 1 1k)
+Rs in out 10k
+C1 out 0 47n
+D1 out 0 D1N4148
+.tran 1u 20m 0
+.four 1k v(out)
+.end

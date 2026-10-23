@@ -45,7 +45,7 @@
 | SDK | MacOSX13.3.sdk 等可用 |
 | Cargo 源 | `~/.cargo/config.toml` 走 USTC 稀疏镜像 |
 | 其他 | clang/cmake/pkg-config/python3 均在（Homebrew） |
-| 已安装 | `ffmpeg 8.1.1` ✓、git ✓、cmake ✓、**`ngspice-47` @ `~/.local/ngspice/bin` ✓**（源码编译，见 E3）、Homebrew `readline 8.3`、`bison` |
+| 已安装 | `ffmpeg 8.1.1` ✓、git ✓、cmake ✓、**`ngspice-47` ✓（已链接到 `/usr/local/bin/ngspice`，见 E8）**、Homebrew `readline 8.3`、`bison` |
 | **未安装** | 完整 Xcode ✗（只有 CLT，不影响本次全部构建） |
 | 固定第三方 | `nih-plug` @ `de42101`（ISC）、`clap-wrapper` @ `806bba0`（MIT）、`clap` @ `1.2.9`（MIT）、`AudioUnitSDK` @ `1.1.0`（Apache-2.0） |
 | 网络 | 直连受限；需 `source ~/vpn.env` 后可用 github/raw.githubusercontent；Homebrew Tier 3 无 bottle |
@@ -502,6 +502,46 @@ OPO ─C3─► R6 ─┬─ D2(1N4007)─ GND      ← 硬削波
 
 ---
 
+## E8：ngspice 可用性验证 + 装进 PATH（2026-10-23）
+
+### 8.1 结果：可用 ✓
+
+| 项 | 值 |
+|---|---|
+| 可执行文件 | `~/.local/ngspice/bin/ngspice`（7.4 MB 安装） |
+| 版本 | **ngspice-47**，带 **KLU 直接法求解器** |
+| 系统级入口 | `/usr/local/bin/ngspice` → 上面那个的符号链接（zsh / bash 登录 shell 均可见） |
+| 编译选项 | `--without-x --disable-openmp --disable-debug --disable-tcl` |
+| 运行时依赖 | `/usr/local/opt/readline/lib/libreadline.8.dylib`（Homebrew readline 8.3）—— **`brew uninstall readline` 会让 ngspice 失效** |
+
+### 8.2 实测（不是"能启动"，是真跑出结果）
+
+电路：`Vin(1kHz, 1V) — Rs 10k — [C 47nF ∥ D 1N4148] — GND`，
+1N4148 模型取自 breadspice 的 `models.lib`。
+
+| 能力 | 状态 |
+|---|---|
+| `.tran` 瞬态 | ✓ 20008 点（`.tran 1u 20m`），耗时 0.06 s |
+| `.four` 傅里叶 / THD | ✓ **THD = 0.353802 %**，基波 0.319904 V，2 次 0.314%、3 次 0.145% |
+| `-r` **ASCII rawfile** | ✓（靠工作目录 `.spiceinit` 的 `set filetype=ascii`）—— 这正是 oracle 驱动要消费的格式 |
+| `.op` / `.dc` / `.ac` | ✓（breadspice 驱动已覆盖，未逐个复测） |
+| 交互式绘图（nutmeg `plot`） | ✗ 不可用（`--without-x`）。要看图请把 rawfile 导出后用 Python/matplotlib |
+
+### 8.3 已入库
+
+| 文件 | 用途 |
+|---|---|
+| `scripts/build-ngspice.sh` | 从源码到安装的一键脚本（含两处历史坑的注释：系统 readline 4.2、系统 bison 2.3） |
+| `tools/oracle/smoke/clipper_1n4148.cir` | 冒烟测试电路 |
+| `tools/oracle/smoke/README.md` | 两条命令 + 基线数据（THD 0.353802%、基波 0.319904 V），以后 WDF 对拍就拿这组数字 |
+
+### 8.4 对 M1/M2 的意义
+
+oracle 链路已经不存在"工具缺失"风险了：ngspice 能出 THD/频响/波形，能出可解析的 ASCII rawfile。
+剩下的工作是把 `rustomp-oracle` 写出来（喂网表 → 拿波形 → 与 WDF 逐样本/频谱比对）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -683,5 +723,6 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **ngspice 验证并装进 PATH**（E8）：ngspice-47 可用，`.tran`/`.four`(THD)/ASCII rawfile 实测通过；新增 `scripts/build-ngspice.sh`、`tools/oracle/smoke/`（含基线数字：1kHz/1V/10k/47nF → THD 0.3538%，基波 0.3199V） |
 | 2026-10-23 | **导入 v1 网表**（E7）：判定为 EasyEDA Pro / PADS-PowerPCB ASCII（非 SPICE），写了 `tools/netlist/easyeda_asc.py` 解析器，生成 `circuits/v1-fuzz/{netlist.json,NETLIST.md,CIRCUIT.md}`。发现 3 个硬问题：无 OP07/1N4148、LED2 与 1N4007 同向并联疑似符号方向相反、9 处元件值冲突 |
 | 2026-10-23 | **M0-a 完成**（E4）：workspace + nih-plug 空插件 + 通用二进制 CLAP/VST3 + clap-wrapper AUv2 + 安装 + 冒烟测试通过。新增 `scripts/fetch-third-party.sh`、`scripts/build-au.sh`、`tools/au-smoke`、`cmake/CMakeLists.txt`。踩坑：AudioUnitSDK 需 1.1.0、制造商码需大写、bundle id 被 nih-plug 写死、AU 参数名走 cfNameString。发现本机 registrar 缓存损坏（E5，新增 R13/R14/R15）。**ngspice-47 编译成功**（前置依赖：Homebrew readline 8.3，系统 4.2 无 `rl_reset_after_signal`） |
