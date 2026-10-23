@@ -7,7 +7,7 @@
 #   tran  瞬态 + THD（大信号、小信号各一次）
 #   stats 波形统计（min/max/pp/rms）
 #
-#   ./scripts/sim-baseline.sh plugins/sparklin-drive/circuit/netlist
+#   ./scripts/sim-baseline.sh plugins/my-drive/circuit/netlist
 #
 # 输出：<dir>/baseline.txt（同时打印到终端）
 set -euo pipefail
@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-DIR="${1:-plugins/sparklin-drive/circuit/netlist}"
+DIR="${1:?用法: $0 <插件项目>/circuit/netlist}"
 NET="$DIR/netlist.cir"
 [ -f "$NET" ] || { echo "找不到 $NET"; exit 1; }
 

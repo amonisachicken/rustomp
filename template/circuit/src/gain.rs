@@ -3,7 +3,7 @@
 //! 示例电路：**纯增益**（直通 × 增益）。
 //!
 //! 它存在的意义是让模板"能跑、能听、能测"：把这里换成你的真实电路即可。
-//! 真正的电路实现请参考 `plugins/sparklin-drive/circuit/src/fakedist.rs`
+//! 真正的电路实现请参考 `sparklin-drive-legacy` 仓库的 `circuit/src/fakedist.rs`
 //! （运放宏模型 + 反馈环内二极管削波 + 一维牛顿）。
 
 use rustomp_dsp::Circuit;

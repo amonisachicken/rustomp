@@ -5,6 +5,9 @@
 target/
 **/*.rs.bk
 
+# 下游插件项目（由 scripts/new-plugin.sh 生成，不入库）
+/plugins/
+
 # 构建产物
 /bundled/
 /build/

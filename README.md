@@ -66,12 +66,8 @@ crates/
   rustomp-gui/          框架：声明式面板 + 交互 + 纹理生命周期（不含素材）
   rustomp-oracle/       框架：ngspice 对拍（跑网表 / 解析 rawfile / 统一测量函数）
   rustomp-import/       框架：外部电路导入（IR + 可插拔 Importer，内置 breadspice）
-plugins/
-  sparklin-drive/       示例插件（= 下游项目的样板，结构同构）
-    rustomp.toml        身份 / 素材 / 界面坐标（唯一来源）
-    circuit/            电路实现 + 网表 + 对拍测试 + 分析脚本
-    plugin/             nih-plug 外壳 + egui 界面（build.rs 生成身份）
-    assets/             面板与拨杆贴图（含原始设计稿 source/）
+plugins/                下游插件项目的输出目录（new-plugin.sh 生成，不入库）
+                        ↑ 参考实现见独立仓库 sparklin-drive-legacy
 template/               脚手架模板（new-plugin.sh 用；与下游插件结构同构）
 tools/
   meta/                 rustomp.toml 读取器（身份/界面声明生成）
@@ -124,20 +120,20 @@ PLUGIN_DIR=$PWD/plugins/my-drive ./scripts/build-all.sh
 
 ## 电路建模的工作流
 
-以示例插件为例（路径都是插件项目内的相对位置）：
+以生成的项目 `plugins/my-drive` 为例：
 
 ```bash
 # 1) 面包板工程（.bread） → 中间表示 → SPICE 网表
-./scripts/make-netlist.sh plugins/sparklin-drive/circuit/netlist
+./scripts/make-netlist.sh plugins/my-drive/circuit/netlist
 
 # 2) ngspice 跑 op / ac / tran+THD / 波形统计，产出 baseline.txt
-./scripts/sim-baseline.sh plugins/sparklin-drive/circuit/netlist
+./scripts/sim-baseline.sh plugins/my-drive/circuit/netlist
 
 # 3) 与 DSP 实现对拍（不需要 ngspice 的快速回归）
-cargo test -p sparklin-drive-circuit --release
+cargo test -p my-drive-circuit --release
 
 # 4) 活体对拍（每次真的跑 ngspice；没装则自动跳过）
-cargo test -p sparklin-drive-circuit --release --test oracle
+cargo test -p my-drive-circuit --release --test oracle
 ```
 
 要接入**你自己的电路**：
@@ -147,7 +143,7 @@ cargo test -p sparklin-drive-circuit --release --test oracle
    放进 `<项目>/circuit/netlist/`，跑上面第 1、2 步拿到基线；
 3. 在 `<项目>/circuit/src/` 里实现 `rustomp_dsp::Circuit`
    （线性用梯形伴随模型 / 非线性用一维牛顿；参考
-   `plugins/sparklin-drive/circuit/src/fakedist.rs`）；
+   `sparklin-drive-legacy` 仓库的 `circuit/src/fakedist.rs`）；
 4. 写对拍测试把 h2–h9 锁住（参考示例的 `baseline.rs` 与 `oracle.rs`）；
 5. 在 `<项目>/plugin/src/lib.rs` 里挂参数，在 `rustomp.toml` 的 `[ui]` 里挂控件。
 
@@ -173,8 +169,8 @@ cargo test -p sparklin-drive-circuit --release --test oracle
 
 | 测试 | 是否跑 ngspice | 用途 |
 |---|---|---|
-| `plugins/sparklin-drive/circuit/tests/baseline.rs` | 否（期望值是抄下来的常量） | 日常回归，快 |
-| `plugins/sparklin-drive/circuit/tests/oracle.rs` | **是**（每次重跑） | 抓网表/电路改动，无 ngspice 时自动跳过 |
+| 插件项目里 `tests/baseline.rs` | 否（期望值是抄下来的常量） | 日常回归，快 |
+| 插件项目里 `tests/oracle.rs` | **是**（每次重跑） | 抓网表/电路改动，无 ngspice 时自动跳过 |
 
 > 基准一律从 **ngspice 原始波形**自己算 DFT，不用 `.four`
 > （它只取 1 个周期 + 线性插值，高次谐波偏低）。
@@ -248,7 +244,7 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 | 文档 | 内容 |
 |---|---|
 | **`DEVLOG.md`** | 开发日志（**最重要**）：每个决策、实测数据、踩坑与修复 |
-| `plugins/sparklin-drive/circuit/netlist/CIRCUIT.md` | 示例电路的逐级解读、建模要点、基线数据 |
+| `sparklin-drive-legacy` 仓库 | 参考实现（完整插件 + 电路解读 + 基线数据） |
 | `crates/rustomp-dsp/README.md` | DSP 核心设计、对拍结果、过采样必要性 |
 | `patches/README.md` | 三个宿主兼容补丁的原因与验证方法 |
 | `tools/oracle/smoke/README.md` | ngspice 冒烟测试的用法与基线数字 |

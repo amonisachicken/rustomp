@@ -1890,6 +1890,50 @@ cargo test  -p demo-drive-circuit --release          → 2 项通过
 
 ---
 
+## E30：Sparklin Drive 拆分为独立仓库（2026-10-23）
+
+鉴于框架接下来会转向「闭集器件模型 + 通用 MNA 装配器」，先把现有插件**冻结**出去：
+
+### 30.1 新仓库 `sparklin-drive-legacy`
+
+位置：`~/develop/sparklin-drive-legacy`（**独立 git 仓库**，首提交 `af2eaee`，1.2 MB 源码）。
+
+内容 = rustomp 在 `c960b47` 时的**完整快照**（用 `git archive HEAD` 导出，只含跟踪文件）：
+
+| 内容 | 说明 |
+|---|---|
+| `plugins/sparklin-drive/` | 插件项目本体（电路 / 外壳 / 素材 / 网表 / 对拍测试） |
+| `crates/rustomp-{dsp,gui,oracle,import}/` | 它依赖的框架 crate 快照 |
+| `cmake/ patches/ scripts/ tools/` | 构建链、第三方补丁、自检工具 |
+| `README.md` | **新写**：冻结说明、构建命令、冻结时的指标、目录说明 |
+| `DEVLOG.md` | 保留，并在开头标注"这是主仓库 DEVLOG 的快照，此后独立维护" |
+
+移除了与本仓库无关的 `template/`、`experiments/`、`.github/`。
+已验证 `cargo check --workspace` 通过 —— **可以脱离 rustomp 独立构建**。
+
+### 30.2 主仓库变为"纯框架"
+
+| 变化 | 说明 |
+|---|---|
+| `plugins/sparklin-drive/` | 已删除（`git rm`） |
+| workspace members | 只剩 `crates/rustomp-{dsp,gui,oracle,import}` |
+| `/plugins/` | 加入 `.gitignore` —— 现在是**下游项目的输出目录**（`new-plugin.sh` 生成） |
+| `scripts/plugin-env.sh` | 没有默认插件了：未指定 `PLUGIN_DIR` 时，若 `plugins/` 下恰好一个项目则自动使用，否则报错并给出提示 |
+| `make-netlist.sh` / `sim-baseline.sh` | 目录参数改为**必填** |
+| `rustomp-import` 测试 | 原来读插件的 `.bread`；改为自带 fixture `tests/data/fakedist.bread` |
+| README | 示例插件指向 `sparklin-drive-legacy`；工作流示例改用 `plugins/my-drive` |
+
+验证：`cargo test --workspace --release` 全绿（框架自身 6+3+1+6 项 + 文档测试）。
+
+### 30.3 两个仓库的分工
+
+| 仓库 | 定位 |
+|---|---|
+| **rustomp** | 框架本体：Circuit 契约、Engine、GUI 层、导入、对拍、脚手架。往下会引入 MNA 装配器与闭集器件库 |
+| **sparklin-drive-legacy** | 一个**已完成的插件**，冻结在 1-D WDF 求解器上，独立维护 |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2131,6 +2175,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **插件拆分为独立仓库**（E30）：`sparklin-drive-legacy`（独立 git 仓库，完整快照，可脱离框架构建）；主仓库变为纯框架，`/plugins/` 成为下游输出目录，脚本改为按 `PLUGIN_DIR` 定位 |
 | 2026-10-23 | **收尾 1/2/3**（E29）：历史残留归档到 `experiments/`（新增 README 说明不参与构建）；README 全文路径校对（脚本扫描 + 工作流一节重写）；新增 GitHub Actions CI（macOS，装 ngspice 则跑活体对拍，fmt 暂不阻塞）。本地 `cargo test --workspace --release` 17 个目标全绿 |
 | 2026-10-23 | **架构调整第 6 步：脚手架**（E28）：`template/` + `scripts/new-plugin.sh`，一条命令生成同构空插件并注册 workspace；实测生成的 Demo Drive `cargo check` 通过、测试 2 项通过 |
 | 2026-10-23 | **架构调整第 5 步：可插拔导入**（E27）：新增 `rustomp-import`（IR + `Importer` trait + breadspice 实现 + `--spice/--skeleton/--json` CLI）；生成的元件行与旧管线逐行一致，**删掉 nlgen 与 bread_to_circuit.py，框架不再依赖外部 git 仓库** |

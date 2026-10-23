@@ -3,7 +3,7 @@
 //! 引擎级冒烟测试：把电路套进框架的 `Engine<C>`。
 //!
 //! 换成真实电路后，建议再加一个"与 ngspice 活体对拍"的测试
-//! （参考 `plugins/sparklin-drive/circuit/tests/oracle.rs`）。
+//! （参考 `sparklin-drive-legacy` 仓库的 `tests/oracle.rs`）。
 
 use rustomp_dsp::Engine;
 use std::f64::consts::TAU;

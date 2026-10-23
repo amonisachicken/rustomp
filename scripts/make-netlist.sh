@@ -3,7 +3,7 @@
 #
 # 从 breadspice 面包板工程（*.bread）生成 ngspice 网表。
 #
-#   ./scripts/make-netlist.sh plugins/sparklin-drive/circuit/netlist
+#   ./scripts/make-netlist.sh plugins/my-drive/circuit/netlist
 #
 # 产物（都在目标目录下）：
 #   circuit.json   breadspice 后端的 Circuit 契约
@@ -13,7 +13,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-DIR="${1:-plugins/sparklin-drive/circuit/netlist}"
+DIR="${1:?用法: $0 <插件项目>/circuit/netlist}"
 BREAD=$(find "$DIR" -maxdepth 1 -name "*.bread" | head -1)
 [ -n "$BREAD" ] || { echo "在 $DIR 里找不到 *.bread"; exit 1; }
 

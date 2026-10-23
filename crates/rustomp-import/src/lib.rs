@@ -300,8 +300,8 @@ mod tests {
 
     #[test]
     fn imports_the_example_circuit() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../plugins/sparklin-drive/circuit/netlist/fakedist.bread");
+        // 测试用 fixture（从早期示例电路导出，作为"真实格式样本"保留）
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/fakedist.bread");
         let c = import_file(&path).expect("导入 fakedist.bread 失败");
         assert_eq!(c.format, "breadspice");
         assert_eq!(c.elements.len(), 22, "元件数不对：{}", c.summary());
