@@ -2,7 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # 清掉 Logic 对某个 AU 的能力缓存（必须**先退出 Logic**，否则退出时会把内存里的旧值写回）。
 set -euo pipefail
-KEYS=("aufx-SPm1-HpEf" "aufx-SPs1-HpEf" "aufx-SPd1-HpEf" \
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/plugin-env.sh"
+KEYS=("aufx-${AU_SUBTYPE_MONO}-${AU_MANUFACTURER}"
+      "aufx-${AU_SUBTYPE_STEREO}-${AU_MANUFACTURER}"
+      "aufx-${AU_SUBTYPE_DUAL}-${AU_MANUFACTURER}"
+      # 历史遗留（旧命名）
       "aufx-RFz1-Amch" "aufx-RFm1-Amch" "aufx-RFs1-Amch" "aufx-Rstp-Amch")
 PLIST="$HOME/Library/Preferences/com.apple.logic10.plist"
 

@@ -16,11 +16,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PKG="rustomp-plugin"
-PLUGIN_NAME="${RUSTOMP_PLUGIN_NAME:-Sparklin Drive}"
+source "$ROOT/scripts/plugin-env.sh"
 AU_TYPE="aufx"
-AU_SUBTYPE="${RUSTOMP_AU_SUBTYPE:-SPd1}"
-AU_MANUFACTURER="${RUSTOMP_AU_MANUFACTURER_CODE:-HpEf}"
-BUNDLE_ID="${RUSTOMP_BUNDLE_ID:-com.honeypieeffects.sparklindrive}"
+AU_SUBTYPE="${AU_SUBTYPE_DUAL}"
+BUNDLE_ID="${AU_BUNDLE_ID}"
 
 INSTALL=1
 RUN_AUVAL=1
@@ -40,6 +39,7 @@ fi
 
 # ---------------------------------------------------------------- 1. Rust
 echo "==> [1/7] 构建通用二进制 CLAP + VST3 (x86_64 + arm64)"
+./scripts/gen-bundler-toml.sh >/dev/null
 cargo nih-plug bundle-universal "$PKG" --release
 
 CLAP="target/bundled/${PLUGIN_NAME}.clap"
@@ -65,7 +65,7 @@ cmake -B build/au -S cmake \
       -DCLAP_BUNDLE="$ROOT/$CLAP" \
       -DRUSTOMP_AU_SUBTYPE="$AU_SUBTYPE" \
       -DRUSTOMP_AU_MANUFACTURER_CODE="$AU_MANUFACTURER" \
-      -DRUSTOMP_AU_MANUFACTURER_NAME="HONEYPIE EFFECTS" \
+      -DRUSTOMP_AU_MANUFACTURER_NAME="$AU_MANUFACTURER_NAME" \
       -DRUSTOMP_BUNDLE_ID="$BUNDLE_ID" \
       -DRUSTOMP_PLUGIN_NAME="$PLUGIN_NAME" > build/au/configure.log 2>&1 \
     || { tail -30 build/au/configure.log; exit 1; }

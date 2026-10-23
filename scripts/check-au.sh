@@ -11,9 +11,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-NAME="${RUSTOMP_PLUGIN_NAME:-Sparklin Drive Mono}"
-SUBTYPE="${RUSTOMP_AU_SUBTYPE:-SPm1}"
-MANU="${RUSTOMP_AU_MANUFACTURER_CODE:-HpEf}"
+source "$ROOT/scripts/plugin-env.sh"
+NAME="${PLUGIN_NAME} Mono"
+SUBTYPE="${AU_SUBTYPE_MONO}"
+MANU="${AU_MANUFACTURER}"
 COMP="$HOME/Library/Audio/Plug-Ins/Components/$NAME.component"
 
 if [ ! -d "$COMP" ]; then

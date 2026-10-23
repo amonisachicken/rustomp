@@ -1476,6 +1476,72 @@ CLAP: vendor = HONEYPIE EFFECTS
 
 ---
 
+## E23：架构调整 第 1 步 —— 身份抽离（2026-10-23）
+
+### 23.1 已确认的方向（ADR-011）
+
+| 决策 | 结论 |
+|---|---|
+| 框架是否无状态 | ✅ 是：框架里不含任何插件专属字符串/坐标/素材/参数 |
+| 分发模式 | **C 混合**：目录同构 + 脚手架生成 + 依赖指向框架 tag/rev |
+| 电路描述规范 | **A 声明式宏**；**拓扑暂由人给出**，逐步自动化 |
+| 许可证 | **保持 GPL-3**（只做开源） |
+| 仓库形态 | **单 repo**：`plugins/sparklin-drive` 作为示例插件子项目 |
+
+目标结构（9 个模块 → crate）：
+
+```
+rustomp-core      ① DSP 算法（牛顿 / 伴随模型 / 求解器框架）
+rustomp-elements  ② 元件库
+rustomp-circuit   ③ 电路描述规范（声明式宏 + 拓扑校验）
+rustomp-platform  ④ 插件格式适配（薄 trait，nih-plug 为首个实现）
+rustomp-gui       ⑤ 通用界面层（贴图 + 控件坐标表 + 交互 + 资源管线）
+rustomp-import    ⑥ 外部电路导入（trait + breadspice 实现）
+rustomp-oracle    ⑦ ngspice 对拍（Rust crate + 测试宏）
+scripts/ tools/   ⑧⑨ 参数化构建脚本、自检工具、第三方补丁
+template/         脚手架
+plugins/sparklin-drive/   示例插件（= 下游项目的样板）
+```
+
+### 23.2 第 1 步：身份抽离（已完成）
+
+新增 **`plugins/sparklin-drive/rustomp.toml`** —— 插件身份、素材路径、界面控件坐标的唯一来源：
+`[plugin]` 名字/厂商/CLAP id/VST3 id、`[au]` 四字符码与 bundle id、
+`[build]` 变体列表、`[assets]` 素材、`[ui]` 旋钮/拨杆/LED/按钮的坐标与参数。
+
+新增工具与脚本：
+
+| 文件 | 作用 |
+|---|---|
+| `tools/meta/plugin_meta.py` | 读 `rustomp.toml`，输出 `--shell` / `--json` / `--get` / `--rust`（只用标准库 `tomllib`） |
+| `scripts/plugin-env.sh` | `source` 后把身份/素材/界面配置载入为环境变量 |
+| `scripts/gen-bundler-toml.sh` | 由 `rustomp.toml` 生成 nih-plug 的 `bundler.toml`（该文件改为生成物，已加入 `.gitignore`） |
+
+`build-variant.sh` / `build-au.sh` / `check-au.sh` / `reset-logic-cache.sh` 全部改为**从 TOML 读取身份**，
+不再硬编码插件名与 AU 码。验证（未构建，仅解析）：
+
+```
+mono    → Sparklin Drive Mono    SPm1 / HpEf / ...sparklindrive.mono
+stereo  → Sparklin Drive Stereo  SPs1 / HpEf / ...sparklindrive.stereo
+dual    → Sparklin Drive         SPd1 / HpEf / ...sparklindrive
+厂商显示名: HONEYPIE EFFECTS      变体列表: mono stereo (dual=0)
+```
+
+本轮**没有重新构建**（Rust 侧尚未改动，已安装的插件不受影响），把 I/O 压到最低。
+
+### 23.3 后续步骤
+
+| 步 | 内容 | 状态 |
+|---|---|---|
+| 1 | 抽离身份 → `rustomp.toml` | ✅ |
+| 2 | 抽离电路：`fakedist.rs` 从 `rustomp-dsp` 移到插件；Rust 侧身份改由 `build.rs` 从 TOML 生成 | ⬜ 下一步 |
+| 3 | 拆 GUI：通用绘制/交互/纹理生命周期 → `rustomp-gui`；坐标表与素材留在插件 | ⬜ |
+| 4 | 抽 oracle → `rustomp-oracle` crate + 对拍测试宏 | ⬜ |
+| 5 | 抽导入 → `rustomp-import` trait + breadspice 实现 | ⬜ |
+| 6 | 建 `template/` 脚手架，验证"一键新建空插件" | ⬜ |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1572,6 +1638,20 @@ rustomp-plugin (nih-plug)  ──►  .clap
 - 必须用完整二极管模型（Is/N/**Rs**/Cjo/M/tt，见 E2 §3.9）。
 
 ---
+
+### ADR-011 架构调整：框架 / 插件分离 ✅ 已定（2026-10-23）
+
+**决定**：框架与插件项目分离，但保持**单 repo、结构同构**。
+
+- 框架**无状态**：不含任何插件专属信息；
+- 插件以 `plugins/<name>/rustomp.toml` + `circuit/` + `assets/` + 少量胶水代码构成；
+- 分发采用**混合模式**：脚手架生成同构目录，但依赖指向框架的 tag/rev（便于统一修 bug）；
+- 电路描述用**声明式宏**，拓扑初期由人给出；
+- 许可证保持 **GPL-3**。
+
+**理由**：纯 fork 模板会导致框架修复要在 N 个下游手工合并（本项目已踩过的
+`&mut self` 性能坑、牛顿容差、拨杆对齐等都会重复）；纯依赖库又会让插件难以定制。
+混合模式取两者之长。
 
 ### ADR-010 CPU 优化：只做数值等价项，多线程暂不启用 ✅ 已定
 

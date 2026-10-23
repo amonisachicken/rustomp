@@ -22,3 +22,6 @@ target/
 
 # pi harness 的会话脚本（环境产物，非项目代码）
 /pi.sh
+
+# 由 scripts/gen-bundler-toml.sh 从插件 rustomp.toml 生成
+/bundler.toml
