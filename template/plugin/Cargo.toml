@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "__SLUG__"
+description = "__NAME__ —— rustomp 插件（HONEYPIE EFFECTS）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "__SLUG_UNDERSCORE__"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+rustomp-dsp = { workspace = true }
+__SLUG__-circuit = { path = "../circuit" }
+rustomp-gui = { path = "../../../crates/rustomp-gui" }
+
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
+
+[features]
+default = []
+mono = []
+stereo = []
+assert_process_allocs = ["nih_plug/assert_process_allocs"]

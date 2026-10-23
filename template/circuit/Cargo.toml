@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "__SLUG__-circuit"
+description = "__NAME__ 的电路实现"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+rustomp-dsp = { workspace = true }

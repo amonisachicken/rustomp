@@ -1794,6 +1794,59 @@ AU：aufx / SPm1 / HpEf，4 参数，CocoaUI ✓，音频通路 ✓
 
 ---
 
+## E28：架构调整 第 6 步 —— 脚手架 `template/` + `new-plugin.sh`（2026-10-23）
+
+### 28.1 生成物
+
+```bash
+./scripts/new-plugin.sh "My Drive" [--vendor "厂商名"]
+# → plugins/my-drive/（与 plugins/sparklin-drive/ 结构同构）
+```
+
+生成的目录：
+
+```
+plugins/my-drive/
+  rustomp.toml            身份/素材/界面坐标（已填好名字与派生码）
+  circuit/                crate my-drive-circuit
+    src/gain.rs           纯增益示例电路（实现 Circuit）
+    tests/engine.rs       引擎级冒烟测试
+    netlist/              空目录，等你的网表
+  plugin/                 crate my-drive
+    src/lib.rs            插件外壳（参数 + GuiAccess + process + editor）
+    build.rs              从 rustomp.toml 生成 identity.rs / panel.rs
+  assets/panel.svg + @2x.png   占位面板（矢量 + 光栅化）
+```
+
+脚本会自动：派生包名/AU 四字符码/VST3 class id/CLAP id、替换模板占位符、
+把两个 crate 注册进 workspace，最后打印"还需人工做什么"。
+
+### 28.2 验收（实际跑过）
+
+```
+./scripts/new-plugin.sh "Demo Drive"
+cargo check -p demo-drive -p demo-drive-circuit      → 通过
+cargo test  -p demo-drive-circuit --release          → 2 项通过
+```
+
+验收后删除了 demo 目录（模板本身即示例；不需要在仓库里留一个会持续腐化的副本）。
+
+### 28.3 模板的"占位面板"
+
+`template/assets/panel.svg` 是一个极简面板（米白底 + 边框 + 一个旋钮圆），
+用 `inkscape --export-width=680` 光栅化成 `panel@2x.png`。
+将来换皮时替换这两份即可，**代码不动**（坐标来自 `rustomp.toml` 的 `[ui]`）。
+
+### 28.4 踩坑（又是同一个）
+
+`new-plugin.sh` 里 `echo "==> 生成 $DEST（..."` → bash 3.2 把全角括号当成变量名的一部分，
+报 `DEST: unbound variable`。**第 3 次踩同一个坑**（E24 已记录）。
+
+已在脚本里统一处理：`$VAR` 后面紧跟非 ASCII 字符时一律写 `${VAR}`。
+以后写脚本时直接遵守这条。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2035,6 +2088,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **架构调整第 6 步：脚手架**（E28）：`template/` + `scripts/new-plugin.sh`，一条命令生成同构空插件并注册 workspace；实测生成的 Demo Drive `cargo check` 通过、测试 2 项通过 |
 | 2026-10-23 | **架构调整第 5 步：可插拔导入**（E27）：新增 `rustomp-import`（IR + `Importer` trait + breadspice 实现 + `--spice/--skeleton/--json` CLI）；生成的元件行与旧管线逐行一致，**删掉 nlgen 与 bread_to_circuit.py，框架不再依赖外部 git 仓库** |
 | 2026-10-23 | **架构调整第 4 步：对拍接口**（E26）：新增 `rustomp-oracle`（ngspice 驱动 + ASCII rawfile 解析 + **变步长重采样** + 统一测量函数）；插件新增活体对拍测试，h2–h9 最大偏差 0.056 pp；删除 Python 解析器 |
 | 2026-10-23 | **架构调整第 3 步：通用界面层**（E25）：新增 `crates/rustomp-gui`（PanelSpec/控件/ParamAccess/纹理生命周期/draw），界面声明由 build.rs 从 rustomp.toml 生成；插件外壳 559→296 行，框架内无素材与坐标 |

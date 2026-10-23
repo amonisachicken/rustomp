@@ -81,6 +81,7 @@ tools/
   clap-probe/           最小 CLAP 宿主（查端口 / feature / 参数）
 patches/                第三方补丁（clap-wrapper 的宿主兼容修复）
 scripts/                构建、网表生成、基线仿真、自检、缓存清理
+template/               脚手架模板（new-plugin.sh 用）
 experiments/            一次性验证 spike（WDF 可行性）
 assets/                 插件界面素材（面板、拨杆）
 DEVLOG.md               开发日志：每个决策、实验数据、踩过的坑
@@ -108,6 +109,20 @@ DEVLOG.md               开发日志：每个决策、实验数据、踩过的�
 ```
 
 ---
+
+## 新建一个插件
+
+```bash
+./scripts/new-plugin.sh "My Drive"        # 生成 plugins/my-drive/（与示例同构）
+cd plugins/my-drive
+# 1) 改 rustomp.toml：名字 / AU 四字符码 / CLAP id / 素材 / 控件坐标
+# 2) 写电路：circuit/src/（从纯增益示例 Gain 换起）
+# 3) 生成网表与基线，做对拍：
+#      ./scripts/make-netlist.sh plugins/my-drive/circuit/netlist
+#      ./scripts/sim-baseline.sh plugins/my-drive/circuit/netlist
+# 4) 构建安装：
+PLUGIN_DIR=$PWD/plugins/my-drive ./scripts/build-all.sh
+```
 
 ## 电路建模的工作流
 

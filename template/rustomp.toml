@@ -1,0 +1,51 @@
+# __NAME__ —— 插件项目描述（由 rustomp 模板生成，请逐项填写）
+#
+# 框架只读这个文件，**不含任何插件专属信息**。
+
+[plugin]
+# cargo 包名（决定 bundler.toml 的键），建议小写短横线
+package = "__SLUG__"
+name = "__NAME__"
+vendor = "HONEYPIE EFFECTS"
+url = "https://github.com/amonisachicken/rustomp"
+email = ""
+# CLAP id（会按变体追加 .mono / .stereo）
+clap_id = "com.honeypieeffects.__SLUG_DOT__"
+# VST3 class id：每套恰好 16 字节，发布后不可改
+vst3_class_id = "__VST3_DUAL__"
+vst3_class_id_mono = "__VST3_MONO__"
+vst3_class_id_stereo = "__VST3_STEREO__"
+
+[au]
+# AU 四字符码：发布后不可改
+manufacturer_code = "HpEf"
+manufacturer_name = "HONEYPIE EFFECTS"
+bundle_id = "com.honeypieeffects.__SLUG_DOT__"
+subtype_dual = "__AU_DUAL__"
+subtype_mono = "__AU_MONO__"
+subtype_stereo = "__AU_STEREO__"
+
+[build]
+variants = ["mono", "stereo"]
+dual_variant = false
+
+[assets]
+panel = "assets/panel@2x.png"
+
+[ui]
+svg_width = 170.08
+svg_height = 317.48
+window_width = 340
+window_height = 635
+background = "#faf1e0"
+
+[[ui.knobs]]
+id = "gain"
+param = "gain"
+center = [85.0, 120.0]
+radius = 40.0
+pointer_len = 34.0
+pointer_width = 1.2
+angle_min = -135.0
+angle_max = 135.0
+drag_full_range_px = 260.0
