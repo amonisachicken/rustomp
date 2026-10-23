@@ -95,13 +95,23 @@ mod ui {
     pub const LED: (f32, f32) = (85.04, 33.83);
     pub const LED_R: f32 = 8.5;
 
-    /// 削波模式小开关：贴图左上角与尺寸（viewBox 23.68 × 25.21）
-    /// 位置由开关的六角形中心与面板原图对齐得出
-    pub const MODE_SW_XY: (f32, f32) = (73.49, 108.455);
+    /// 削波模式开关贴图（viewBox 23.68 × 25.21）。
+    ///
+    /// **对齐基准：六边形水平方向两顶点连线**。
+    /// - 面板原图里那条连线的中点 = (85.33, 121.825)
+    /// - up 贴图里 = (11.84, 13.37)  ⇒ 偏移 (73.49, **108.455**)
+    /// - down 贴图里 = (11.84, 11.84) ⇒ 偏移 (73.49, **109.985**)   ← 比 up 低 1.53
+    /// 两张图的六边形在各自 viewBox 里高度不同，必须分别偏移，否则看起来"没对齐"。
+    pub const MODE_SW_X: f32 = 73.49;
+    pub const MODE_SW_UP_Y: f32 = 108.455;
+    pub const MODE_SW_DOWN_Y: f32 = 109.985;
     pub const MODE_SW_W: f32 = 23.68;
     pub const MODE_SW_H: f32 = 25.21;
-    /// 点击区域 = 两种状态贴图的并集（两者 viewBox 相同，即同一个矩形）
-    pub const MODE_SW_CENTER: (f32, f32) = (85.33, 121.6);
+    /// 六边形基线中点（缩放反馈与点击区都以它为参照）
+    pub const MODE_SW_PIVOT: (f32, f32) = (85.33, 121.825);
+    /// 点击区域 = 两种状态贴图的并集
+    pub const MODE_SW_HIT: (f32, f32, f32, f32) =
+        (73.49, 108.455, 23.68, 109.985 + 25.21 - 108.455);
 
     /// 下方大开关 = bypass
     pub const BYPASS_SW: (f32, f32) = (85.33, 236.17);
@@ -360,28 +370,43 @@ fn draw_panel(
     let white = egui::Color32::from_rgb(0xf5, 0xf5, 0xf5);
     let dark = egui::Color32::from_rgb(0x23, 0x18, 0x15);
 
-    // ---- 削波模式开关：面板底图里已经删掉了原来画死的拨杆 ----
+    // ---- 削波模式开关：底图里已删掉画死的拨杆，这里贴当前状态图 ----
     let sym = params.symmetric.value();
-    let sw_tex = if sym { &state.sw_down } else { &state.sw_up };
+    let (sw_y, sw_tex) = if sym {
+        (ui::MODE_SW_DOWN_Y, &state.sw_down)
+    } else {
+        (ui::MODE_SW_UP_Y, &state.sw_up)
+    };
     let sw_rect = egui::Rect::from_min_size(
-        to_screen(ui::MODE_SW_XY),
+        to_screen((ui::MODE_SW_X, sw_y)),
         egui::vec2(ui::MODE_SW_W * scale, ui::MODE_SW_H * scale),
     );
-    // 按下反馈：半径缩到 0.9 倍（以开关中心为原点）
-    let sw_pressed = ui
-        .ctx()
-        .is_pointer_over_area()
-        && ui.input(|i| i.pointer.primary_down())
-        && sw_rect_contains(&sw_rect, ui);
-    let sw_draw = if sw_pressed {
-        egui::Rect::from_center_size(sw_rect.center(), sw_rect.size() * 0.9)
+    // 点击区 = 两态并集；先做交互，本帧就能拿到"按住"状态
+    let hit = ui::MODE_SW_HIT;
+    let hit_rect = egui::Rect::from_min_size(
+        to_screen((hit.0, hit.1)),
+        egui::vec2(hit.2 * scale, hit.3 * scale),
+    );
+    let sw = ui.interact(hit_rect, ui.id().with("mode"), egui::Sense::click());
+    if sw.clicked() {
+        setter.set_parameter(&params.symmetric, !sym);
+    }
+
+    // 按住时以六边形基线中点为原点缩到 0.9 倍
+    let draw_rect = if sw.is_pointer_button_down_on() {
+        let p = to_screen(ui::MODE_SW_PIVOT);
+        let o = sw_rect.min;
+        egui::Rect::from_min_size(
+            p + (o - p) * 0.9,
+            sw_rect.size() * 0.9,
+        )
     } else {
         sw_rect
     };
     if let Some(t) = sw_tex {
         painter.image(
             t.id(),
-            sw_draw,
+            draw_rect,
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
@@ -449,11 +474,6 @@ fn draw_panel(
     do_knob(ui, gain_c, "gain", &params.gain);
 
     // ---- 削波模式开关：点击切换（视觉由上面的贴图负责）----
-    let sw = ui.interact(sw_rect, ui.id().with("mode"), egui::Sense::click());
-    if sw.clicked() {
-        setter.set_parameter(&params.symmetric, !params.symmetric.value());
-    }
-
     // ---- 大开关 = bypass ----
     let by_c = to_screen(ui::BYPASS_SW);
     let by_r = ui::BYPASS_SW_R * scale;
@@ -494,14 +514,6 @@ fn draw_panel(
         }
     }
     let _ = dark;
-}
-
-/// 指针是否落在某个矩形内（用于按下反馈）
-fn sw_rect_contains(rect: &egui::Rect, ui: &egui::Ui) -> bool {
-    ui.ctx()
-        .input(|i| i.pointer.hover_pos())
-        .map(|p| rect.contains(p))
-        .unwrap_or(false)
 }
 
 /// 解码内嵌 PNG 并缩放到目标像素尺寸（`h == 0` 时按原比例推算）。
