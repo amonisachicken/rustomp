@@ -65,6 +65,7 @@ cmake -B build/au -S cmake \
       -DCLAP_BUNDLE="$ROOT/$CLAP" \
       -DRUSTOMP_AU_SUBTYPE="$AU_SUBTYPE" \
       -DRUSTOMP_AU_MANUFACTURER_CODE="$AU_MANUFACTURER" \
+      -DRUSTOMP_AU_MANUFACTURER_NAME="HONEYPIE EFFECTS" \
       -DRUSTOMP_BUNDLE_ID="$BUNDLE_ID" \
       -DRUSTOMP_PLUGIN_NAME="$PLUGIN_NAME" > build/au/configure.log 2>&1 \
     || { tail -30 build/au/configure.log; exit 1; }

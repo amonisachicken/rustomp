@@ -95,9 +95,14 @@ mod ui {
     pub const LED: (f32, f32) = (85.04, 33.83);
     pub const LED_R: f32 = 8.5;
 
-    /// 削波模式小开关（SVG 里那个小拨杆）
-    pub const MODE_SW: (f32, f32) = (85.0, 124.5);
-    pub const MODE_SW_R: f32 = 12.0;
+    /// 削波模式小开关：贴图左上角与尺寸（viewBox 23.68 × 25.21）
+    /// 位置由开关的六角形中心与面板原图对齐得出
+    pub const MODE_SW_XY: (f32, f32) = (73.49, 108.455);
+    pub const MODE_SW_W: f32 = 23.68;
+    pub const MODE_SW_H: f32 = 25.21;
+    /// 贴图前先用底色盖住面板里画死的那个开关
+    pub const MODE_SW_COVER: (f32, f32, f32, f32) = (71.0, 106.0, 28.5, 30.5);
+    pub const MODE_SW_CENTER: (f32, f32) = (85.33, 121.8);
 
     /// 下方大开关 = bypass
     pub const BYPASS_SW: (f32, f32) = (85.33, 236.17);
@@ -106,6 +111,9 @@ mod ui {
 
 /// 面板底图（`inkscape --export-width=680` 从 assets/panel.svg 生成）
 const PANEL_PNG: &[u8] = include_bytes!("../../../assets/panel@2x.png");
+/// 削波模式开关的两种状态（用户提供，`inkscape --export-width=95` 生成 4x）
+const SWITCH_UP_PNG: &[u8] = include_bytes!("../../../assets/switch_up@4x.png");
+const SWITCH_DOWN_PNG: &[u8] = include_bytes!("../../../assets/switch_down@4x.png");
 
 // ---------------------------------------------------------------- 参数
 #[derive(Params)]
@@ -292,6 +300,8 @@ nih_export_vst3!(SparklinDrive);
 #[derive(Default)]
 struct UiState {
     texture: Option<egui::TextureHandle>,
+    sw_up: Option<egui::TextureHandle>,
+    sw_down: Option<egui::TextureHandle>,
 }
 
 fn draw_panel(
@@ -318,12 +328,22 @@ fn draw_panel(
         (rect.height() * ui.ctx().pixels_per_point()) as usize,
     ];
     if state.texture.as_ref().map(|t| t.size() != want).unwrap_or(true) {
-        if let Some(img) = decode_panel(want[0], want[1]) {
+        if let Some(img) = decode_png(PANEL_PNG, want[0], want[1]) {
             state.texture = Some(ui.ctx().load_texture(
                 "sparklin-panel",
                 img,
                 egui::TextureOptions::LINEAR,
             ));
+        }
+    }
+    if state.sw_up.is_none() {
+        let w = (ui::MODE_SW_W * scale * ui.ctx().pixels_per_point()) as usize;
+        if let Some(img) = decode_png(SWITCH_UP_PNG, w, 0) {
+            state.sw_up = Some(ui.ctx().load_texture("sw-up", img, egui::TextureOptions::LINEAR));
+        }
+        if let Some(img) = decode_png(SWITCH_DOWN_PNG, w, 0) {
+            state.sw_down =
+                Some(ui.ctx().load_texture("sw-down", img, egui::TextureOptions::LINEAR));
         }
     }
     let painter = ui.painter().clone();
@@ -341,22 +361,52 @@ fn draw_panel(
     let white = egui::Color32::from_rgb(0xf5, 0xf5, 0xf5);
     let dark = egui::Color32::from_rgb(0x23, 0x18, 0x15);
 
+    // ---- 削波模式开关：先盖住面板里画死的那个，再贴对应状态 ----
+    let cover = ui::MODE_SW_COVER;
+    painter.rect_filled(
+        egui::Rect::from_min_size(
+            to_screen((cover.0, cover.1)),
+            egui::vec2(cover.2 * scale, cover.3 * scale),
+        ),
+        0.0,
+        egui::Color32::from_rgb(0xfa, 0xf1, 0xe0),
+    );
+    let sym = params.symmetric.value();
+    let sw_tex = if sym { &state.sw_down } else { &state.sw_up };
+    if let Some(t) = sw_tex {
+        let p0 = to_screen(ui::MODE_SW_XY);
+        painter.image(
+            t.id(),
+            egui::Rect::from_min_size(p0, egui::vec2(ui::MODE_SW_W * scale, ui::MODE_SW_H * scale)),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+
     // ---- LED（削波指示；bypass 时变灰）----
     let led_c = to_screen(ui::LED);
     let led_r = ui::LED_R * scale;
     let bypassed = params.bypass.value();
     let level = f32::from_bits(clip.load(Ordering::Relaxed)).clamp(0.0, 1.0);
-    let led_color = if bypassed {
-        egui::Color32::from_rgb(0x8a, 0x86, 0x80)
+    if bypassed {
+        painter.circle_filled(led_c, led_r, egui::Color32::from_rgb(0x8a, 0x86, 0x80));
     } else {
-        let t = 0.18 + 0.82 * level;
-        egui::Color32::from_rgb(
-            (90.0 + 165.0 * t) as u8,
-            (8.0 + 40.0 * t) as u8,
-            (14.0 + 40.0 * t) as u8,
-        )
-    };
-    painter.circle_filled(led_c, led_r, led_color);
+        // 灭 = 很暗的红；亮 = 接近纯红 + 外发光，拉开对比
+        let t = level.clamp(0.0, 1.0);
+        let base = egui::Color32::from_rgb(
+            (58.0 + 197.0 * t) as u8,
+            (2.0 + 70.0 * t * t) as u8,
+            (8.0 + 58.0 * t * t) as u8,
+        );
+        if t > 0.02 {
+            painter.circle_filled(
+                led_c,
+                led_r * (1.0 + 1.1 * t),
+                egui::Color32::from_rgba_unmultiplied(255, 70, 50, (70.0 * t) as u8),
+            );
+        }
+        painter.circle_filled(led_c, led_r, base);
+    }
 
     // ---- 旋钮指针 ----
     let mut knob = |center_svg: (f32, f32), value: f32| {
@@ -401,21 +451,20 @@ fn draw_panel(
     do_knob(ui, level_c, "level", &params.level);
     do_knob(ui, gain_c, "gain", &params.gain);
 
-    // ---- 削波模式小开关 ----
-    let sw_c = to_screen(ui::MODE_SW);
-    let sw_r = ui::MODE_SW_R * scale;
+    // ---- 削波模式开关：点击切换（视觉由上面的贴图负责）----
+    let sw_c = to_screen(ui::MODE_SW_CENTER);
+    let sw_hit = egui::vec2(
+        ui::MODE_SW_W * scale * 1.15,
+        ui::MODE_SW_H * scale * 1.15,
+    );
     let sw = ui.interact(
-        egui::Rect::from_center_size(sw_c, egui::vec2(sw_r * 2.0, sw_r * 2.0)),
+        egui::Rect::from_center_size(sw_c, sw_hit),
         ui.id().with("mode"),
         egui::Sense::click(),
     );
     if sw.clicked() {
         setter.set_parameter(&params.symmetric, !params.symmetric.value());
     }
-    // 拨杆方向指示：上 = 非对称，下 = 对称
-    let sym = params.symmetric.value();
-    let tip = sw_c + egui::vec2(0.0, if sym { 1.0 } else { -1.0 } * sw_r * 0.95);
-    painter.circle_filled(tip, sw_r * 0.22, dark);
 
     // ---- 大开关 = bypass ----
     let by_c = to_screen(ui::BYPASS_SW);
@@ -428,20 +477,40 @@ fn draw_panel(
     if by.clicked() {
         setter.set_parameter(&params.bypass, !bypassed);
     }
-    if bypassed {
-        // 按下状态：压暗 + 内圈
-        painter.circle_filled(by_c, by_r * 0.92, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 22));
-        painter.circle_stroke(
-            by_c,
-            by_r * 0.55,
-            egui::Stroke::new((1.4 * scale).max(1.0), dark),
-        );
+    // 开关外形不随 bypass 状态变化；只有**按住**时缩到 0.9 倍（松开即恢复）
+    if by.is_pointer_button_down_on() {
+        if let Some(t) = &state.texture {
+            let r = by_r;
+            let src = egui::Rect::from_min_max(
+                egui::pos2(
+                    (ui::BYPASS_SW.0 - r / scale) / ui::SVG_W,
+                    (ui::BYPASS_SW.1 - r / scale) / ui::SVG_H,
+                ),
+                egui::pos2(
+                    (ui::BYPASS_SW.0 + r / scale) / ui::SVG_W,
+                    (ui::BYPASS_SW.1 + r / scale) / ui::SVG_H,
+                ),
+            );
+            // 先用底色抹掉原位置，再把缩小的开关贴回去
+            painter.rect_filled(
+                egui::Rect::from_center_size(by_c, egui::vec2(r * 2.0, r * 2.0)),
+                0.0,
+                egui::Color32::from_rgb(0xfa, 0xf1, 0xe0),
+            );
+            painter.image(
+                t.id(),
+                egui::Rect::from_center_size(by_c, egui::vec2(r * 2.0 * 0.9, r * 2.0 * 0.9)),
+                src,
+                egui::Color32::WHITE,
+            );
+        }
     }
+    let _ = dark;
 }
 
-/// 解码内嵌面板 PNG，并缩放到窗口所需像素尺寸。
-fn decode_panel(w: usize, h: usize) -> Option<egui::ColorImage> {
-    let mut decoder = png::Decoder::new(PANEL_PNG);
+/// 解码内嵌 PNG 并缩放到目标像素尺寸（`h == 0` 时按原比例推算）。
+fn decode_png(data: &'static [u8], w: usize, h: usize) -> Option<egui::ColorImage> {
+    let mut decoder = png::Decoder::new(data);
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
@@ -453,7 +522,8 @@ fn decode_panel(w: usize, h: usize) -> Option<egui::ColorImage> {
         png::ColorType::Grayscale => 1,
         _ => return None,
     };
-    let (dw, dh) = (w.max(1), h.max(1));
+    let dw = w.max(1);
+    let dh = if h == 0 { (dw * sh / sw).max(1) } else { h.max(1) };
     let mut px = Vec::with_capacity(dw * dh);
     for y in 0..dh {
         let sy = y * sh / dh;

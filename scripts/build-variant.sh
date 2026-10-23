@@ -63,6 +63,7 @@ cmake -B "$BUILD_DIR" -S cmake \
       -DRUSTOMP_PLUGIN_NAME="$NAME" \
       -DRUSTOMP_AU_SUBTYPE="$SUBTYPE" \
       -DRUSTOMP_AU_MANUFACTURER_CODE="HpEf" \
+      -DRUSTOMP_AU_MANUFACTURER_NAME="HONEYPIE EFFECTS" \
       -DRUSTOMP_BUNDLE_ID="$BUNDLE_ID" > "$BUILD_DIR/configure.log" 2>&1 \
     || { tail -30 "$BUILD_DIR/configure.log"; exit 1; }
 cmake --build "$BUILD_DIR" --config Release -j"$(sysctl -n hw.ncpu)" > "$BUILD_DIR/build.log" 2>&1 \

@@ -22,7 +22,7 @@ set(RUSTOMP_PLUGIN_NAME   "Sparklin Drive"                     CACHE STRING "插
 set(RUSTOMP_BUNDLE_ID     "com.honeypieeffects.sparklindrive"  CACHE STRING "AU bundle id")
 set(RUSTOMP_AU_SUBTYPE    "SPd1"                                 CACHE STRING "AU subtype (4 chars)")
 set(RUSTOMP_AU_MANUFACTURER_CODE "HpEf"                          CACHE STRING "AU manufacturer (4 chars)")
-set(RUSTOMP_AU_MANUFACTURER_NAME "amonisachicken"                CACHE STRING "AU manufacturer name")
+set(RUSTOMP_AU_MANUFACTURER_NAME "HONEYPIE EFFECTS"                CACHE STRING "AU manufacturer name")
 # aufx = 效果器；aumu = 乐器。我们是效果器。
 set(RUSTOMP_AU_TYPE       "aufx"                                 CACHE STRING "AU component type")
 
