@@ -71,9 +71,18 @@ impl Diode {
     }
 
     /// 给定电流反解端电压（测试/参数拟合用；单调函数，二分保证收敛）。
+    ///
+    /// 上界要**自动撑开**：LED 的 Vf 可以到 3.7 V，写死 `[-2, 2]` 会在 2.0 V 处截断
+    /// （绿 LED @10 mA 曾因此差 9%）。
     pub fn voltage_for_current(&self, target: f64) -> f64 {
-        let (mut lo, mut hi) = (-2.0_f64, 2.0_f64);
-        for _ in 0..80 {
+        let mut lo = -2.0_f64;
+        let mut hi = 0.1_f64;
+        let mut guard = 0;
+        while self.current(hi) < target && guard < 80 {
+            hi *= 1.5;
+            guard += 1;
+        }
+        for _ in 0..100 {
             let mid = 0.5 * (lo + hi);
             if self.current(mid) < target {
                 lo = mid;
@@ -98,6 +107,20 @@ pub const D_1N34A: Diode = Diode { is: 2.6e-6, n_vt: 1.6 * VT, rs: 6.5, inv_n_vt
 /// 大芯片 ⇒ 极小 Rs，拐点更"硬"、能承受更大电流。
 pub const D_1N4007: Diode = Diode { is: 7.02767e-9, n_vt: 1.80803 * VT, rs: 0.0341512, inv_n_vt: 1.0 / (1.80803 * VT) };
 
+/// 1N5817（**肖特基**）：`Is=31.7µ N=1.373 Rs=.051`
+///
+/// 低 Vf（@1 A ≈ 0.42 V）+ 快恢复：电源反接保护、检波、硬削波。
+pub const D_1N5817: Diode = Diode { is: 31.7e-6, n_vt: 1.373 * VT, rs: 0.051, inv_n_vt: 1.0 / (1.373 * VT) };
+
+/// 红色 LED：`Is=93.2p N=3.73 Rs=42m`（Vf@20 mA ≈ 1.85 V）
+pub const LED_RED: Diode = Diode { is: 93.2e-12, n_vt: 3.73 * VT, rs: 0.042, inv_n_vt: 1.0 / (3.73 * VT) };
+
+/// 绿色 LED：`Is=93.2p N=4.61 Rs=42m`（Vf@20 mA ≈ 2.29 V）
+pub const LED_GREEN: Diode = Diode { is: 93.2e-12, n_vt: 4.61 * VT, rs: 0.042, inv_n_vt: 1.0 / (4.61 * VT) };
+
+/// 蓝色 LED：`Is=93.2p N=7.47 Rs=42m`（Vf@20 mA ≈ 3.71 V）
+pub const LED_BLUE: Diode = Diode { is: 93.2e-12, n_vt: 7.47 * VT, rs: 0.042, inv_n_vt: 1.0 / (7.47 * VT) };
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,6 +133,17 @@ mod tests {
         // 1N4148 由 breadspice 模型给出，同量级即可
         let v = D_1N4148.voltage_for_current(1e-3);
         assert!((0.55..0.75).contains(&v), "1N4148 Vf@1mA={v}");
+        // 肖特基比硅管低、LED 按颜色递增
+        let schottky = D_1N5817.voltage_for_current(1e-3);
+        assert!(schottky < 0.4, "1N5817 Vf@1mA={schottky} 应 < 0.4");
+        let (r, g, b) = (
+            LED_RED.voltage_for_current(20e-3),
+            LED_GREEN.voltage_for_current(20e-3),
+            LED_BLUE.voltage_for_current(20e-3),
+        );
+        assert!((1.7..2.0).contains(&r), "红 LED Vf@20mA={r}");
+        assert!((2.1..2.5).contains(&g), "绿 LED Vf@20mA={g}");
+        assert!((3.4..4.0).contains(&b), "蓝 LED Vf@20mA={b}");
     }
 
     #[test]

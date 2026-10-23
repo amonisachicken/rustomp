@@ -18,8 +18,9 @@ pub mod oversample;
 
 pub use circuit::Circuit;
 pub use devices::{
-    Bjt, Diode, Jfet, Nmos, OpAmp, OpAmpModel, OpAmpState, AC127, AC128, BC549C, D_1N34A, D_1N4007,
-    D_1N4148, J201, NMOS_2N7000, NMOS_2N7000_BODY, OP07,
+    Bjt, Diode, Jfet, Nmos, OpAmp, OpAmpModel, OpAmpState, AC127, AC128, BC549C, BC559C, D_1N34A,
+    D_1N4007, D_1N4148, D_1N5817, J201, LED_BLUE, LED_GREEN, LED_RED, NMOS_2N7000,
+    NMOS_2N7000_BODY, OP07,
 };
 pub use engine::Engine;
 pub use mna::{Element, Mna, Netlist, GND};

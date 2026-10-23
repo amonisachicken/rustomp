@@ -283,7 +283,9 @@ could not find a valid modelname
 | 器件 | Rust 模型 | 对拍结果（`crates/rustomp-dsp/tests/devices.rs`） |
 |---|---|---|
 | `D_1N4148` / `D_1N34A` / `D_1N4007` | `devices::Diode`（静态 **D2**：`Is / N / Rs`） | **V-I 与 ngspice 完全一致（0.00%）**，覆盖 1 µA~10 mA 五个数量级 |
-| `BC549C` / `AC127` / `AC128` | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc`） | **Ic 与 Ib 均对拍**：AC127/AC128 ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下） |
+| `BC549C` / `AC127` / `AC128` / `BC559C`(PNP) | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc`） | **Ic 与 Ib 均对拍**：AC127/AC128/BC559C ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下） |
+| `1N5817`（肖特基） | `devices::Diode`（D2） | **0.00%**（1 µA~10 mA；Vf@1 mA=0.124 V、@10 mA=0.205 V） |
+| `LedRed` / `LedGreen` / `LedBlue` | `devices::Diode`（D2） | **0.00%**（1 µA~10 mA；Vf@20 mA ≈ 1.85 / 2.29 / 3.71 V） |
 | `J201` | `devices::Jfet`（静态 **D3**：Shichman-Hodges + `Rd/Rs`） | **转移 + 输出特性均 0.00%**（含三极管区 Vds=0.2/0.5 V） |
 | `2N7000` | `devices::Nmos`（静态 **D3**：level-1 + `Rd/Rs`）+ `NMOS_2N7000_BODY` | **沟道 0.00%**（转移 5 点 + 三极管区 3 点）、**体二极管 0.00%**（3 点） |
 | 通用单运放 `OP07` | `devices::OpAmp`（单极点宏模型 + 压摆率 + 输出钳位） | 闭环 -3dB ≈ GBW/11（4× 过采样下误差 <2%）；单位增益跟随误差 <10 mV |

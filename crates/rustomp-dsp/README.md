@@ -19,8 +19,8 @@ circuit.rs     与框架的唯一契约：Circuit trait
 
 | 模块 | 类型 | 库内型号 | 精度档 |
 |---|---|---|---|
-| `diode.rs` | 二极管（`Is/N/Rs`） | `D_1N4148` `D_1N34A` `D_1N4007` | 静态 D2 |
-| `bjt.rs` | Gummel-Poon（含 `Rb/Re/Rc` 内层牛顿） | `BC549C` `AC127` `AC128` | 静态 D3 |
+| `diode.rs` | 二极管（`Is/N/Rs`） | `D_1N4148` `D_1N34A` `D_1N4007` `D_1N5817`(肖特基) `LED_RED` `LED_GREEN` `LED_BLUE` | 静态 D2 |
+| `bjt.rs` | Gummel-Poon（含 `Rb/Re/Rc` 内层牛顿） | `BC549C` `BC559C`(PNP) `AC127` `AC128` | 静态 D3 |
 | `jfet.rs` | Shichman-Hodges | `J201` | 静态 D3 |
 | `mosfet.rs` | level-1（+ 体二极管单口） | `NMOS_2N7000` `NMOS_2N7000_BODY` | 静态 D3 |
 | `opamp.rs` | 单极点宏模型 + 压摆率 + 输出钳位 | `OP07` | — |
@@ -29,8 +29,8 @@ circuit.rs     与框架的唯一契约：Circuit trait
 
 | 器件 | 比较量 | 误差 |
 |---|---|---|
-| 二极管 ×3 | 1 µA ~ 10 mA 的 `Vf` | **0.00%** |
-| BJT ×3 | `Ic` 与 `Ib`（含 PNP） | **≤0.09%**（BC549C 在 4.6 mA 处 0.67%） |
+| 二极管 ×4 + LED ×3 | 1 µA ~ 10 mA 的 `Vf` | **0.00%** |
+| BJT ×4 | `Ic` 与 `Ib`（含 PNP） | **≤0.09%**（BC549C 在 4.6 mA 处 0.67%） |
 | `J201` | 转移 + 输出特性 | **0.00%** |
 | `2N7000` | 沟道 8 点 + 体二极管 3 点 | **≤0.01%** |
 | `OP07` | 闭环 -3 dB | **<2%**（4× 过采样） |

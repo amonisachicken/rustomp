@@ -5,7 +5,10 @@
 //! 判据（`docs/component-library.md` §5）：`|I| ≥ 1µA` 相对误差 < 2%、绝对电压差 < 5 mV。
 //! 没有 ngspice 时自动跳过。
 
-use rustomp_dsp::{Diode, D_1N34A, D_1N4007, D_1N4148, NMOS_2N7000, NMOS_2N7000_BODY};
+use rustomp_dsp::{
+    Diode, D_1N34A, D_1N4007, D_1N4148, D_1N5817, LED_BLUE, LED_GREEN, LED_RED, NMOS_2N7000,
+    NMOS_2N7000_BODY,
+};
 use rustomp_oracle::Oracle;
 
 const LIB: &str = include_str!("../../../devices/devices.lib");
@@ -46,6 +49,10 @@ fn diodes_match_ngspice_dc() {
     compare(&oracle, D_1N4148, "1N4148");
     compare(&oracle, D_1N34A, "1N34A");
     compare(&oracle, D_1N4007, "1N4007");
+    compare(&oracle, D_1N5817, "1N5817");
+    compare(&oracle, LED_RED, "LedRed");
+    compare(&oracle, LED_GREEN, "LedGreen");
+    compare(&oracle, LED_BLUE, "LedBlue");
 }
 
 /// 2N7000 目前只有 SPICE 侧的手写子电路（DSP 模型待实现），这里做标定冒烟：
@@ -137,6 +144,7 @@ fn bjts_match_ngspice_dc() {
     compare_bjt(&oracle, rustomp_dsp::BC549C, "BC549C", true, &[0.55, 0.60, 0.65, 0.70]);
     compare_bjt(&oracle, rustomp_dsp::AC127, "AC127", true, &[0.05, 0.10, 0.15, 0.20]);
     compare_bjt(&oracle, rustomp_dsp::AC128, "AC128", false, &[0.05, 0.10, 0.15, 0.20]);
+    compare_bjt(&oracle, rustomp_dsp::BC559C, "BC559C", false, &[0.55, 0.60, 0.65, 0.70]);
 }
 
 // ---------------------------------------------------------------- JFET

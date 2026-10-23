@@ -145,6 +145,28 @@ pub const BC549C: Bjt = Bjt {
     isc: 7.371e-12, nc: 1.508, rb: 0.0, re: 0.0, rc: 1.175,
 };
 
+/// BC559C（硅 **PNP**，BC549C 的互补管）：`Is=1.02f Bf=401.6 Vaf=34.62 Rc=1.151`
+///
+/// PNP 接法：把 `(veb, vcb)` 传进 [`Bjt::terminal`]，返回电流取负。
+pub const BC559C: Bjt = Bjt {
+    is: 1.02e-15,
+    bf: 401.6,
+    nf: 1.0,
+    vaf: 34.62,
+    ikf: 74.73e-3,
+    ise: 38.26e-12,
+    ne: 5.635,
+    br: 9.011,
+    nr: 1.0,
+    var: f64::INFINITY,
+    ikr: 0.1469,
+    isc: 1.517e-15,
+    nc: 1.831,
+    rb: 0.0,
+    re: 0.0,
+    rc: 1.151,
+};
+
 /// AC127（锗 NPN）：大漏电（`Is=5µ`、`Isc=5µ`）+ 低 `Vf` + 大 `Rb=100Ω`。
 /// 这些正是"锗味"的来源（见 `docs/component-library.md` §3）。
 pub const AC127: Bjt = Bjt {
