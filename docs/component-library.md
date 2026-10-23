@@ -210,8 +210,8 @@ pub const BC549C: Bjt = Bjt { is: 7.049e-15, bf: 493.2, vaf: 23.89, .. };
 | `AC127` | GeNpn | `is=5u isc=5u ise=600n ikf=.3 itf=.3 nc=2 ne=2 bf=160 br=5 rb=100 rc=1.5 vaf=50 var=50 cjc=200p cje=60p tr=3u tf=600n …` | `vceo icrating mfg` | Ib=10µA, Vce=5V → **Vbe=0.142 V, Ic=1.30 mA（hFE≈130）** | ✅ |
 | `AC128` | GePnp | 同上（`bf=90 br=5 rb=7 rc=.2 re=.1`） | 同上 | — | ✅ |
 | `1N34A` | GeDiode | `is=2.6u rs=6.5 n=1.6 cjo=.8p eg=.67 bv=25 ibv=.003` | `type` | **Vf@1mA = 0.253 V**，Vf@10µA = 0.065 V | ✅ |
-| `1N4007` | SiDiode | `is=7.03n rs=.034 n=1.808 eg=1.057 xti=5 bv=1000 cjo=1e-11 vj=.7 m=.5 tt=1e-7` | `mfg type` | **Vf@1mA = 0.555 V**，Vf@10µA = 0.340 V | ⚠️ 见下 |
-| `2N7000` | NMos | —（`VDMOS` 无法被 ngspice 解析） | 16 项全部 | — | ❌ 阻塞 |
+| `1N4007` | SiDiode | **实测版**：DC 沿用原模型，动态改 `CJO=15p / TT=5u`（见 §10.1②） | `mfg type` | **Vf@1mA = 0.555 V** | ✅ |
+| `2N7000` | NMos | **手写子电路** `N2N7000`（体二极管 + level-1 NMOS + Rd/Rs） | 16 项（VDMOS 不可用） | Id@Vgs=5V=**0.221 A**、Vgs=10V 时 Rds≈6Ω | ✅（SPICE 侧） |
 
 ### 10.1 两个需要注意的问题
 
@@ -240,6 +240,15 @@ could not find a valid modelname
 
 对削波用途影响有限（按 §3 仍是 `D2+C1`），但如果要建"整流管削波"的高频细节，建议换一个实测模型。
 
+### 10.1b 已实现进 Rust 库的部分
+
+| 器件 | Rust 模型 | 对拍结果（`crates/rustomp-dsp/tests/devices.rs`） |
+|---|---|---|
+| `D_1N4148` / `D_1N34A` / `D_1N4007` | `devices::Diode`（静态 **D2**：`Is / N / Rs`） | **V-I 与 ngspice 完全一致（0.00%）**，覆盖 1 µA~10 mA 五个数量级 |
+
+> 重要细节：热电压取 **27 °C（`VT=0.025865`）**，与 SPICE 默认 `TNOM` 对齐；
+> 用 300 K 会带来约 −0.05% 的系统性偏差（实测发现并修正）。
+
 ### 10.2 运放：`models.add` 里**只有符号，没有模型**
 
 文件中 `RC4558`、`TL072` 两段是 **LTspice 的符号定义**（`.asy` 内容：`SYMBOLTYPE`/`LINE`/`PIN`…），
@@ -253,14 +262,16 @@ SYMATTR SpiceModel ..\sym\EXTRA\AudioOpamp\TI\TL072.301
 → 需要提供 `.301` / `.lib` / `.subckt` 本体，否则无法做 oracle 对拍。
 另外 `TL072` / `RC4558` 都是**双运放**，涉及"一个封装两个单元共用电源"的建模（见 §10.3）。
 
-### 10.3 待确认
+### 10.3 已确认的决策（2026-10-23）
 
-| 项 | 问题 |
+| 项 | 结论 |
 |---|---|
-| 运放模型 | `.301` 文件能否提供？（或改用我们已有的 `OP07A` 子电路 / 宏模型） |
-| 双运放 | 是否支持"多单元器件"（`U1A`/`U1B` 共享电源）？IR 与器件库都需要扩展 |
-| 2N7000 | 提供 ngspice 兼容模型，还是接受我们手写等价 subckt？ |
-| 1N4007 | 是否接受当前模型（`Cjo=10p`），还是换实测模型？ |
+| 2N7000 | **手写**等价子电路（已完成并标定：`devices/handwritten.lib` 的 `N2N7000`） |
+| 1N4007 | **用实测/数据手册模型**（`CJO=15p`、`TT=5µs`，DC 不变） |
+| 运放 | **不做双运放、不导入新运放**；库内只维护**一个通用运放器件**，采用 CPU 友好精度（1 内部节点宏模型 + 压摆率 + 输出摆幅） |
+
+> 依据：LTspice 的双运放一般也拆成单运放使用；breadspice 的双运放本来就是两个 OP07A 拼的。
+> 因此 IR 与器件库都**不需要**"多单元器件"能力。
 
 ## 9. 变更记录
 

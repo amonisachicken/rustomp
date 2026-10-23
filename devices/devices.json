@@ -102,57 +102,6 @@
       ],
       "level_hint": "D2 + C0（模型含 CJO，可升 C1）",
       "ngspice_ok": true
-    },
-    {
-      "name": "1N4007",
-      "spice_type": "D",
-      "class": "SiDiode",
-      "params": {
-        "is": "7.02767n",
-        "rs": "0.0341512",
-        "n": "1.80803",
-        "eg": "1.05743",
-        "xti": "5",
-        "bv": "1000",
-        "ibv": "5e-08",
-        "cjo": "1e-11",
-        "vj": "0.7",
-        "m": "0.5",
-        "fc": "0.5",
-        "tt": "1e-07"
-      },
-      "dropped": [
-        "mfg",
-        "type"
-      ],
-      "level_hint": "D2 + C1（含 CJO/TT）",
-      "ngspice_ok": true
-    },
-    {
-      "name": "2N7000",
-      "spice_type": "VDMOS",
-      "class": "NMos",
-      "params": {},
-      "dropped": [
-        "rg",
-        "vto",
-        "rd",
-        "rs",
-        "rb",
-        "kp",
-        "mtriode",
-        "cgdmax",
-        "cgdmin",
-        "cgs",
-        "cjo",
-        "is",
-        "mfg",
-        "vds",
-        "ron",
-        "qg"
-      ],
-      "level_hint": "D2 + C1（需先解决 VDMOS 兼容）",
-      "ngspice_ok": false
     }
   ],
   "symbols_only": [

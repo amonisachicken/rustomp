@@ -1,0 +1,24 @@
+* 手写 / 覆盖类模型（rustomp 维护）—— 不进 models.add，也不由工具生成
+*
+* 1) 1N4007：给定模型的 CJO=1e-11 / TT=1e-7 明显是通用默认值；
+*    这里保留其 DC 部分（与实测 Vf 吻合），动态部分按数据手册：
+*    Cj ≈ 15 pF(Vr=4V)、trr ≈ 30 µs → CJO=15p、TT 取 5µs（偏保守，待实测标定）。
+.model 1N4007 D(IS=7.02767n RS=0.0341512 N=1.80803 EG=1.05743 XTI=5
++               BV=1000 IBV=5e-08 CJO=15p VJ=0.7 M=0.5 FC=0.5 TT=5u)
+
+* 2) 2N7000：LTspice 的 VDMOS 格式 ngspice 不支持，这里手写等价子电路。
+*    结构：体二极管（S→D）+ level-1 NMOS 沟道 + 串联 Rd/Rs（限制导通电阻）。
+*    标定目标（数据手册/常见用法）：Vgs=5V,Vds=5V 时 Id ≈ 0.15~0.25A；
+*    Vgs=10V 时 Rds(on) 约 3~5Ω。
+.model D2N7000BD D(IS=1e-12 N=1.5 RS=0.1 CJO=20p)
+.subckt N2N7000 D G S
++ params: RDO=2 RSO=1
+* 体二极管（源阳极 → 漏阴极）
+DBD  S D  D2N7000BD
+* 沟道：Vto=1.6, Kp=0.035（level-1 的 Id=(Kp/2)(Vgs-Vto)^2）, LAMBDA=0.02
+MCH  DI G S S NMOS2N7000 L=1u W=1u
+RD   D  DI R={RDO}
+RS   S  SI R={RSO}
+.model NMOS2N7000 NMOS(LEVEL=1 VTO=1.6 KP=0.035 LAMBDA=0.02
++                CGS=50p CGD=5p CBD=25p PB=0.8 MJ=0.5)
+.ends N2N7000

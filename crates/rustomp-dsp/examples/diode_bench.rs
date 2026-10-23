@@ -1,4 +1,4 @@
-use rustomp_dsp::Diode1n4148;
+use rustomp_dsp::{Diode, D_1N4148};
 use std::hint::black_box;
 use std::time::Instant;
 const N: usize = 2_000_000;
@@ -12,7 +12,7 @@ fn t(name: &str, mut f: impl FnMut() -> f64) {
     println!("  {name:<38} {best:>7.2} ns");
 }
 fn main() {
-    let d = Diode1n4148::default();
+    let d: Diode = D_1N4148;
     println!("=== exp 成本 ===");
     t("f64::exp", || black_box(0.7f64).exp());
     t("f32::exp", || (black_box(0.7f32).exp()) as f64);

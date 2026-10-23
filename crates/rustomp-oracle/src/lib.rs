@@ -74,7 +74,7 @@ impl RawFile {
 
         let mut data: HashMap<String, Vec<f64>> = vars.iter().map(|v| (v.clone(), Vec::new())).collect();
         let mut cur: Vec<f64> = Vec::with_capacity(vars.len());
-        let mut flush = |cur: &mut Vec<f64>, data: &mut HashMap<String, Vec<f64>>| {
+        let flush = |cur: &mut Vec<f64>, data: &mut HashMap<String, Vec<f64>>| {
             if cur.len() == vars.len() {
                 for (name, v) in vars.iter().zip(cur.iter()) {
                     data.get_mut(name).unwrap().push(*v);

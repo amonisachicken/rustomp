@@ -139,10 +139,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("source", type=Path)
     ap.add_argument("-o", "--out", type=Path, default=Path("devices"))
+    ap.add_argument("--skip", default="",
+                    help="逗号分隔的型号名：这些型号由手写/覆盖版本提供，这里不输出")
     ap.add_argument("--vdmos-as-nmos1", action="store_true",
                     help="把 VDMOS 近似转换成 ngspice 的 MOS level 1（默认只报告不转换）")
     args = ap.parse_args()
 
+    skip = {x.strip().upper() for x in args.skip.split(",") if x.strip()}
     text = args.source.read_text(encoding="utf-8", errors="replace")
     models = parse_models(text)
     symbols = parse_symbols(text)
@@ -163,6 +166,9 @@ def main() -> None:
     report.append("|---|---|---|---|---|---|---|")
 
     for name, mtype, params, _raw in models:
+        if name.upper() in skip:
+            report.append(f"| `{name}` | {mtype} | — | —（由 handwritten.lib 覆盖）| — | — | ⏭️ 跳过 |")
+            continue
         t = mtype.lower()
         kind = ("BJT" if t in ("npn", "pnp") else
                 "D" if t == "d" else

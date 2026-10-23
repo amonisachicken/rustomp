@@ -2131,6 +2131,63 @@ could not find a valid modelname
 
 ---
 
+## E35：器件库第一块——通用二极管 + 两个 SPICE 产物（2026-10-23）
+
+用户确认：**2N7000 手写**、**1N4007 用实测模型**、**运放只保留一个通用器件（CPU 友好），不做双运放**。
+
+### 35.1 SPICE 侧
+
+新增 `devices/handwritten.lib`（手写/覆盖，与 `models.add` 分离）：
+
+- **1N4007 实测版**：DC 沿用原模型（`Vf@1mA=0.555 V` 不变），动态改 `CJO=15p / TT=5µs`
+  （原模型 `Cjo=10p / tt=100n` 是通用默认值）；
+- **2N7000 手写子电路** `N2N7000`：体二极管 + level-1 NMOS（`Vto=1.6, Kp=0.035, λ=0.02`）
+  + 串联 `Rd=2 / Rs=1`。ngspice 实测转移特性：
+
+  | Vgs | 3 V | 4 V | 5 V | 6 V | 10 V |
+  |---|---|---|---|---|---|
+  | Id (Vds=5V) | 37.7 mA | 110 mA | **221 mA** | 367 mA | 837 mA（等效 Rds≈6Ω） |
+
+  与数据手册一致（`Vgs=5V` 约 0.2 A、`Rds(on)` 几 Ω）。之前"VDMOS 直接转 level-1"会给出 0.70 A，**高估 3 倍**。
+
+另新增 `devices/reference.lib`（从 breadspice 迁入 1N4148，供对拍自包含），
+并把这些拼装固化到 `devices/build.sh`：`models.add → parsed.lib`（可用 `--skip` 跳过被覆盖项）
+`+ handwritten.lib + reference.lib → devices.lib`。
+
+### 35.2 Rust 侧
+
+`crates/rustomp-dsp/src/devices/` 建立（元件库的落点）：
+
+- `diode.rs`：通用 `Diode { is, n_vt, rs }`（静态 **D2**），带内层牛顿解 `Rs`、
+  `series()`、`voltage_for_current()`（测试/拟合用）；
+- 库内型号（闭集）：`D_1N4148` / `D_1N34A` / `D_1N4007`；
+- `devices/mod.rs` 里列出进度表（BJT/JFET/MOS/运放待补）。
+
+### 35.3 对拍结果：**完全一致**
+
+`crates/rustomp-dsp/tests/devices.rs`（电流源注入 + `.op`，取节点电压）：
+
+```
+1N4148  I=1µA..10mA   ngspice vs 我们：差 ±0.00%
+1N34A   I=1µA..10mA   差 ±0.00%
+1N4007  I=1µA..10mA   差 ±0.00%
+2N7000  手写子电路：转移特性单调，Id@Vgs=5V=0.221A ✓
+```
+
+**踩坑（值得记）**：一开始所有点都差 **−0.05%**，原因是热电压取了 300 K（`VT=0.025852`），
+而 SPICE 默认参考温度是 **27 °C**（`VT=0.025865`）。改成 27 °C 后误差归零。
+
+### 35.4 下一步
+
+| 顺序 | 内容 |
+|---|---|
+| 1 | `Bjt`（D3：`Is/Bf/Vaf/Ikf/Nk/Ise/Ne/Br/Isc/Nc` + `Rb/Re/Rc`）+ `BC549C`/`AC127`/`AC128`，与 ngspice 做 V-I 对拍 |
+| 2 | `Jfet`（`Beta/Vto/Lambda`）+ `J201` |
+| 3 | `Nmos`（DSP 侧，按已标定的 2N7000 参数） |
+| 4 | 通用 `OpAmp`（1 内部节点 + 压摆率 + 摆幅）——实现随 MNA 装配器 |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2399,6 +2456,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **器件库第一块：二极管**（E35）：`devices/` 拆成 parsed/handwritten/reference 三段 + `build.sh`；手写 2N7000 子电路（Id@Vgs=5V=0.221A，Rds≈6Ω）与实测 1N4007（Cjo=15p）；Rust 侧通用 `Diode` + 三个型号，V-I 与 ngspice **误差 0.00%**（发现并修正 VT 应为 27°C） |
 | 2026-10-23 | **导入分立器件模型**（E34）：新增 `tools/meta/ltspice_models.py`（按 ngspice 参数白名单清洗），产出 `devices/{devices.lib,devices.json,REPORT.md}`；锗管/锗二极管/1N4007 均验证可用（Ge: Vbe=0.142V, hFE≈130；1N34A Vf@1mA=0.253V）；发现 2N7000 的 VDMOS 格式 ngspice 不支持，运放只有符号无模型 |
 | 2026-10-23 | **声明式构建规范落盘**（E33 + ADR-014）：代码生成（host，入 `src/generated/`）与打包（各平台原生）两个平面；打包后端契约 + 能力声明；Windows/Linux/standalone 入路线，AAX 排除；S1–S5 路线与 CI 矩阵验收 |
 | 2026-10-23 | **电路导入与映射规范落盘**（E32 + ADR-013）：导入器插件化；格式先网表后 `.asc`；映射分层（别名+项目映射常规、类别默认防呆、参数直通为 power user）；引脚按名绑定；替换必须可见可测 |

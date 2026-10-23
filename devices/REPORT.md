@@ -12,8 +12,8 @@
 | `AC127` | NPN | Ge BJT（锗） | is, isc, ise, ikf, itf, nc, ne, bf, br, rb, rc, vaf, var, cjc, cje, tr, tf, fc, eg, vjc, vje, vtf, mjc, mje, xtb, xtf, xti | vceo, icrating, mfg | D3 + C1（模型自带 CJC/CJE/TF/TR，可按需升 C2） | ✅ |
 | `AC128` | PNP | Ge BJT（锗） | is, isc, ise, ikf, itf, nc, ne, bf, br, rb, rc, re, vaf, var, cjc, cje, tr, tf, fc, eg, vjc, vje, vtf, mjc, mje, xtb, xtf, xti | vceo, icrating, mfg | D3 + C1（同上） | ✅ |
 | `1N34A` | D | 锗二极管 | is, rs, n, cjo, eg, bv, ibv | type | D2 + C0（模型含 CJO，可升 C1） | ✅ |
-| `1N4007` | D | 硅二极管 | is, rs, n, eg, xti, bv, ibv, cjo, vj, m, fc, tt | mfg, type | D2 + C1（含 CJO/TT） | ✅ |
-| `2N7000` | VDMOS | N 沟道 MOSFET | — | rg, vto, rd, rs, rb, kp, mtriode, cgdmax, cgdmin, cgs, cjo, is, mfg, vds, ron, qg | D2 + C1（需先解决 VDMOS 兼容） | ❌ 不支持 VDMOS |
+| `1N4007` | D | — | —（由 handwritten.lib 覆盖）| — | — | ⏭️ 跳过 |
+| `2N7000` | VDMOS | — | —（由 handwritten.lib 覆盖）| — | — | ⏭️ 跳过 |
 
 ## 只有符号、没有模型的器件
 

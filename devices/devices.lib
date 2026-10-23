@@ -1,6 +1,39 @@
+* ===== devices.lib：自动生成，请勿手改 =====
+* 组成：parsed.lib + handwritten.lib
+
+* ----- parsed.lib（来自 models.add）-----
 * 由 tools/meta/ltspice_models.py 从 models.add 生成 —— 请勿手改
 * 已按 ngspice 合法参数白名单过滤掉 LTspice/厂商专用字段
 .model AC127 NPN(is=5u isc=5u ise=600n ikf=300m itf=300m nc=2 ne=2 bf=160 br=5 rb=100 rc=1.5 vaf=50 var=50 cjc=200p cje=60p tr=3u tf=600n fc=0.5 eg=0.72 vjc=0.4 vje=0.4 vtf=4 mjc=0.333 mje=0.333 xtb=1.5 xtf=6 xti=3)
 .model AC128 PNP(is=5u isc=1u ise=200n ikf=3 itf=1 nc=2 ne=1.5 bf=90 br=5 rb=7 rc=0.2 re=0.1 vaf=40 var=40 cjc=250p cje=80p tr=5u tf=1u fc=0.5 eg=0.72 vjc=0.4 vje=0.4 vtf=4 mjc=0.333 mje=0.333 xtb=1.5 xtf=6 xti=3)
 .model 1N34A D(is=2.6u rs=6.5 n=1.6 cjo=0.8p eg=0.67 bv=25 ibv=0.003)
-.model 1N4007 D(is=7.02767n rs=0.0341512 n=1.80803 eg=1.05743 xti=5 bv=1000 ibv=5e-08 cjo=1e-11 vj=0.7 m=0.5 fc=0.5 tt=1e-07)
+
+* ----- handwritten.lib（手写 / 覆盖）-----
+* 手写 / 覆盖类模型（rustomp 维护）—— 不进 models.add，也不由工具生成
+*
+* 1) 1N4007：给定模型的 CJO=1e-11 / TT=1e-7 明显是通用默认值；
+*    这里保留其 DC 部分（与实测 Vf 吻合），动态部分按数据手册：
+*    Cj ≈ 15 pF(Vr=4V)、trr ≈ 30 µs → CJO=15p、TT 取 5µs（偏保守，待实测标定）。
+.model 1N4007 D(IS=7.02767n RS=0.0341512 N=1.80803 EG=1.05743 XTI=5
++               BV=1000 IBV=5e-08 CJO=15p VJ=0.7 M=0.5 FC=0.5 TT=5u)
+
+* 2) 2N7000：LTspice 的 VDMOS 格式 ngspice 不支持，这里手写等价子电路。
+*    结构：体二极管（S→D）+ level-1 NMOS 沟道 + 串联 Rd/Rs（限制导通电阻）。
+*    标定目标（数据手册/常见用法）：Vgs=5V,Vds=5V 时 Id ≈ 0.15~0.25A；
+*    Vgs=10V 时 Rds(on) 约 3~5Ω。
+.model D2N7000BD D(IS=1e-12 N=1.5 RS=0.1 CJO=20p)
+.subckt N2N7000 D G S
++ params: RDO=2 RSO=1
+* 体二极管（源阳极 → 漏阴极）
+DBD  S D  D2N7000BD
+* 沟道：Vto=1.6, Kp=0.035（level-1 的 Id=(Kp/2)(Vgs-Vto)^2）, LAMBDA=0.02
+MCH  DI G S S NMOS2N7000 L=1u W=1u
+RD   D  DI R={RDO}
+RS   S  SI R={RSO}
+.model NMOS2N7000 NMOS(LEVEL=1 VTO=1.6 KP=0.035 LAMBDA=0.02
++                CGS=50p CGD=5p CBD=25p PB=0.8 MJ=0.5)
+.ends N2N7000
+
+* ----- reference.lib（从 breadspice 迁入，供对拍）-----
+* 参考模型（从 breadspice models.lib 迁入，GPL-3；用于对拍，保持自包含）
+.model 1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n)

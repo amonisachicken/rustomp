@@ -1622,6 +1622,9 @@ dependencies = [
 [[package]]
 name = "rustomp-dsp"
 version = "0.1.0"
+dependencies = [
+ "rustomp-oracle",
+]
 
 [[package]]
 name = "rustomp-gui"
