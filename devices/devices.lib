@@ -1,0 +1,6 @@
+* 由 tools/meta/ltspice_models.py 从 models.add 生成 —— 请勿手改
+* 已按 ngspice 合法参数白名单过滤掉 LTspice/厂商专用字段
+.model AC127 NPN(is=5u isc=5u ise=600n ikf=300m itf=300m nc=2 ne=2 bf=160 br=5 rb=100 rc=1.5 vaf=50 var=50 cjc=200p cje=60p tr=3u tf=600n fc=0.5 eg=0.72 vjc=0.4 vje=0.4 vtf=4 mjc=0.333 mje=0.333 xtb=1.5 xtf=6 xti=3)
+.model AC128 PNP(is=5u isc=1u ise=200n ikf=3 itf=1 nc=2 ne=1.5 bf=90 br=5 rb=7 rc=0.2 re=0.1 vaf=40 var=40 cjc=250p cje=80p tr=5u tf=1u fc=0.5 eg=0.72 vjc=0.4 vje=0.4 vtf=4 mjc=0.333 mje=0.333 xtb=1.5 xtf=6 xti=3)
+.model 1N34A D(is=2.6u rs=6.5 n=1.6 cjo=0.8p eg=0.67 bv=25 ibv=0.003)
+.model 1N4007 D(is=7.02767n rs=0.0341512 n=1.80803 eg=1.05743 xti=5 bv=1000 ibv=5e-08 cjo=1e-11 vj=0.7 m=0.5 fc=0.5 tt=1e-07)

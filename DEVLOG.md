@@ -2069,6 +2069,68 @@ scripts/pack/<platform>/<format>.sh
 
 ---
 
+## E34：导入分立器件模型（models.add）（2026-10-23）
+
+用户提供 `models.add`（LTspice 风格）。写了 **`tools/meta/ltspice_models.py`** 清洗并验证。
+
+### 34.1 清洗策略
+
+按**每种器件类型的合法参数白名单**过滤（白名单取自 ngspice 手册）。
+LTspice/厂商专用字段（`MFG=` / `Type=` / `Vceo=` / `Icrating=` / `mtriode=`）会被丢掉，
+否则 ngspice 直接报错。
+
+产物（`devices/`）：
+
+| 文件 | 用途 |
+|---|---|
+| `models.add` | 原始输入（冻结） |
+| `devices.lib` | 清洗后的 SPICE 库（ngspice / oracle 用） |
+| `devices.json` | 归一化参数（供以后生成 Rust 常量） |
+| `REPORT.md` | 人读报告：保留/丢弃参数、类别、建议档位、ngspice 可用性 |
+
+### 34.2 结果（5 个分立器件）
+
+| 型号 | 类别 | 丢弃 | ngspice 实测 |
+|---|---|---|---|
+| `AC127` | GeNpn | `vceo icrating mfg` | Ib=10 µA, Vce=5 V → **Vbe=0.142 V, Ic=1.30 mA (hFE≈130)** ✅ |
+| `AC128` | GePnp | 同上 | — ✅ |
+| `1N34A` | GeDiode | `type` | **Vf@1mA=0.253 V**，Vf@10µA=0.065 V ✅ |
+| `1N4007` | SiDiode | `mfg type` | Vf@1mA=0.555 V ⚠️（见下） |
+| `2N7000` | NMos | 全部（VDMOS） | ❌ ngspice 不支持 |
+
+锗管实测非常符合物理直觉：`Vbe=0.142 V`、`hFE≈130`、二极管 `Vf@1mA=0.25 V` ——
+说明清洗后模型是**有效且可用**的。
+
+### 34.3 两个硬问题
+
+**① `2N7000` 的 `VDMOS(...)` 是 LTspice 专有格式，ngspice 完全不认**
+
+```
+warning, can't find model '2n7000'
+could not find a valid modelname
+```
+
+试了"近似转 MOS level 1"：`Vto=1.6, Kp=.17, Rs=.75` → `Id@Vgs=5V,Vds=5V = 0.70 A`，
+而真实 2N7000 在 `Vgs=5V` 只有 0.1~0.2 A，**差 4 倍以上**。
+（LTspice 的 VDMOS 自带 triode 限制，`Kp` 的定义也与 level-1 不同。）
+
+→ 需要 ngspice 兼容的 2N7000 模型，或授权我们手写等价 subckt（体二极管 + Rds(on) 限制）。
+
+**② `1N4007` 的 `CJO=10p / TT=100n` 像是通用默认值**
+
+数据手册典型值是 `Cj≈15 pF`、`trr≈30 µs`。对削波影响有限（仍是 D2+C1），
+但若要做高频细节，建议换实测模型。
+
+### 34.4 运放：`models.add` 里只有符号
+
+`RC4558` / `TL072` 两段是 **LTspice 符号定义**（`SYMBOLTYPE`/`LINE`/`PIN`），
+真实模型指向外部 `.301` 文件（`..\sym\EXTRA\AudioOpamp\TI\RC4558.301`）。
+**没有模型本体，无法对拍**；且两者都是双运放，涉及"一个封装两个单元共用电源"的建模。
+
+详见 `docs/component-library.md` §10。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2337,6 +2399,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **导入分立器件模型**（E34）：新增 `tools/meta/ltspice_models.py`（按 ngspice 参数白名单清洗），产出 `devices/{devices.lib,devices.json,REPORT.md}`；锗管/锗二极管/1N4007 均验证可用（Ge: Vbe=0.142V, hFE≈130；1N34A Vf@1mA=0.253V）；发现 2N7000 的 VDMOS 格式 ngspice 不支持，运放只有符号无模型 |
 | 2026-10-23 | **声明式构建规范落盘**（E33 + ADR-014）：代码生成（host，入 `src/generated/`）与打包（各平台原生）两个平面；打包后端契约 + 能力声明；Windows/Linux/standalone 入路线，AAX 排除；S1–S5 路线与 CI 矩阵验收 |
 | 2026-10-23 | **电路导入与映射规范落盘**（E32 + ADR-013）：导入器插件化；格式先网表后 `.asc`；映射分层（别名+项目映射常规、类别默认防呆、参数直通为 power user）；引脚按名绑定；替换必须可见可测 |
 | 2026-10-23 | **元件库精度规范落盘**（E31 + ADR-012）：确立「延迟与精度无关」「静态/动态双轴」「静态给足、动态按需」；逐器件给出档位（锗 BJT 需 D3、锗二极管 D2、1N4007/2N7000 到 C1）；写出验收实验模板与 CPU 预算。文档：`docs/component-library.md` |

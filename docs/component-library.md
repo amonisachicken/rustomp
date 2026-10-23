@@ -194,6 +194,74 @@ pub const BC549C: Bjt = Bjt { is: 7.049e-15, bf: 493.2, vaf: 23.89, .. };
 
 ---
 
+
+---
+
+## 10. 已导入的器件（2026-10-23）
+
+来源：`devices/models.add`（用户提供，LTspice 风格），经 `tools/meta/ltspice_models.py` 清洗：
+按每种器件类型的**合法参数白名单**过滤掉 `MFG=/Type=/Vceo=/Icrating=` 等 ngspice 不认识的字段。
+
+产物：`devices/devices.lib`（ngspice/oracle 用）、`devices/devices.json`（供 Rust 侧生成常量）、
+`devices/REPORT.md`（人读报告）。
+
+| 型号 | 类别 | 保留参数 | 丢弃 | 实测（ngspice） | 状态 |
+|---|---|---|---|---|---|
+| `AC127` | GeNpn | `is=5u isc=5u ise=600n ikf=.3 itf=.3 nc=2 ne=2 bf=160 br=5 rb=100 rc=1.5 vaf=50 var=50 cjc=200p cje=60p tr=3u tf=600n …` | `vceo icrating mfg` | Ib=10µA, Vce=5V → **Vbe=0.142 V, Ic=1.30 mA（hFE≈130）** | ✅ |
+| `AC128` | GePnp | 同上（`bf=90 br=5 rb=7 rc=.2 re=.1`） | 同上 | — | ✅ |
+| `1N34A` | GeDiode | `is=2.6u rs=6.5 n=1.6 cjo=.8p eg=.67 bv=25 ibv=.003` | `type` | **Vf@1mA = 0.253 V**，Vf@10µA = 0.065 V | ✅ |
+| `1N4007` | SiDiode | `is=7.03n rs=.034 n=1.808 eg=1.057 xti=5 bv=1000 cjo=1e-11 vj=.7 m=.5 tt=1e-7` | `mfg type` | **Vf@1mA = 0.555 V**，Vf@10µA = 0.340 V | ⚠️ 见下 |
+| `2N7000` | NMos | —（`VDMOS` 无法被 ngspice 解析） | 16 项全部 | — | ❌ 阻塞 |
+
+### 10.1 两个需要注意的问题
+
+**① `2N7000` 用的是 LTspice 专有的 `VDMOS(...)` 模型，ngspice 不支持**
+
+实测报错：
+
+```
+warning, can't find model '2n7000' from line
+    m1 d g 0 0 2n7000
+could not find a valid modelname
+```
+
+试过"近似转成 ngspice 的 MOS level 1"（`--vdmos-as-nmos1`）：
+`Vto=1.6, Kp=.17, Rd=0, Rs=.75` → `Id@Vgs=5V,Vds=5V = 0.70 A`，
+而真实 2N7000 在 `Vgs=5V` 大约只有 0.1~0.2 A —— **差 4 倍以上，不可接受**。
+（LTspice 的 VDMOS 自带 triode 限制与 `Kp` 定义都与 level-1 不同。）
+
+→ **需要**：一个 ngspice 兼容的 2N7000 模型（厂商 SPICE 库里的 `NMOS level=1/3` 或 `subckt`），
+或者提供 VDMOS 的原始定义与允许的误差范围，我们手写等价的 subckt（体二极管 + Rds(on) 限制）。
+
+**② `1N4007` 的结电容与恢复时间像是默认值**
+
+模型里 `CJO=1e-11`（10 pF）、`TT=1e-7`（100 ns）；而 1N4007 数据手册典型值是
+`Cj ≈ 15 pF`、`trr ≈ 30 µs`。若确实是通用默认值，高频行为会偏。
+
+对削波用途影响有限（按 §3 仍是 `D2+C1`），但如果要建"整流管削波"的高频细节，建议换一个实测模型。
+
+### 10.2 运放：`models.add` 里**只有符号，没有模型**
+
+文件中 `RC4558`、`TL072` 两段是 **LTspice 的符号定义**（`.asy` 内容：`SYMBOLTYPE`/`LINE`/`PIN`…），
+真实模型指向**外部文件**：
+
+```
+SYMATTR SpiceModel ..\sym\EXTRA\AudioOpamp\TI\RC4558.301
+SYMATTR SpiceModel ..\sym\EXTRA\AudioOpamp\TI\TL072.301
+```
+
+→ 需要提供 `.301` / `.lib` / `.subckt` 本体，否则无法做 oracle 对拍。
+另外 `TL072` / `RC4558` 都是**双运放**，涉及"一个封装两个单元共用电源"的建模（见 §10.3）。
+
+### 10.3 待确认
+
+| 项 | 问题 |
+|---|---|
+| 运放模型 | `.301` 文件能否提供？（或改用我们已有的 `OP07A` 子电路 / 宏模型） |
+| 双运放 | 是否支持"多单元器件"（`U1A`/`U1B` 共享电源）？IR 与器件库都需要扩展 |
+| 2N7000 | 提供 ngspice 兼容模型，还是接受我们手写等价 subckt？ |
+| 1N4007 | 是否接受当前模型（`Cjo=10p`），还是换实测模型？ |
+
 ## 9. 变更记录
 
 | 日期 | 内容 |

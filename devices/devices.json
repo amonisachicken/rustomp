@@ -1,0 +1,182 @@
+{
+  "source": "models.add",
+  "models": [
+    {
+      "name": "AC127",
+      "spice_type": "NPN",
+      "class": "GeNpn",
+      "params": {
+        "is": "5u",
+        "isc": "5u",
+        "ise": "600n",
+        "ikf": "300m",
+        "itf": "300m",
+        "nc": "2",
+        "ne": "2",
+        "bf": "160",
+        "br": "5",
+        "rb": "100",
+        "rc": "1.5",
+        "vaf": "50",
+        "var": "50",
+        "cjc": "200p",
+        "cje": "60p",
+        "tr": "3u",
+        "tf": "600n",
+        "fc": "0.5",
+        "eg": "0.72",
+        "vjc": "0.4",
+        "vje": "0.4",
+        "vtf": "4",
+        "mjc": "0.333",
+        "mje": "0.333",
+        "xtb": "1.5",
+        "xtf": "6",
+        "xti": "3"
+      },
+      "dropped": [
+        "vceo",
+        "icrating",
+        "mfg"
+      ],
+      "level_hint": "D3 + C1（模型自带 CJC/CJE/TF/TR，可按需升 C2）",
+      "ngspice_ok": true
+    },
+    {
+      "name": "AC128",
+      "spice_type": "PNP",
+      "class": "GePnp",
+      "params": {
+        "is": "5u",
+        "isc": "1u",
+        "ise": "200n",
+        "ikf": "3",
+        "itf": "1",
+        "nc": "2",
+        "ne": "1.5",
+        "bf": "90",
+        "br": "5",
+        "rb": "7",
+        "rc": "0.2",
+        "re": "0.1",
+        "vaf": "40",
+        "var": "40",
+        "cjc": "250p",
+        "cje": "80p",
+        "tr": "5u",
+        "tf": "1u",
+        "fc": "0.5",
+        "eg": "0.72",
+        "vjc": "0.4",
+        "vje": "0.4",
+        "vtf": "4",
+        "mjc": "0.333",
+        "mje": "0.333",
+        "xtb": "1.5",
+        "xtf": "6",
+        "xti": "3"
+      },
+      "dropped": [
+        "vceo",
+        "icrating",
+        "mfg"
+      ],
+      "level_hint": "D3 + C1（同上）",
+      "ngspice_ok": true
+    },
+    {
+      "name": "1N34A",
+      "spice_type": "D",
+      "class": "GeDiode",
+      "params": {
+        "is": "2.6u",
+        "rs": "6.5",
+        "n": "1.6",
+        "cjo": "0.8p",
+        "eg": "0.67",
+        "bv": "25",
+        "ibv": "0.003"
+      },
+      "dropped": [
+        "type"
+      ],
+      "level_hint": "D2 + C0（模型含 CJO，可升 C1）",
+      "ngspice_ok": true
+    },
+    {
+      "name": "1N4007",
+      "spice_type": "D",
+      "class": "SiDiode",
+      "params": {
+        "is": "7.02767n",
+        "rs": "0.0341512",
+        "n": "1.80803",
+        "eg": "1.05743",
+        "xti": "5",
+        "bv": "1000",
+        "ibv": "5e-08",
+        "cjo": "1e-11",
+        "vj": "0.7",
+        "m": "0.5",
+        "fc": "0.5",
+        "tt": "1e-07"
+      },
+      "dropped": [
+        "mfg",
+        "type"
+      ],
+      "level_hint": "D2 + C1（含 CJO/TT）",
+      "ngspice_ok": true
+    },
+    {
+      "name": "2N7000",
+      "spice_type": "VDMOS",
+      "class": "NMos",
+      "params": {},
+      "dropped": [
+        "rg",
+        "vto",
+        "rd",
+        "rs",
+        "rb",
+        "kp",
+        "mtriode",
+        "cgdmax",
+        "cgdmin",
+        "cgs",
+        "cjo",
+        "is",
+        "mfg",
+        "vds",
+        "ron",
+        "qg"
+      ],
+      "level_hint": "D2 + C1（需先解决 VDMOS 兼容）",
+      "ngspice_ok": false
+    }
+  ],
+  "symbols_only": [
+    {
+      "name": "RC4558",
+      "pins": [
+        "In+",
+        "In-",
+        "V+",
+        "V-",
+        "OUT"
+      ],
+      "spice_model_ref": "..\\sym\\EXTRA\\AudioOpamp\\TI\\RC4558.301"
+    },
+    {
+      "name": "TL072",
+      "pins": [
+        "In+",
+        "In-",
+        "V+",
+        "V-",
+        "OUT"
+      ],
+      "spice_model_ref": "..\\sym\\EXTRA\\AudioOpamp\\TI\\TL072.301"
+    }
+  ]
+}
