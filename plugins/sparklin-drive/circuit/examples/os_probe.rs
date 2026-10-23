@@ -2,7 +2,8 @@
 //   输出基波幅度 与 THD(2..9)
 // 结论（见 DEVLOG E11）：**1x 直接跑 48k 电路会失效**（隐含求解欠解析），
 // 2x 在 8 kHz 输入下已经开始失真，4x 起稳定。
-use rustomp_dsp::{Engine, Fakedist, Params};
+use rustomp_dsp::Engine;
+use sparklin_drive_circuit::{Fakedist, Params};
 use std::f64::consts::TAU;
 
 fn measure(fs_host: f64, os: usize, f0: f64, amp: f64) -> (f64, f64) {

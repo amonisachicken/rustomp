@@ -2,7 +2,8 @@
 //
 // 约束：电路是**逐样本递推**的，单声道内部无法并行；唯一的并行维度是左右声道。
 // 这里测：单线程 vs 双线程（自旋握手）处理同样多的音频，看真实加速比。
-use rustomp_dsp::{Engine, Params};
+use rustomp_dsp::Engine;
+use sparklin_drive_circuit::{Fakedist, Params};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -23,8 +24,8 @@ fn main() {
     let fs = 48_000.0;
 
     // ---------- 单线程基线 ----------
-    let mut e0 = Engine::new(fs);
-    let mut e1 = Engine::new(fs);
+    let mut e0 = Engine::<Fakedist>::new(fs);
+    let mut e1 = Engine::<Fakedist>::new(fs);
     e0.set_params(Params::default());
     e1.set_params(Params::default());
     let input: Vec<f64> = (0..BLOCK)
@@ -51,7 +52,7 @@ fn main() {
         gen: AtomicU64::new(0),
         inbuf: [0.0; BLOCK],
     });
-    let mut e1_worker = Engine::new(fs);
+    let mut e1_worker = Engine::<Fakedist>::new(fs);
     e1_worker.set_params(Params::default());
     let sh = shared.clone();
     let handle = std::thread::spawn(move || {

@@ -62,11 +62,15 @@
 
 ```
 crates/
-  rustomp-dsp/          电路建模 DSP 核心（元件、牛顿、过采样、引擎）
-  rustomp-plugin/       nih-plug 外壳 + egui 界面（示例插件 Sparklin Drive）
+  rustomp-dsp/          框架：Circuit 契约、Engine<C>、元件库、过采样（与电路无关）
+plugins/
+  sparklin-drive/       示例插件（= 下游项目的样板，结构同构）
+    rustomp.toml        身份 / 素材 / 界面坐标（唯一来源）
+    circuit/            电路实现 + 网表 + 对拍测试 + 分析脚本
+    plugin/             nih-plug 外壳 + egui 界面（build.rs 生成身份）
+    assets/             面板与拨杆贴图（含原始设计稿 source/）
 circuits/
-  fakedist/             示例电路：面包板工程、网表、电路解读、ngspice 基线
-  v1-fuzz/              （历史）早期 PCB 网表导出，已被 fakedist 取代
+  v1-fuzz/              （历史）早期 PCB 网表导出
 tools/
   netlist/              .bread → Circuit JSON → SPICE 网表（复用 breadspice 后端）
   oracle/               ngspice 驱动与 ASCII rawfile 解析、冒烟基线

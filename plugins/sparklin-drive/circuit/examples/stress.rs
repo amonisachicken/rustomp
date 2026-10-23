@@ -1,9 +1,10 @@
 // 大信号 / 极端参数 / 不同采样率 的稳定性压力测试
-use rustomp_dsp::{Engine, Params};
+use rustomp_dsp::Engine;
+use sparklin_drive_circuit::{Fakedist, Params};
 use std::f64::consts::TAU;
 
 fn run(fs: f64, gain: f64, level: f64, amp: f64, f0: f64, secs: f64) -> (f64, f64, bool) {
-    let mut e = Engine::new(fs);
+    let mut e = Engine::<Fakedist>::new(fs);
     e.set_params(Params { gain, level, ..Params::default() });
     let t = 1.0 / fs;
     let mut ph: f64 = 0.0;

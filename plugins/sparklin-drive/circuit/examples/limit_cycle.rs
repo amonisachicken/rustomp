@@ -1,4 +1,4 @@
-use rustomp_dsp::{Fakedist, Params};
+use sparklin_drive_circuit::{Fakedist, Params};
 fn main() {
     let fs = 192_000.0; // 4x48k
     let mut c = Fakedist::new(fs);

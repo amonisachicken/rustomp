@@ -1,31 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
-name = "rustomp-plugin"
-description = "rustomp 插件外壳：nih-plug + egui（示例插件 Sparklin Drive）"
+name = "sparklin-drive"
+description = "Sparklin Drive —— rustomp 框架的示例插件（HONEYPIE EFFECTS）"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+publish = false
 
 [lib]
-name = "rustomp_plugin"
+name = "sparklin_drive"
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-# nih-plug 不在 crates.io，必须用 git 依赖并固定 rev
+# 框架（与具体电路无关）
+rustomp-dsp = { workspace = true }
+# 本插件的电路
+sparklin-drive-circuit = { path = "../circuit" }
+
+# nih-plug 不在 crates.io，用 git 依赖并固定 rev
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
-rustomp-dsp.workspace = true
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
-# 只用来解一张内嵌的面板 PNG（无 SVG/字体依赖）
+# 只用来解内嵌的面板 PNG
 png = "0.17"
 
 [features]
 default = []
 # 声道变体（Waves 式：单声道 / 立体声各出一个独立插件）
-#   mono    只支持 1 进 1 出
-#   stereo  只支持 2 进 2 出
-#   （都不开 = 同时支持，AU 报 {1,1} 和 {2,2}）
 mono = []
 stereo = []
-# 调试用：音频线程里一旦发生堆分配就 panic（会大幅变慢）
+# 调试：音频线程里一旦分配内存就 panic
 assert_process_allocs = ["nih_plug/assert_process_allocs"]

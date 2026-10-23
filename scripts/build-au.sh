@@ -15,8 +15,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-PKG="rustomp-plugin"
 source "$ROOT/scripts/plugin-env.sh"
+PKG="$PLUGIN_PACKAGE"
 AU_TYPE="aufx"
 AU_SUBTYPE="${AU_SUBTYPE_DUAL}"
 BUNDLE_ID="${AU_BUNDLE_ID}"

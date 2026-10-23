@@ -10,7 +10,7 @@
 //!         / 5k +27.96 / 10k +25.92（峰值 +28.42dB @ 2.72kHz）
 //! - THD：输入峰值 0.2V → 27.57%；1mV → 0.283%
 
-use rustomp_dsp::{Fakedist, Params};
+use sparklin_drive_circuit::{Fakedist, Params};
 use std::f64::consts::TAU;
 
 const FS: f64 = 192_000.0;

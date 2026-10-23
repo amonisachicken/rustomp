@@ -5,14 +5,18 @@
 # 以后换插件 = 新建一个同构的目录 + 一份 rustomp.toml。
 
 [plugin]
+# cargo 包名（bundler.toml 的键）
+package = "sparklin-drive"
 name = "Sparklin Drive"
 vendor = "HONEYPIE EFFECTS"
 url = "https://github.com/amonisachicken/rustomp"
 email = ""
 # CLAP id 会按变体追加后缀（.mono / .stereo）
 clap_id = "com.honeypieeffects.sparklindrive"
-# VST3 class id：必须恰好 16 字节，发布后不可改
+# VST3 class id：必须恰好 16 字节，发布后不可改（每个变体各不相同）
 vst3_class_id = "SparklinDriveV01"
+vst3_class_id_mono = "SparklinDriveM01"
+vst3_class_id_stereo = "SparklinDriveS01"
 
 [au]
 # AU 四字符码：发布后不可改

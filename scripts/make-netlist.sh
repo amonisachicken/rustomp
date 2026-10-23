@@ -13,7 +13,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-DIR="${1:?用法: $0 <工程目录，如 circuits/fakedist>}"
+DIR="${1:-plugins/sparklin-drive/circuit/netlist}"
 BREAD=$(find "$DIR" -maxdepth 1 -name "*.bread" | head -1)
 [ -n "$BREAD" ] || { echo "在 $DIR 里找不到 *.bread"; exit 1; }
 

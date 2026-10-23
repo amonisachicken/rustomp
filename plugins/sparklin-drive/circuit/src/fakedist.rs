@@ -31,7 +31,7 @@
 //! 见 DEVLOG ADR-001：线性部分用宏模型，**用 GBW/压摆率体现 OP07 的性格**
 //! （0.6 MHz / 0.25 V/µs —— 高频滚降的主要来源）。
 
-use crate::diode::Diode1n4148;
+use rustomp_dsp::{Circuit, Diode1n4148};
 
 /// 牛顿迭代上限
 const MAX_NEWTON_ITERS: u32 = 24;
@@ -442,4 +442,29 @@ pub struct Probe {
     pub vc2: f64,
     pub vc3: f64,
     pub iters: u32,
+}
+
+// ---------------------------------------------------------------- 框架契约
+impl Circuit for Fakedist {
+    type Params = Params;
+
+    fn new(sample_rate: f64) -> Self {
+        Fakedist::new(sample_rate)
+    }
+    fn set_sample_rate(&mut self, fs: f64) {
+        Fakedist::set_sample_rate(self, fs);
+    }
+    fn set_params(&mut self, p: Params) {
+        Fakedist::set_params(self, p);
+    }
+    fn reset(&mut self) {
+        Fakedist::reset(self);
+    }
+    fn process(&mut self, x: f64) -> f64 {
+        Fakedist::process(self, x)
+    }
+    /// 削波强度：|u| 超过 ~0.55 V 起亮，0.55→1.35 V 映射到 0..1
+    fn activity(&self) -> f32 {
+        (((self.clip_voltage() - 0.55) / 0.8).clamp(0.0, 1.0)) as f32
+    }
 }

@@ -1,5 +1,6 @@
 // CPU 开销：48 kHz、立体声（2 × Engine）、4x 过采样
-use rustomp_dsp::{Engine, Params};
+use rustomp_dsp::Engine;
+use sparklin_drive_circuit::{Fakedist, Params};
 use std::f64::consts::TAU;
 use std::time::Instant;
 
@@ -7,7 +8,7 @@ fn main() {
     let fs = 48_000.0;
     let secs = 10.0;
     let n = (fs * secs) as usize;
-    let mut e = [Engine::new(fs), Engine::new(fs)];
+    let mut e: [Engine<Fakedist>; 2] = std::array::from_fn(|_| Engine::<Fakedist>::new(fs));
     for x in e.iter_mut() {
         x.set_params(Params::default());
     }

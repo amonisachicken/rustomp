@@ -12,33 +12,16 @@
 
 use nih_plug::prelude::*;
 use nih_plug_egui::{create_egui_editor, egui, EguiState};
-use rustomp_dsp::{Engine, Params as DspParams};
+use rustomp_dsp::Engine;
+use sparklin_drive_circuit::{Fakedist, Params as DspParams};
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc,
 };
 
 // ---------------------------------------------------------------- 身份
-#[cfg(feature = "mono")]
-const PLUGIN_NAME: &str = "Sparklin Drive Mono";
-#[cfg(feature = "stereo")]
-const PLUGIN_NAME: &str = "Sparklin Drive Stereo";
-#[cfg(not(any(feature = "mono", feature = "stereo")))]
-const PLUGIN_NAME: &str = "Sparklin Drive";
-
-#[cfg(feature = "mono")]
-const CLAP_ID: &str = "com.honeypieeffects.sparklindrive.mono";
-#[cfg(feature = "stereo")]
-const CLAP_ID: &str = "com.honeypieeffects.sparklindrive.stereo";
-#[cfg(not(any(feature = "mono", feature = "stereo")))]
-const CLAP_ID: &str = "com.honeypieeffects.sparklindrive";
-
-#[cfg(feature = "mono")]
-const VST3_ID: [u8; 16] = *b"SparklinDriveMo1";
-#[cfg(feature = "stereo")]
-const VST3_ID: [u8; 16] = *b"SparklinDriveSt1";
-#[cfg(not(any(feature = "mono", feature = "stereo")))]
-const VST3_ID: [u8; 16] = *b"SparklinDriveV01";
+// 由 `build.rs` 从 `plugins/sparklin-drive/rustomp.toml` 生成（唯一来源）。
+include!(concat!(env!("OUT_DIR"), "/identity.rs"));
 
 #[cfg(all(feature = "mono", feature = "stereo"))]
 compile_error!("mono 与 stereo 两个 feature 不能同时开启");
@@ -80,11 +63,11 @@ const AUDIO_LAYOUTS: &[AudioIOLayout] = &[
 // ---------------------------------------------------------------- 面板几何
 // 全部取自 assets/panel.svg 的 viewBox 0 0 170.08 317.48
 mod ui {
-    pub const SVG_W: f32 = 170.08;
-    pub const SVG_H: f32 = 317.48;
+    pub const SVG_W: f32 = crate::META_SVG_W;
+    pub const SVG_H: f32 = crate::META_SVG_H;
     /// 窗口逻辑尺寸（2 倍素材）
-    pub const WIN_W: u32 = 340;
-    pub const WIN_H: u32 = 635;
+    pub const WIN_W: u32 = crate::META_WIN_W;
+    pub const WIN_H: u32 = crate::META_WIN_H;
 
     pub const LEVEL: (f32, f32) = (43.41, 71.59);
     pub const GAIN: (f32, f32) = (126.51, 70.43);
@@ -119,10 +102,10 @@ mod ui {
 }
 
 /// 面板底图（`inkscape --export-width=680` 从 assets/panel.svg 生成）
-const PANEL_PNG: &[u8] = include_bytes!("../../../assets/panel@2x.png");
+const PANEL_PNG: &[u8] = include_bytes!("../../assets/panel@2x.png");
 /// 削波模式开关的两种状态（用户提供，`inkscape --export-width=95` 生成 4x）
-const SWITCH_UP_PNG: &[u8] = include_bytes!("../../../assets/switch_up@4x.png");
-const SWITCH_DOWN_PNG: &[u8] = include_bytes!("../../../assets/switch_down@4x.png");
+const SWITCH_UP_PNG: &[u8] = include_bytes!("../../assets/switch_up@4x.png");
+const SWITCH_DOWN_PNG: &[u8] = include_bytes!("../../assets/switch_down@4x.png");
 
 // ---------------------------------------------------------------- 参数
 #[derive(Params)]
@@ -169,7 +152,7 @@ const MAX_CHANNELS: usize = 2;
 
 pub struct SparklinDrive {
     params: Arc<SparklinParams>,
-    engines: [Engine; MAX_CHANNELS],
+    engines: [Engine<Fakedist>; MAX_CHANNELS],
     /// 削波指示（0..1），GUI 读取
     clip_level: Arc<AtomicU32>, // f32 bits
 }
@@ -178,17 +161,17 @@ impl Default for SparklinDrive {
     fn default() -> Self {
         Self {
             params: Arc::new(SparklinParams::default()),
-            engines: [Engine::new(48_000.0), Engine::new(48_000.0)],
+            engines: std::array::from_fn(|_| Engine::<Fakedist>::new(48_000.0)),
             clip_level: Arc::new(AtomicU32::new(0)),
         }
     }
 }
 
 impl Plugin for SparklinDrive {
-    const NAME: &'static str = PLUGIN_NAME;
-    const VENDOR: &'static str = "HONEYPIE EFFECTS";
-    const URL: &'static str = "https://github.com/amonisachicken/rustomp";
-    const EMAIL: &'static str = "";
+    const NAME: &'static str = META_NAME;
+    const VENDOR: &'static str = META_VENDOR;
+    const URL: &'static str = META_URL;
+    const EMAIL: &'static str = META_EMAIL;
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = AUDIO_LAYOUTS;
@@ -212,7 +195,7 @@ impl Plugin for SparklinDrive {
         for e in self.engines.iter_mut() {
             e.set_sample_rate(fs);
         }
-        context.set_latency_samples(Engine::latency_samples());
+        context.set_latency_samples(Engine::<Fakedist>::latency_samples());
         true
     }
 
@@ -243,7 +226,7 @@ impl Plugin for SparklinDrive {
                 if let Some(e) = self.engines.get_mut(ch) {
                     e.set_params(p);
                     *sample = e.process(*sample as f64) as f32;
-                    peak = peak.max(e.clip_indicator());
+                    peak = peak.max(e.activity_indicator());
                 }
             }
         }
@@ -287,7 +270,7 @@ impl Plugin for SparklinDrive {
 }
 
 impl ClapPlugin for SparklinDrive {
-    const CLAP_ID: &'static str = CLAP_ID;
+    const CLAP_ID: &'static str = META_CLAP_ID;
     const CLAP_DESCRIPTION: Option<&'static str> =
         Some("Circuit-modelled drive: OP07 with feedback-loop diode clipping");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
@@ -303,7 +286,7 @@ impl ClapPlugin for SparklinDrive {
 }
 
 impl Vst3Plugin for SparklinDrive {
-    const VST3_CLASS_ID: [u8; 16] = VST3_ID;
+    const VST3_CLASS_ID: [u8; 16] = META_VST3_ID;
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Fx, Vst3SubCategory::Distortion];
 }

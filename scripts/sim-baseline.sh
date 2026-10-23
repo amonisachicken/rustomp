@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-DIR="${1:?用法: $0 <含 netlist.cir 的目录>}"
+DIR="${1:-plugins/sparklin-drive/circuit/netlist}"
 NET="$DIR/netlist.cir"
 [ -f "$NET" ] || { echo "找不到 $NET"; exit 1; }
 

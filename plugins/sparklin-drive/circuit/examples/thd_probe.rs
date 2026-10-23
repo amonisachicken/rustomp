@@ -1,5 +1,5 @@
 // 用多采样率跑 THD，看采样率收敛性
-use rustomp_dsp::{Fakedist, Params};
+use sparklin_drive_circuit::{Fakedist, Params};
 use std::f64::consts::TAU;
 
 fn thd(fs: f64, amp: f64, f0: f64, nh: usize) -> (f64, f64, Vec<f64>) {

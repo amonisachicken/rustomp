@@ -1,5 +1,6 @@
 // 瞬态/大信号压力测试：复现"突然自激"
-use rustomp_dsp::{Engine, Params};
+use rustomp_dsp::Engine;
+use sparklin_drive_circuit::{Fakedist, Params};
 use std::f64::consts::TAU;
 
 fn zero_cross_rate(y: &[f64]) -> f64 {
@@ -9,7 +10,7 @@ fn zero_cross_rate(y: &[f64]) -> f64 {
 }
 
 fn run(name: &str, fs: f64, gain: f64, gen: impl Fn(usize, f64) -> f64, secs: f64) {
-    let mut e = Engine::new(fs);
+    let mut e = Engine::<Fakedist>::new(fs);
     e.set_params(Params { gain, level: 0.5, ..Params::default() });
     let t = 1.0 / fs;
     let n = (secs * fs) as usize;

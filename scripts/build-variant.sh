@@ -35,7 +35,7 @@ MANUFACTURER_NAME="$AU_MANUFACTURER_NAME"
 SRC_BASE="$PLUGIN_NAME"
 
 echo "==> [1/5] 构建 ${NAME}（通用二进制，feature=${VARIANT}）"
-cargo nih-plug bundle-universal rustomp-plugin --release --features "$VARIANT"
+cargo nih-plug bundle-universal "$PLUGIN_PACKAGE" --release --features "$VARIANT"
 
 SRC_CLAP="target/bundled/${SRC_BASE}.clap"
 SRC_VST3="target/bundled/${SRC_BASE}.vst3"

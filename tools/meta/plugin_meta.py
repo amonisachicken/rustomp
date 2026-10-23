@@ -45,6 +45,9 @@ def main() -> None:
         sys.exit(1)
     path, mode = sys.argv[1], sys.argv[2]
     data = load(path)
+    variant = "dual"
+    if "--variant" in sys.argv:
+        variant = sys.argv[sys.argv.index("--variant") + 1]
 
     if mode == "--get":
         print(get(data, sys.argv[3]))
@@ -60,6 +63,7 @@ def main() -> None:
         pairs = {
             # 目录
             "PLUGIN_DIR": str(Path(path).resolve().parent),
+            "PLUGIN_PACKAGE": p["package"],
             # 身份
             "PLUGIN_NAME": p["name"],
             "PLUGIN_VENDOR": p["vendor"],
@@ -90,17 +94,23 @@ def main() -> None:
         return
 
     if mode == "--rust":
-        # 由插件的 build.rs 调用，写入 OUT_DIR/identity.rs
-        print(f"pub const PLUGIN_NAME: &str = {rust_str(p['name'])};")
-        print(f"pub const VENDOR: &str = {rust_str(p['vendor'])};")
-        print(f"pub const URL: &str = {rust_str(p.get('url', ''))};")
-        print(f"pub const EMAIL: &str = {rust_str(p.get('email', ''))};")
-        print(f"pub const CLAP_ID: &str = {rust_str(p['clap_id'])};")
-        print(f"pub const VST3_ID: [u8; 16] = *{rust_str(p['vst3_class_id'])}.as_bytes();")
-        print(f"pub const WIN_W: u32 = {ui['window_width']};")
-        print(f"pub const WIN_H: u32 = {ui['window_height']};")
-        print(f"pub const SVG_W: f32 = {ui['svg_width']};")
-        print(f"pub const SVG_H: f32 = {ui['svg_height']};")
+        # 由插件的 build.rs 调用，写入 OUT_DIR/identity.rs。
+        # 变体（mono/stereo/dual）会改变显示名、CLAP id、VST3 id。
+        suffix = {"mono": " Mono", "stereo": " Stereo", "dual": ""}[variant]
+        id_suffix = {"mono": ".mono", "stereo": ".stereo", "dual": ""}[variant]
+        vst3 = p.get(f"vst3_class_id_{variant}", p["vst3_class_id"])
+        if len(vst3) != 16:
+            sys.exit(f"VST3 class id 必须 16 字节：{vst3!r}")
+        print(f"pub const META_NAME: &str = {rust_str(p['name'] + suffix)};")
+        print(f"pub const META_VENDOR: &str = {rust_str(p['vendor'])};")
+        print(f"pub const META_URL: &str = {rust_str(p.get('url', ''))};")
+        print(f"pub const META_EMAIL: &str = {rust_str(p.get('email', ''))};")
+        print(f"pub const META_CLAP_ID: &str = {rust_str(p['clap_id'] + id_suffix)};")
+        print(f"pub const META_VST3_ID: [u8; 16] = *b{rust_str(vst3)};")
+        print(f"pub const META_WIN_W: u32 = {ui['window_width']};")
+        print(f"pub const META_WIN_H: u32 = {ui['window_height']};")
+        print(f"pub const META_SVG_W: f32 = {ui['svg_width']};")
+        print(f"pub const META_SVG_H: f32 = {ui['svg_height']};")
         return
 
     print(f"未知模式：{mode}")

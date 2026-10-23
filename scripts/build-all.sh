@@ -23,11 +23,11 @@ for a in "$@"; do
     esac
 done
 
-echo "############ 1/2  Rustomp Fuzz Mono ############"
+echo "############ 1/2  单声道变体 ############"
 ./scripts/build-variant.sh mono
 
 echo
-echo "############ 2/2  Rustomp Fuzz Stereo ############"
+echo "############ 2/2  立体声变体 ############"
 ./scripts/build-variant.sh stereo
 
 if [ "$WITH_DUAL" = "1" ]; then

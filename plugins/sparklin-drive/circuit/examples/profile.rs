@@ -1,5 +1,6 @@
 // CPU 成本分解：过采样 FIR / 电路求解 / 二极管模型
-use rustomp_dsp::{Diode1n4148, Engine, Fakedist, Oversampler4x, Params};
+use rustomp_dsp::{Diode1n4148, Engine, Oversampler4x};
+use sparklin_drive_circuit::{Fakedist, Params};
 use std::f64::consts::TAU;
 use std::hint::black_box;
 use std::time::Instant;
@@ -45,7 +46,7 @@ fn main() {
     };
 
     let eng_ns = {
-        let mut e = Engine::new(48_000.0);
+        let mut e = Engine::<Fakedist>::new(48_000.0);
         e.set_params(Params::default());
         let mut ph: f64 = 0.0;
         bench("引擎：1 个 48k 样本（4x 过采样 + 4 次电路）", N / 4, || {

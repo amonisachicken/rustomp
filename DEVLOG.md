@@ -1542,6 +1542,89 @@ dual    → Sparklin Drive         SPd1 / HpEf / ...sparklindrive
 
 ---
 
+## E24：架构调整 第 2 步 —— 框架与电路分离（2026-10-23）
+
+### 24.1 结果：框架里已经看不到任何插件痕迹
+
+```
+$ grep -rn "Fakedist\|sparklin" crates/rustomp-dsp/src/
+（无输出）
+```
+
+框架现在只有：`Circuit` trait、`Engine<C>`、`Diode1n4148`、`Oversampler4x`。
+
+### 24.2 引入电路契约 `Circuit`
+
+```rust
+pub trait Circuit {
+    type Params: Copy + Default;
+    fn new(sample_rate: f64) -> Self;
+    fn set_sample_rate(&mut self, sample_rate: f64);
+    fn set_params(&mut self, params: Self::Params);
+    fn reset(&mut self);
+    fn process(&mut self, x: f64) -> f64;
+    fn activity(&self) -> f32 { 0.0 }   // 削波/活动指示（0..1）
+}
+```
+
+`Engine<C: Circuit>` 负责过采样、true-bypass（干路延迟对齐 + 5 ms 淡化）、
+活动指示包络、NaN/失控熔断 —— **对电路一无所知**。
+`Fakedist` 在插件侧实现 `Circuit`，`activity()` 里做 `(|u|−0.55)/0.8` 的阈值映射。
+
+### 24.3 目录重组
+
+```
+plugins/sparklin-drive/
+  rustomp.toml            身份 / 素材 / 界面坐标（唯一来源）
+  circuit/                crate: sparklin-drive-circuit
+    src/fakedist.rs       电路实现（原在框架里）
+    netlist/              .bread、netlist.cir、CIRCUIT.md、baseline.txt
+    tests/{baseline,engine}.rs   对拍 + 引擎级测试
+    examples/             profile / os_probe / transient / stress / bench / mt_bench ...
+  plugin/                 crate: sparklin-drive（cdylib）
+    src/lib.rs            nih-plug 外壳 + egui 界面
+    build.rs              从 rustomp.toml 生成 identity.rs
+  assets/                 panel@2x.png、switch_*@4x.png、source/
+```
+
+框架侧保留 `crates/rustomp-dsp`（含 `examples/diode_bench.rs` 这类与电路无关的基准）。
+
+### 24.4 身份只有一个来源
+
+`plugin/build.rs` 调 `tools/meta/plugin_meta.py --rust --variant <mono|stereo|dual>`
+生成 `OUT_DIR/identity.rs`：显示名（带变体后缀）、CLAP id（带 `.mono/.stereo`）、
+VST3 class id（三套）、窗口与画布尺寸。插件 `lib.rs` 里不再有任何硬编码身份。
+
+VST3 三个 class id 必须各 16 字节且互不相同，写在 TOML 里：
+
+```toml
+vst3_class_id = "SparklinDriveV01"
+vst3_class_id_mono = "SparklinDriveM01"
+vst3_class_id_stereo = "SparklinDriveS01"
+```
+
+### 24.5 踩坑
+
+1. **`include_bytes!` 是相对源文件**：从 `plugin/src/lib.rs` 引用
+   `plugins/sparklin-drive/assets/` 要写 `../../assets/`（不是 `../assets/`）。
+2. **`source` 脚本的位置参数陷阱**：`plugin-env.sh` 里用 `$1` 会读到**调用者**的参数
+   （`build-variant.sh mono` 时 `$1` = "mono" → 去找 `mono/rustomp.toml`）。
+   改用环境变量 `PLUGIN_DIR`。
+3. `build.rs` 里相对路径要按 crate 根算：`plugin/` → 仓库根是 `../../../`。
+4. `[expr; N]` 数组初始化要求 `Copy`；`Engine` 不实现 `Copy` → 用 `std::array::from_fn`。
+5. TOML 里的 VST3 id 用 `*b"..."` 而不是 `*"...".as_bytes()`（后者长度不是常量）。
+
+### 24.6 验证
+
+```
+框架 + 电路测试：  6 + 4 + 4 项全绿（含 baseline 对拍、引擎瞬态回归、多宿主采样率）
+AU 自检：          aufx / SPm1 / HpEf，4 参数（Gain / Clip Mode SYM / Level / Bypass），
+                   CocoaUI ✓，音频通路 ✓
+已安装：           Sparklin Drive Mono / Stereo
+```
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1783,6 +1866,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **架构调整第 2 步：框架/电路分离**（E24）：引入 `Circuit` trait 与 `Engine<C>`；`fakedist` 移入 `plugins/sparklin-drive/circuit`，插件外壳移入 `plugin/`，身份由 `build.rs` 从 `rustomp.toml` 生成；框架内已无任何插件痕迹 |
 | 2026-10-23 | **拨杆对齐 + 按下缩小修复**（E21）：两态贴图六边形基线相差 1.53，改为分别偏移（以水平两顶点连线为基准）；按下反馈改用 `Response::is_pointer_button_down_on()` 并以六边形基线中点为缩放原点 |
 | 2026-10-23 | **开源发布**（E20）：定位为「Rust 电路建模框架 + Sparklin Drive 示例插件」并新增根 README；拨杆发糙的真因是 PNG alpha 被忽略（改不透明导出）；拨杆改为底图删除 + 独立贴图；已推送 GitHub |
 | 2026-10-23 | **界面打磨**（E19）：拨杆用真实双状态贴图（六角形对齐、无重影）、LED 加外发光拉开对比、bypass 改为按住缩 0.9 倍（松开恢复）、厂商名统一为 HONEYPIE EFFECTS |
