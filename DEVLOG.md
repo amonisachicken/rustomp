@@ -952,6 +952,60 @@ killall cfprefsd
 
 ---
 
+## E14：Waves 式声道变体（2026-10-23）
+
+用户建议：像 Waves 那样分别出「只支持单声道」和「只支持立体声」的独立插件。
+这个思路正确，而且有个额外收益：**新插件身份 = 新缓存条目 = 宿主强制全新扫描**，
+天然绕开任何陈旧缓存。
+
+### 14.1 先确认：缓存确实一直没刷新
+
+`./scripts/check-au.sh` 显示 Logic 的缓存里仍是：
+
+```
+MIDIProtocol: 1              ← 这是**两次修复之前**的值
+ChannelConfigurations: ['2/2']
+```
+
+如果 Logic 真的重扫过，`MIDIProtocol` 必然是 0（MusicDevice 属性已不再宣称）。
+→ 说明 `plutil -remove` 没生效：**Logic 运行时会把内存里的 pref 写回**。
+新增 `scripts/reset-logic-cache.sh`：先检测 Logic 是否在运行，退出后才删除并 `killall cfprefsd`。
+
+### 14.2 实现：三个独立身份
+
+插件 crate 增加 `mono` / `stereo` feature，各自切换 `AUDIO_IO_LAYOUTS`、
+插件名、CLAP id、VST3 class id（AU subtype 由构建脚本传入）：
+
+| 插件 | AU 码 | 通道能力 | CLAP id |
+|---|---|---|---|
+| `Rustomp Fuzz`（默认，双布局） | `aufx / RFz1 / Amch` | `{1,1}` + `{2,2}` | `...fuzz` |
+| **`Rustomp Fuzz Mono`** | **`aufx / RFm1 / Amch`** | **`{1,1}`** | `...fuzz.mono` |
+| **`Rustomp Fuzz Stereo`** | **`aufx / RFs1 / Amch`** | **`{2,2}`** | `...fuzz.stereo` |
+
+新脚本 `scripts/build-variant.sh mono|stereo`：构建 → 重命名 bundle 并修正 plist →
+clap-wrapper 生成 AU → 签名 → 安装 → 自检。
+
+### 14.3 验证（三个都装好，都能出声）
+
+```
+Rustomp Fuzz Mono    → in=1 out=1              RMS=0.348448 ✓
+Rustomp Fuzz Stereo  → in=2 out=2              RMS=0.348448 ✓
+Rustomp Fuzz         → in=2 out=2 / in=1 out=1 RMS=0.348448 ✓
+```
+
+### 14.4 踩坑
+
+`build-variant.sh` 第一版报 `NAME: unbound variable`：
+macOS 自带 bash 3.2 会把**紧跟变量的多字节字符**（如 `$NAME（` 里的全角括号）
+当成变量名的一部分。→ 变量后面跟中文时必须写 `${NAME}`。
+
+### 14.5 量产时的取舍
+
+三个身份共存只是过渡方案。确定 Logic 能正常使用单声道后，
+建议最终只保留需要的组合（例如只发 `Mono` + `Stereo` 两个，或只发双布局一个）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1133,6 +1187,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **Waves 式声道变体**（E14）：新增 `mono`/`stereo` feature 与 `scripts/build-variant.sh`，产出三个独立身份（RFz1 双布局 / **RFm1 单声道** / **RFs1 立体声**），均已安装并通过渲染自检。发现 Logic 的 pref 缓存从未真正刷新（`MIDIProtocol` 仍是修复前的 1）——Logic 运行时会把内存值写回，故新增 `reset-logic-cache.sh`（先查 Logic 是否在跑）。另修 bash 3.2 的全角括号变量名坑 |
 | 2026-10-23 | **修复 Logic 菜单里找不到（E13 续）**：真因是声道布局——nih-plug 有 Mono+Stereo 两种 `audio-ports-config`，但 clap-wrapper 只认 `configurable-audio-ports`，导致 AU 只报 `{2,2}`，单声道音轨的插入菜单把它过滤掉。补丁让 wrapper 用 `audio-ports-config` 枚举并 `select()`；实测 AU 现在同时报 2/2 与 1/1，单/立体声渲染均正常 |
 | 2026-10-23 | **修复 Logic 分类错误**（E13）：clap-wrapper 无条件宣称 MIDI 属性 → Logic 缓存 `MIDIProtocol=1` → 被当成 MIDI 控制效果器只出现在软件乐器槽。用 `patches/0001-*` 让 AU 只在真有 note port 时才宣称 MIDI；au-smoke 增加该检查 |
 | 2026-10-23 | **修复自激 bug**（E12）：定位到牛顿无阻尼 + `v_out` 硬钳位不一致 + 状态无限幅，三者叠加导致瞬态后 ~10kHz 极限环；改为阻尼牛顿+残差判据+失败兜底+状态限幅+去掉钳位+引擎级复位。精度不变（h2 3.915→3.915），新增瞬态回归测试。同时取证：AU 是标准 `aufx`（1 进 1 出、{2,2}），Logic 插槽异常需对照实验 |

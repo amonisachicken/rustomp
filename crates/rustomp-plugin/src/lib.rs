@@ -17,8 +17,70 @@ use nih_plug::prelude::*;
 use rustomp_dsp::{Engine, Params as DspParams};
 use std::sync::Arc;
 
-/// 语音道数（按最大 2 声道分配实例）。
+/// 声道数上限（按最大 2 声道分配实例）。
 const MAX_CHANNELS: usize = 2;
+
+#[cfg(all(feature = "mono", feature = "stereo"))]
+compile_error!("mono 与 stereo 两个 feature 不能同时开启");
+
+/// 声道布局：由 feature 决定。
+///
+/// Waves 式做法：单声道 / 立体声各出一个独立插件身份（独立 AU subtype），
+/// 这样宿主在单声道通道条上不会因为声道能力不匹配而把它过滤掉。
+#[cfg(feature = "mono")]
+const AUDIO_LAYOUTS: &[AudioIOLayout] = &[AudioIOLayout {
+    main_input_channels: NonZeroU32::new(1),
+    main_output_channels: NonZeroU32::new(1),
+    aux_input_ports: &[],
+    aux_output_ports: &[],
+    names: PortNames::const_default(),
+}];
+
+#[cfg(feature = "stereo")]
+const AUDIO_LAYOUTS: &[AudioIOLayout] = &[AudioIOLayout {
+    main_input_channels: NonZeroU32::new(2),
+    main_output_channels: NonZeroU32::new(2),
+    aux_input_ports: &[],
+    aux_output_ports: &[],
+    names: PortNames::const_default(),
+}];
+
+#[cfg(not(any(feature = "mono", feature = "stereo")))]
+const AUDIO_LAYOUTS: &[AudioIOLayout] = &[
+    AudioIOLayout {
+        main_input_channels: NonZeroU32::new(2),
+        main_output_channels: NonZeroU32::new(2),
+        aux_input_ports: &[],
+        aux_output_ports: &[],
+        names: PortNames::const_default(),
+    },
+    AudioIOLayout {
+        main_input_channels: NonZeroU32::new(1),
+        main_output_channels: NonZeroU32::new(1),
+        ..AudioIOLayout::const_default()
+    },
+];
+
+#[cfg(feature = "mono")]
+const PLUGIN_NAME: &str = "Rustomp Fuzz Mono";
+#[cfg(feature = "stereo")]
+const PLUGIN_NAME: &str = "Rustomp Fuzz Stereo";
+#[cfg(not(any(feature = "mono", feature = "stereo")))]
+const PLUGIN_NAME: &str = "Rustomp Fuzz";
+
+#[cfg(feature = "mono")]
+const CLAP_ID: &str = "com.amonisachicken.rustomp.fuzz.mono";
+#[cfg(feature = "stereo")]
+const CLAP_ID: &str = "com.amonisachicken.rustomp.fuzz.stereo";
+#[cfg(not(any(feature = "mono", feature = "stereo")))]
+const CLAP_ID: &str = "com.amonisachicken.rustomp.fuzz";
+
+#[cfg(feature = "mono")]
+const VST3_ID: [u8; 16] = *b"RustompFuzzMono1";
+#[cfg(feature = "stereo")]
+const VST3_ID: [u8; 16] = *b"RustompFuzzSter1";
+#[cfg(not(any(feature = "mono", feature = "stereo")))]
+const VST3_ID: [u8; 16] = *b"RustompFuzzV1M0a";
 
 struct RustompFuzz {
     params: Arc<FuzzParams>,
@@ -72,26 +134,13 @@ impl Default for RustompFuzz {
 }
 
 impl Plugin for RustompFuzz {
-    const NAME: &'static str = "Rustomp Fuzz";
+    const NAME: &'static str = PLUGIN_NAME;
     const VENDOR: &'static str = "amonisachicken";
     const URL: &'static str = "https://github.com/amonisachicken/rustomp";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
-        AudioIOLayout {
-            main_input_channels: NonZeroU32::new(2),
-            main_output_channels: NonZeroU32::new(2),
-            aux_input_ports: &[],
-            aux_output_ports: &[],
-            names: PortNames::const_default(),
-        },
-        AudioIOLayout {
-            main_input_channels: NonZeroU32::new(1),
-            main_output_channels: NonZeroU32::new(1),
-            ..AudioIOLayout::const_default()
-        },
-    ];
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = AUDIO_LAYOUTS;
 
     const MIDI_INPUT: MidiConfig = MidiConfig::None;
     // 参数逐样本平滑即可，不需要宿主切块
@@ -160,22 +209,24 @@ impl Plugin for RustompFuzz {
 }
 
 impl ClapPlugin for RustompFuzz {
-    const CLAP_ID: &'static str = "com.amonisachicken.rustomp.fuzz";
+    const CLAP_ID: &'static str = CLAP_ID;
     const CLAP_DESCRIPTION: Option<&'static str> =
         Some("电路级建模的失真/法兹（OP07 + 非对称二极管削波）");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[
         ClapFeature::AudioEffect,
+        #[cfg(not(feature = "mono"))]
         ClapFeature::Stereo,
+        #[cfg(not(feature = "stereo"))]
         ClapFeature::Mono,
         ClapFeature::Distortion,
     ];
 }
 
 impl Vst3Plugin for RustompFuzz {
-    // 16 字节唯一 ID，一旦发布**不可更改**
-    const VST3_CLASS_ID: [u8; 16] = *b"RustompFuzzV1M0a";
+    // 16 字节唯一 ID，一旦发布**不可更改**（每个变体各不相同）
+    const VST3_CLASS_ID: [u8; 16] = VST3_ID;
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Fx, Vst3SubCategory::Distortion];
 }

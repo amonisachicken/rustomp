@@ -18,5 +18,11 @@ rustomp-dsp.workspace = true
 
 [features]
 default = []
+# 声道变体（Waves 式：单声道 / 立体声各出一个独立插件）
+#   mono    只支持 1 进 1 出
+#   stereo  只支持 2 进 2 出
+#   （都不开 = 同时支持，AU 报 {1,1} 和 {2,2}）
+mono = []
+stereo = []
 # 调试用：音频线程里一旦发生堆分配就 panic（会大幅变慢）
 assert_process_allocs = ["nih_plug/assert_process_allocs"]
