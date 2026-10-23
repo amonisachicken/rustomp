@@ -247,6 +247,14 @@ could not find a valid modelname
 | `D_1N4148` / `D_1N34A` / `D_1N4007` | `devices::Diode`（静态 **D2**：`Is / N / Rs`） | **V-I 与 ngspice 完全一致（0.00%）**，覆盖 1 µA~10 mA 五个数量级 |
 | `BC549C` / `AC127` / `AC128` | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc`） | **Ic 与 Ib 均对拍**：AC127/AC128 ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下） |
 | `J201` | `devices::Jfet`（静态 **D3**：Shichman-Hodges + `Rd/Rs`） | **转移 + 输出特性均 0.00%**（含三极管区 Vds=0.2/0.5 V） |
+| `2N7000` | `devices::Nmos`（静态 **D3**：level-1 + `Rd/Rs`）+ `NMOS_2N7000_BODY` | **沟道 0.00%**（转移 5 点 + 三极管区 3 点）、**体二极管 0.00%**（3 点） |
+| 通用单运放 `OP07` | `devices::OpAmp`（单极点宏模型 + 压摆率 + 输出钳位） | 闭环 -3dB ≈ GBW/11（4× 过采样下误差 <2%）；单位增益跟随误差 <10 mV |
+
+> 运放的两个离散化决定（E38）：
+> 1. **不用显式欧拉**（闭环时间常数小于采样周期，必然发散）；
+> 2. **不用梯形法**（Tustin 在 54 kHz 处把频率轴扭曲 +36%，运放会"变快"）。
+>    用**精确极点离散** `v[n] = a·v[n−1] + b·vd[n]`（`a = e^{−ωp·dt}`），对 `vd` 线性 → MNA 可解进代数环。
+> 3. 应在 **≥4× 过采样**下运行；基带 192 kHz 时 -3 dB 点会偏低约 30%（采样率限制，非模型误差）。
 
 > 精度说明（BJT）：
 > - 实现了 `Is/Bf/Nf/Vaf/Ikf/Ise/Ne/Br/Nr/Var/Ikr/Isc/Nc` 与 `Rb/Re/Rc`；

@@ -5,7 +5,7 @@
 //! 判据（`docs/component-library.md` §5）：`|I| ≥ 1µA` 相对误差 < 2%、绝对电压差 < 5 mV。
 //! 没有 ngspice 时自动跳过。
 
-use rustomp_dsp::{Diode, D_1N34A, D_1N4007, D_1N4148};
+use rustomp_dsp::{Diode, D_1N34A, D_1N4007, D_1N4148, NMOS_2N7000, NMOS_2N7000_BODY};
 use rustomp_oracle::Oracle;
 
 const LIB: &str = include_str!("../../../devices/devices.lib");
@@ -172,4 +172,56 @@ fn jfet_matches_ngspice_dc() {
         println!("  Vds={vd:.1}  ngspice Id={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
     }
     assert!(worst < 0.05, "J201 最大相对误差 {:.2}% 超过 5%", worst * 100.0);
+}
+
+// ---------------------------------------------------------------- MOSFET
+
+/// 2N7000：DSP 侧 `Nmos` 与 SPICE 手写子电路（`N2N7000`）逐点对拍。
+///
+/// 子电路结构：沟道（level-1）+ 体二极管 + Rd/Rs，与 Rust 侧 `Nmos` + `NMOS_2N7000_BODY` 对应。
+#[test]
+fn mosfet_2n7000_matches_ngspice_dc() {
+    let Some(oracle) = Oracle::discover() else {
+        eprintln!("跳过：本机没有 ngspice");
+        return;
+    };
+    let sim = |vgs: f64, vds: f64| -> f64 {
+        let netlist =
+            format!("{LIB}\nVD d 0 {vds}\nVG g 0 {vgs}\nX1 d g 0 N2N7000\n.op\n.end\n");
+        let raw = oracle.run_netlist(&netlist).expect("ngspice 运行失败");
+        raw.get("i(vd)").map(|v| v.last().unwrap().abs()).unwrap_or(0.0)
+    };
+
+    let mut worst = 0.0f64;
+    println!("\n=== 2N7000：转移特性（Vds=5V）===");
+    for &vgs in &[2.0f64, 3.0, 4.0, 5.0, 6.0] {
+        let i_spice = sim(vgs, 5.0);
+        let i_ours = NMOS_2N7000.drain_current(vgs, 5.0);
+        if i_spice < 1e-9 {
+            continue;
+        }
+        let rel = (i_ours - i_spice).abs() / i_spice;
+        worst = worst.max(rel);
+        println!("  Vgs={vgs:.0}V  ngspice={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+    }
+    println!("=== 2N7000：三极管区（Vgs=5V）===");
+    for &vds in &[0.2f64, 0.5, 1.0] {
+        let i_spice = sim(5.0, vds);
+        let i_ours = NMOS_2N7000.drain_current(5.0, vds);
+        let rel = (i_ours - i_spice).abs() / i_spice;
+        worst = worst.max(rel);
+        println!("  Vds={vds:.1}V  ngspice={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+    }
+
+    // 体二极管：Vgs=0、Vds=-1V 时电流全部走体二极管（源→漏）
+    println!("=== 2N7000：体二极管（Vgs=0）===");
+    for &vds in &[-0.6f64, -0.8, -1.0] {
+        let i_spice = sim(0.0, vds);
+        let i_ours = NMOS_2N7000_BODY.current(-vds); // 二极管正向电压 = −vds
+        let rel = (i_ours - i_spice).abs() / i_spice.max(1e-15);
+        worst = worst.max(rel);
+        println!("  Vds={vds:.1}V  ngspice={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+    }
+
+    assert!(worst < 0.05, "2N7000 最大相对误差 {:.2}% 超过 5%", worst * 100.0);
 }

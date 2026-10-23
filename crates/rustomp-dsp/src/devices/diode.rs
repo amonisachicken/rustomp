@@ -26,13 +26,13 @@ pub const VT: f64 = 0.025_865;
 
 impl Diode {
     /// 用 SPICE 参数构造（`n_ideal` 是发射系数，内部乘上 `VT`）。
-    pub fn from_spice(is: f64, n_ideal: f64, rs: f64) -> Self {
+    pub const fn from_spice(is: f64, n_ideal: f64, rs: f64) -> Self {
         let n_vt = n_ideal * VT;
         Self { is, n_vt, rs, inv_n_vt: 1.0 / n_vt }
     }
 
     /// 由两个同型号二极管**串联**得到等效器件（电流相同、电压对半分 ⇒ `N` 与 `Rs` 各翻倍）。
-    pub fn series(self) -> Self {
+    pub const fn series(self) -> Self {
         Self::from_spice(self.is, 2.0 * self.n_vt / VT, 2.0 * self.rs)
     }
 

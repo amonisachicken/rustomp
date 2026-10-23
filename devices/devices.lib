@@ -21,16 +21,17 @@
 *    结构：体二极管（S→D）+ level-1 NMOS 沟道 + 串联 Rd/Rs（限制导通电阻）。
 *    标定目标（数据手册/常见用法）：Vgs=5V,Vds=5V 时 Id ≈ 0.15~0.25A；
 *    Vgs=10V 时 Rds(on) 约 3~5Ω。
-.model D2N7000BD D(IS=1e-12 N=1.5 RS=0.1 CJO=20p)
+.model D2N7000BD D(IS=1e-12 N=1.5 RS=3)
 .subckt N2N7000 D G S
 + params: RDO=2 RSO=1
-* 体二极管（源阳极 → 漏阴极）
 DBD  S D  D2N7000BD
 * 沟道：Vto=1.6, Kp=0.035（level-1 的 Id=(Kp/2)(Vgs-Vto)^2）, LAMBDA=0.02
-MCH  DI G S S NMOS2N7000 L=1u W=1u
+* IS=0：关掉 MOS 内建结，体二极管由下面的 DBD 显式给出（RS 取 Rd+Rs=3Ω）
+* 注意：源极体电阻要串在**沟道源**与外部 S 之间（SI），否则 RS 是悬空的
+MCH  DI G SI S NMOS2N7000 L=1u W=1u
 RD   D  DI R={RDO}
 RS   S  SI R={RSO}
-.model NMOS2N7000 NMOS(LEVEL=1 VTO=1.6 KP=0.035 LAMBDA=0.02
+.model NMOS2N7000 NMOS(LEVEL=1 VTO=1.6 KP=0.035 LAMBDA=0.02 IS=0
 +                CGS=50p CGD=5p CBD=25p PB=0.8 MJ=0.5)
 .ends N2N7000
 

@@ -13,13 +13,17 @@
 //! | 二极管 `1N4148` / `1N34A` / `1N4007` | ✅ 静态完整（Is/N/Rs） |
 //! | BJT `BC549C` / `AC127` / `AC128` | ✅ 静态完整（Gummel-Poon D3，含 Rb/Re/Rc） |
 //! | JFET `J201` | ✅ 静态完整（Shichman-Hodges D3，含 Rd/Rs） |
-//! | MOSFET `2N7000` | ⬜（SPICE 侧已手写子电路并标定） |
-//! | 运放（通用） | ⬜（参数已定，实现随 MNA） |
+//! | MOSFET `2N7000` | ✅ 静态完整（level-1 D3，含 Rd/Rs；体二极管单独接） |
+//! | 运放 `OP07`（通用单运放） | ✅ 参数 + 单极点状态（随 MNA 使用） |
 
 pub mod bjt;
 pub mod diode;
 pub mod jfet;
+pub mod mosfet;
+pub mod opamp;
 
 pub use bjt::{Bjt, AC127, AC128, BC549C};
 pub use jfet::{Jfet, J201};
+pub use mosfet::{Nmos, NMOS_2N7000, NMOS_2N7000_BODY};
+pub use opamp::{OpAmp, OpAmpModel, OpAmpState, OP07};
 pub use diode::{Diode, D_1N34A, D_1N4007, D_1N4148};
