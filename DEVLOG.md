@@ -1735,6 +1735,65 @@ AU：aufx / SPm1 / HpEf，4 参数，CocoaUI ✓，音频通路 ✓
 
 ---
 
+## E27：架构调整 第 5 步 —— 可插拔电路导入 `rustomp-import`（2026-10-23）
+
+### 27.1 设计：先归一化到中间表示，再由 IR 派生产物
+
+```
+ .bread / EasyEDA / KiCad / SPICE ...
+        │  Importer（可插拔，注册在 registry()）
+        ▼
+   ImportedCircuit   ← 中间表示：Element{名字, 类别, 节点(已排序), 值, 模型} + 接地网 + 提示
+        ├── to_spice()     → ngspice 网表元件行（喂给 rustomp-oracle）
+        ├── to_skeleton()  → Rust 电路骨架（写 Circuit 实现的起点）
+        └── to_json()      → 供其它工具消费
+```
+
+新增格式只需实现 [`Importer`]（`id` / `matches` / `import`）并在 `registry()` 里加一行。
+
+### 27.2 首个实现：breadspice `.bread`
+
+按面包板几何规则把 node id 归并成 net（`t{row}{a..e}`→`t{row}L`、
+`t{row}{f..j}`→`t{row}R`、`rail_XX_{i}`→`rail_XX`），再翻译成元件：
+
+| breadspice | 中间表示 |
+|---|---|
+| resistor/capacitor/inductor | `R/C/L`，值 = `数值+单位`（`4.7`+`kΩ` → `4.7k`） |
+| potentiometer | **展开成两段串联电阻** `R{ref}A`/`R{ref}B`，按 `params.percent` 分配 |
+| diode / led | `D`，按引脚的 `a`/`k` 定方向；模型名 = 器件值（LED 红/绿/蓝→`LedRed/…`） |
+| opamp | `X`，引脚按 `IN+ IN- V+ V- OUT` 排序；`OP07`→`OP07A` |
+| npn/pnp、jfet、nmos/pmos | `Q`（C/B/E）、`J`（D/G/S）、`M`（D/G/S） |
+| power / vsine | `V`（含 `SIN(...)` 参数） |
+| wire / jumper | 0.001 Ω |
+| gnd | 把所在 net 记入 `ground_nets`，输出时映射为节点 `0` |
+| oscilloscope 等 | 跳过并写进 `notes` |
+
+`notes` 会把"电位器按 50% 展开""跳过了示波器"这类**需要人确认**的事写进网表注释里。
+
+### 27.3 验证：与旧管线**逐行一致**
+
+用新导入器重新生成的元件行，与之前由 breadspice 后端（`nlgen`）生成的网表
+**完全相同**（22 个顶层元件，节点名/值/顺序一一对应）；差异只剩 `.SUBCKT` 内部行，
+而那些属于模型库，现在单独放在 `circuit/netlist/models.lib` 里。
+
+于是**删掉了两处旧依赖**：
+
+- `tools/netlist/nlgen`（Rust 小工具，依赖 breadspice 的 git 仓库）
+- `tools/netlist/bread_to_circuit.py`（Python 转换器）
+
+**框架现在不再依赖任何外部项目的 git 仓库。** `scripts/make-netlist.sh` 改为：
+`rustomp-import --spice _elements.cir` → `cat _elements.cir models.lib` → `netlist.cir`。
+
+活体对拍重跑通过（h2–h9 与之前完全一致，最大偏差 0.056 pp）。
+
+### 27.4 测试
+
+`rustomp-import` 单测 + 集成测试 3 项：SPICE 值换算、节点名净化、**导入真实
+`fakedist.bread`**（22 元件、接地网 `rail_Lm`、`XU1 … OP07A`、`RP1A … 250k`、
+`DD1 n_t1L n_t10L 1N4148`）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1976,6 +2035,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **架构调整第 5 步：可插拔导入**（E27）：新增 `rustomp-import`（IR + `Importer` trait + breadspice 实现 + `--spice/--skeleton/--json` CLI）；生成的元件行与旧管线逐行一致，**删掉 nlgen 与 bread_to_circuit.py，框架不再依赖外部 git 仓库** |
 | 2026-10-23 | **架构调整第 4 步：对拍接口**（E26）：新增 `rustomp-oracle`（ngspice 驱动 + ASCII rawfile 解析 + **变步长重采样** + 统一测量函数）；插件新增活体对拍测试，h2–h9 最大偏差 0.056 pp；删除 Python 解析器 |
 | 2026-10-23 | **架构调整第 3 步：通用界面层**（E25）：新增 `crates/rustomp-gui`（PanelSpec/控件/ParamAccess/纹理生命周期/draw），界面声明由 build.rs 从 rustomp.toml 生成；插件外壳 559→296 行，框架内无素材与坐标 |
 | 2026-10-23 | **架构调整第 2 步：框架/电路分离**（E24）：引入 `Circuit` trait 与 `Engine<C>`；`fakedist` 移入 `plugins/sparklin-drive/circuit`，插件外壳移入 `plugin/`，身份由 `build.rs` 从 `rustomp.toml` 生成；框架内已无任何插件痕迹 |

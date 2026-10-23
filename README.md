@@ -65,6 +65,7 @@ crates/
   rustomp-dsp/          框架：Circuit 契约、Engine<C>、元件库、过采样（与电路无关）
   rustomp-gui/          框架：声明式面板 + 交互 + 纹理生命周期（不含素材）
   rustomp-oracle/       框架：ngspice 对拍（跑网表 / 解析 rawfile / 统一测量函数）
+  rustomp-import/       框架：外部电路导入（IR + 可插拔 Importer，内置 breadspice）
 plugins/
   sparklin-drive/       示例插件（= 下游项目的样板，结构同构）
     rustomp.toml        身份 / 素材 / 界面坐标（唯一来源）
@@ -74,8 +75,8 @@ plugins/
 circuits/
   v1-fuzz/              （历史）早期 PCB 网表导出
 tools/
-  netlist/              .bread → Circuit JSON → SPICE 网表（复用 breadspice 后端）
-  oracle/               ngspice 驱动与 ASCII rawfile 解析、冒烟基线
+  netlist/              （历史）EasyEDA PCB 导出的解析脚本
+  oracle/               ngspice 冒烟测试用的最小电路
   au-smoke/             AU 进程内自检（绕过系统注册表）
   clap-probe/           最小 CLAP 宿主（查端口 / feature / 参数）
 patches/                第三方补丁（clap-wrapper 的宿主兼容修复）

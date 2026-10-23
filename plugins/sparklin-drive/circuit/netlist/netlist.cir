@@ -1,7 +1,9 @@
-* Virtual breadboard netlist (reference)
-
+* breadspice — imported from breadspice
+* note: P1: 电位器按 50% 展开成两段电阻（A/B），参数化时对应抽头位置
+* note: P2: 电位器按 50% 展开成两段电阻（A/B），参数化时对应抽头位置
+* note: X1: 跳过不参与仿真的元件（kind = oscilloscope）
+* ground nets: rail_Lm
 XU1 n_t11L n_t10L n_t10R n_t12L n_t11R OP07A
-* gnd G1: node 0
 VB1 n_rail_Lp 0 9
 VS1 n_t21L 0 DC 0 AC 0.2 SIN(0 0.2 1k 0 0 0)
 RW1 0 n_t12L 0.001
@@ -21,7 +23,6 @@ CC2 n_t1R n_rail_Rm 47n
 CC3 n_t11R n_t24R 1u
 RP2A n_rail_Rm n_t27R 250k
 RP2B n_t27R n_t24R 250k
-* probe X1: V(n_t27R)
 RW4 n_rail_Lp n_rail_Rp 0.001
 RW5 0 n_rail_Rm 0.001
 

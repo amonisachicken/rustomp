@@ -1,0 +1,70 @@
+.MODEL J201 NJF(Beta=1.621m Betatce=-500m Rd=1 Rs=1 Lambda=2.236m Vto=-600m Vtotc=-2.5m Is=114.5f Xti=3 Cgd=4.667p M=227.1m Pb=500m Fc=500m Cgs=2.992p Kf=0.6042f Af=1)
+.model 2N7000 VDMOS(Rg=3 Vto=1.6 Rd=0 Rs=.75 Rb=.14 Kp=.17 Cgdmax=80p Cgdmin=12p Cgs=50p Cjo=50p Is=.04p Vds=60 Ron=2 Qg=1.5n)
+.model 1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n)
+.model 1N5817 D(Is=31.7u Rs=.051 N=1.373 Cjo=190p M=.3 Eg=.69 Xti=2)
+.model BC549C NPN(Is=7.049f Xti=3 Eg=1.11 Vaf=23.89 Bf=493.2 Ise=99.2f Ne=1.829 Ikf=.1542 Nk=.6339 Xtb=1.5 Br=2.886 Isc=7.371p Nc=1.508 Ikr=5.426 Rc=1.175 Cjc=5.5p Mjc=.3132 Vjc=.4924 Fc=.5 Cje=11.5p Mje=.6558 Vje=.5 Tr=10n Tf=420.3p Itf=1.374 Xtf=39.42 Vtf=10)
+.model BC559C PNP(Is=1.02f Xti=3 Eg=1.11 Vaf=34.62 Bf=401.6 Ise=38.26p Ne=5.635 Ikf=74.73m Nk=.512 Xtb=1.5 Br=9.011 Isc=1.517f Nc=1.831 Ikr=.1469 Rc=1.151 Cjc=9.81p Mjc=.332 Vjc=.4865 Fc=.5 Cje=30p Mje=.3333 Vje=.5 Tr=10n Tf=524p Itf=.9847 Xtf=17.71 Vtf=10)
+.MODEL LedRed D (IS=93.2P RS=42M N=3.73 BV=4 IBV=10U CJO=2.97P VJ=.75 M=.333 TT=4.32U)
+.MODEL LedGreen D (IS=93.2P RS=42M N=4.61 BV=4 IBV=10U CJO=2.97P VJ=.75 M=.333 TT=4.32U)
+.MODEL LedBLUE D (IS=93.2P RS=42M N=7.47 BV=5 IBV=10U CJO=2.97P VJ=.75 M=.333 TT=4.32U)
+
+* OP-07A
+* Linear Technology OP07A op amp model
+* Written: 08-24-1989 12:35:59 Type: Bipolar npn input, internal comp.
+* OP07A updated from original model on 06-20-1990
+* Typical specs:
+* Vos=1.0E-05, Ib=7.0E-10, Ios=3.0E-10, GBP=6.0E+05Hz, Phase mar.= 70 deg,
+* SR(+)=2.5E-01V/us, SR(-)=2.4E-01V/us, Av= 114 dB, CMMR= 126 dB,
+* Vsat(+)=2.00V, Vsat(-)=2.00V, Isc=+/-25.0mA, Iq=2500uA
+* (input differential mode clamp active)
+*
+* Connections:
+*             Non-Inverting Input
+*             |   Inverting Input
+*             |   Positive Power Supply
+*             |   |   Negative Power Supply
+*             |   |   |   Output
+*             |   |   |   |   |
+.SUBCKT OP07A 3   2   7   4   6
+* INPUT
+RC1 7 80 8.842E+03
+RC2 7 90 8.842E+03
+Q1 80 102 10 QM1
+Q2 90 103 11 QM2
+RB1 2 102 5.000E+02
+RB2 3 103 5.000E+02
+DDM1 102 104 DM2
+DDM3 104 103 DM2
+DDM2 103 105 DM2
+DDM4 105 102 DM2
+C1 80 90 5.460E-12
+RE1 10 12 1.948E+03
+RE2 11 12 1.948E+03
+IEE 12 4 7.502E-06
+RE 12 0 2.666E+07
+CE 12 0 1.579E-12
+* INTERMEDIATE
+GCM 0 8 12 0 5.668E-11
+GA 8 0 80 90 1.131E-04
+R2 8 0 1.000E+05
+C2 1 8 3.000E-11
+GB 1 0 8 0 1.294E+03
+* OUTPUT
+RO1 1 6 2.575E+01
+RO2 1 0 3.425E+01
+RC 17 0 6.634E-06
+GC 0 17 6 0 1.507E+05
+D1 1 17 DM1
+D2 17 1 DM1
+D3 6 13 DM2
+D4 14 6 DM2
+VC 7 13 2.803E+00
+VE 14 4 2.803E+00
+IP 7 4 2.492E-03
+DSUB 4 7 DM2
+* MODELS
+.MODEL QM1 NPN (IS=8.000E-16 BF=4.412E+03)
+.MODEL QM2 NPN (IS=8.003E-16 BF=6.818E+03)
+.MODEL DM1 D (IS=1.486E-08)
+.MODEL DM2 D (IS=8.000E-16)
+.ENDS OP07A

@@ -4,9 +4,9 @@ members = [
     "crates/rustomp-dsp",
     "crates/rustomp-gui",
     "crates/rustomp-oracle",
+    "crates/rustomp-import",
     "plugins/sparklin-drive/circuit",
     "plugins/sparklin-drive/plugin",
-    "tools/netlist/nlgen",
 ]
 
 [workspace.package]
