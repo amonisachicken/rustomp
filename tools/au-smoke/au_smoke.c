@@ -35,6 +35,10 @@ typedef void *(*FactoryFn)(const AudioComponentDescription *);
         printf("[ ok ] %s\n", msg);                                           \
     } while (0)
 
+// 输入：1 kHz 正弦（幅度 0.2）。
+// 注意：不能喂直流 —— 这个电路有 C1/C3 隔直，直流输入下输出本来就是 0。
+static double g_phase = 0.0;
+
 static OSStatus input_callback(void *inRefCon, AudioUnitRenderActionFlags *flags,
                                const AudioTimeStamp *ts, UInt32 bus,
                                UInt32 nframes, AudioBufferList *io) {
@@ -42,11 +46,13 @@ static OSStatus input_callback(void *inRefCon, AudioUnitRenderActionFlags *flags
     (void)flags;
     (void)ts;
     (void)bus;
-    // 直接往输入缓冲写 0.25 直流 + 正弦，便于观察增益
-    for (UInt32 c = 0; c < io->mNumberBuffers; c++) {
-        float *p = (float *)io->mBuffers[c].mData;
-        for (UInt32 i = 0; i < nframes; i++) {
-            p[i] = 0.25f;
+    const double step = 2.0 * 3.14159265358979 * 1000.0 / 48000.0;
+    for (UInt32 i = 0; i < nframes; i++) {
+        float v = (float)(0.2 * sin(g_phase));
+        g_phase += step;
+        if (g_phase > 2.0 * 3.14159265358979) g_phase -= 2.0 * 3.14159265358979;
+        for (UInt32 c = 0; c < io->mNumberBuffers; c++) {
+            ((float *)io->mBuffers[c].mData)[i] = v;
         }
     }
     return noErr;
@@ -257,22 +263,26 @@ int main(int argc, char **argv) {
 
     CHECK(AudioUnitRender(inst, &flags, &ts, 0, nframes, abl), "AudioUnitRender");
 
-    double sum = 0.0;
+    double sum = 0.0, sq = 0.0;
     int bad = 0;
     for (UInt32 c = 0; c < nch; c++) {
         for (UInt32 i = 0; i < nframes; i++) {
             if (!isfinite(chan[c][i])) bad++;
             sum += chan[c][i];
+            sq += (double)chan[c][i] * chan[c][i];
         }
     }
-    double mean = sum / (double)(nframes * nch);
-    printf("[info] 渲染 %u 帧: 非有限值=%d, 输出均值=%.6f (期望 ≈0.250000)\n",
-           (unsigned)nframes, bad, mean);
+    double n = (double)(nframes * nch);
+    double mean = sum / n;
+    double rms = sqrt(sq / n);
+    printf("[info] 渲染 %u 帧: 非有限值=%d, 输出均值=%.6f, RMS=%.6f\n",
+           (unsigned)nframes, bad, mean, rms);
 
     int rc = 0;
     if (bad > 0) { printf("[FAIL] 输出含 NaN/Inf\n"); rc = 20; }
-    else if (fabs(mean - 0.25) > 0.02) { printf("[FAIL] 直通/增益电平不符\n"); rc = 21; }
-    else printf("[ ok ] 音频通路与增益参数均正常\n");
+    else if (rms < 1e-4) { printf("[FAIL] 输出静音（音频通路可能断了）\n"); rc = 21; }
+    else if (rms > 2.0) { printf("[FAIL] 输出电平异常\n"); rc = 22; }
+    else printf("[ ok ] 音频通路正常（1kHz 正弦已通过电路）\n");
 
     AudioUnitUninitialize(inst);
     AudioComponentInstanceDispose(inst);

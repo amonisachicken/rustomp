@@ -14,6 +14,7 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 # nih-plug 不在 crates.io，必须用 git 依赖并固定 rev
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
+rustomp-dsp.workspace = true
 
 [features]
 default = []

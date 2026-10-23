@@ -10,6 +10,10 @@
 
 pub mod diode;
 pub mod fakedist;
+pub mod oversample;
+pub mod engine;
 
 pub use diode::Diode1n4148;
 pub use fakedist::{ComponentValues, Fakedist, OpAmpModel, Params, Probe};
+pub use oversample::Oversampler4x;
+pub use engine::Engine;

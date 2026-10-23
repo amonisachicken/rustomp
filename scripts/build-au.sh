@@ -16,11 +16,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PKG="rustomp-plugin"
-PLUGIN_NAME="${RUSTOMP_PLUGIN_NAME:-Rustomp Skeleton}"
+PLUGIN_NAME="${RUSTOMP_PLUGIN_NAME:-Rustomp Fuzz}"
 AU_TYPE="aufx"
-AU_SUBTYPE="${RUSTOMP_AU_SUBTYPE:-Rstp}"
+AU_SUBTYPE="${RUSTOMP_AU_SUBTYPE:-RFz1}"
 AU_MANUFACTURER="${RUSTOMP_AU_MANUFACTURER_CODE:-Amch}"
-BUNDLE_ID="${RUSTOMP_BUNDLE_ID:-com.amonisachicken.rustomp.skeleton}"
+BUNDLE_ID="${RUSTOMP_BUNDLE_ID:-com.amonisachicken.rustomp.fuzz}"
 
 INSTALL=1
 RUN_AUVAL=1
@@ -143,6 +143,8 @@ COMP_DIR="$HOME/Library/Audio/Plug-Ins/Components"
 VST3_DIR="$HOME/Library/Audio/Plug-Ins/VST3"
 CLAP_DIR="$HOME/Library/Audio/Plug-Ins/CLAP"
 mkdir -p "$COMP_DIR" "$VST3_DIR" "$CLAP_DIR"
+# 清理历史命名（M0-a 阶段的 "Rustomp Skeleton"）
+rm -rf "${COMP_DIR:?}/Rustomp Skeleton.component" "${VST3_DIR:?}/Rustomp Skeleton.vst3" "${CLAP_DIR:?}/Rustomp Skeleton.clap" 2>/dev/null || true
 rm -rf "${COMP_DIR:?}/${PLUGIN_NAME}.component" \
        "${VST3_DIR:?}/${PLUGIN_NAME}.vst3" \
        "${CLAP_DIR:?}/${PLUGIN_NAME}.clap"

@@ -679,6 +679,57 @@ IN ─C1 4.7n─► IN+ ─ OP07 ─ OUT ─C3 1µF─► P2 500k(LEVEL) ─► 
 
 ---
 
+## E11：4x 过采样 + 插件接线（2026-10-23）✅
+
+### 11.1 做了什么
+
+| 项 | 内容 |
+|---|---|
+| `oversample.rs` | 4x 多相 FIR（64 抽头 Kaiser-windowed sinc，β=8，截止 0.1125），插值每相 16 抽头；群延迟 15 个基带样本 |
+| `engine.rs` | `Engine` = `Fakedist`(4×fs) + `Oversampler4x`；`latency_samples()` = 15 |
+| `rustomp-plugin` | 接上 `Engine`，立体声各一实例；参数 **Gain / Level**（0–100%，线性 B taper）；`initialize()` 里 `set_latency_samples(15)`；`reset()` 到直流工作点 |
+| 命名 | 插件改名 **Rustomp Fuzz**，AU 码改为 `aufx / RFz1 / Amch`，bundle id `...rustomp.fuzz` |
+| `tools/au-smoke` | 输入从直流改为 **1 kHz 正弦**（电路有隔直电容，喂直流测不出东西），判据改为 RMS |
+
+### 11.2 一个重要的发现：过采样是**正确性**要求，不是音质优化
+
+`cargo run -p rustomp-dsp --release --example os_probe`（48 kHz 宿主，输入 0.2 V）：
+
+| 过采样 | 电路 fs | 1 kHz | 3 kHz | 8 kHz |
+|---|---|---|---|---|
+| 1x | 48k | 0.4792 ✓ | **0.0000 输出归零** | **0.0000 输出归零** |
+| 2x | 96k | 0.4791 ✓ | 0.4999 ✓ | 0.3130 偏低 |
+| **4x** | **192k** | 0.4791 ✓ | 0.5000 ✓ | 0.4998 ✓ |
+| 8x | 384k | 0.4791 ✓ | 0.5001 ✓ | 0.4998 ✓ |
+
+48 kHz 直接跑电路时，**3 kHz 以上输入会让输出完全消失**。
+原因：运放的梯形离散把闭环极点（≈10.8 kHz）放到离 Nyquist 太近，
+隐含方程欠解析 → 牛顿收敛到错误解（输出被钳在 0V 轨）。
+
+→ **4x 是正确性下限**；8x 与 4x 相差 <0.1%，暂时不需要。
+→ 这条已固化成测试 `works_at_all_host_rates`（44.1k/48k/96k/192k 都必须正常）。
+
+### 11.3 验证
+
+```
+cargo test -p rustomp-dsp --release        # 11 个测试全绿
+./scripts/build-au.sh --skip-auval         # 通用二进制 CLAP/VST3/AUv2
+```
+
+AU 冒烟测试（1 kHz 正弦，512 帧）：
+```
+[info] 参数数量: 2
+        [0] cfName="Gain"  range=0..1 default=0.5
+        [1] cfName="Level" range=0..1 default=0.5
+[info] 渲染 512 帧: 非有限值=0, 输出均值=-0.059, RMS=0.354
+```
+输出 RMS 0.354 与 ngspice 基线（0.351）一致 ✓；均值 −0.059 是 0.5s 直流恢复
+在该窗口内尚未走完（正常物理行为）。
+
+48 kHz + 4x 过采样的 THD = **27.648 %**（基线 27.616 %）✓。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -860,6 +911,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **4x 过采样 + 插件接线完成**（E11）：`Rustomp Fuzz`（aufx/RFz1/Amch）已安装；发现 **1x 直接跑 48k 电路会失效**（3kHz 以上输出归零），4x 是正确性下限；THD 27.648% vs 基线 27.616% |
 | 2026-10-23 | **fakedist v1 的 WDF 实现完成并对拍通过**（E10）：DC 精确、频响 ≤0.31dB、THD 27.650% vs 27.616%、h2–h9 逐次误差 ≤0.03pp。踩坑：串联二极管的 N 也要翻倍（h2 归零的元凶）、`.four` 不能当基准。未做：4x 过采样、Cjo/tt、插件接线 |
 | 2026-10-23 | **breadspice 管线跑通 + 基线建立**（E9）：`.bread → circuit.json → netlist.cir → op/ac/tran+THD` 一条命令；电路识别为「OP07 反馈环非对称二极管削波」；基线 THD 27.57%@0.2V、峰值增益 +28.42dB@2.72kHz；发现 0.5s 直流恢复（blocking distortion）与 3 个测量/解析坑 |
 | 2026-10-23 | **ngspice 验证并装进 PATH**（E8）：ngspice-47 可用，`.tran`/`.four`(THD)/ASCII rawfile 实测通过；新增 `scripts/build-ngspice.sh`、`tools/oracle/smoke/`（含基线数字：1kHz/1V/10k/47nF → THD 0.3538%，基波 0.3199V） |
