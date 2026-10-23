@@ -247,6 +247,7 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 | `sparklin-drive-legacy` 仓库 | 参考实现（完整插件 + 电路解读 + 基线数据） |
 | `docs/component-library.md` | **元件库精度规范**：档位定义、逐器件推荐、验收实验模板 |
 | `docs/circuit-import.md` | **电路导入与元件映射规范**：可插拔导入、映射流水线、引脚绑定、mapping.toml |
+| `docs/declarative-build.md` | **声明式构建规范**：代码生成 vs 打包两个平面、后端契约、多平台矩阵、S1–S5 路线 |
 | `crates/rustomp-dsp/README.md` | DSP 核心设计、对拍结果、过采样必要性 |
 | `patches/README.md` | 三个宿主兼容补丁的原因与验证方法 |
 | `tools/oracle/smoke/README.md` | ngspice 冒烟测试的用法与基线数字 |

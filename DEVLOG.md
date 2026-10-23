@@ -2014,6 +2014,61 @@ cargo test  -p demo-drive-circuit --release          → 2 项通过
 
 ---
 
+## E33：声明式构建规范落盘（2026-10-23）
+
+用户确认：生成物放 **`src/generated/`**（可读可 diff）、参数格式化只支持 `percent/db/plain/enum`，
+并把 **Windows / Linux / standalone** 排进路线、**按平台可插拔**。
+结论写进 **`docs/declarative-build.md`**。
+
+### 33.1 核心设计：两个平面
+
+| 平面 | 在哪跑 | 产物 |
+|---|---|---|
+| **代码生成**（`rustomp gen`） | 任意主机，确定性 | `<project>/plugin/src/generated/*.rs` |
+| **打包**（`rustomp pack`） | **各平台本地**（需要本平台工具链/签名） | `.au/.vst3/.clap/.exe/安装包` |
+
+**为什么不交叉编译**：VST3 SDK 要 MSVC、GUI 要 X11/Wayland 头文件、签名工具各平台不同。
+正确做法是 **CI 矩阵**（macos-14 / windows-2022 / ubuntu-22.04）原生构建。
+
+### 33.2 打包后端契约（可插拔的落点）
+
+```
+scripts/pack/<platform>/<format>.sh
+```
+
+输入靠环境变量（`PLUGIN_DIR` / `VARIANT` / `TARGET_TRIPLE` / `PROFILE` / `OUT_DIR` / `SIGN_MODE`），
+约定：**幂等**、失败非零退出、成功时打印 `ARTIFACT: <路径>`、身份只能从 `rustomp.toml` 与
+`generated/identity.rs` 读（不得硬编码）。每个后端附**能力声明**（platforms / formats / requires），
+驱动在打包前校验，不支持时明确报错而非静默跳过。
+
+### 33.3 平台矩阵（目标状态）
+
+| 平台 | au | vst3 | clap | standalone | 安装包 |
+|---|---|---|---|---|---|
+| macOS | ✅ | ✅ | ✅ | ⬜ S4 | ⬜ M4 |
+| Windows | ❌（无 AU） | ✅ | ✅ | ⬜ S4 | ⬜ M4 |
+| Linux | ❌（无 AU） | ✅ | ✅ | ⬜ S4 | ⬜ M4 |
+| au3 | ⬜（需完整 Xcode） | | | | |
+| **aax** | ❌ **GPL-3 与 Avid 协议冲突**（ADR-005 / R10） | | | | |
+
+### 33.4 代码生成侧
+
+生成到 `<project>/plugin/src/generated/`：`identity.rs`、`params.rs`（含 `GuiAccess`）、
+`panel.rs`、`plugin_impl.rs`、`platform/{macos,windows,linux}.rs`（可空片段）。
+头部标 `@generated`、内容确定性、`rustomp gen --check` 防漂移，手改一律进 `local.rs`。
+
+### 33.5 分阶段
+
+| 阶段 | 内容 | 验收 |
+|---|---|---|
+| S1 | `rustomp gen`（参数表 → 样板代码；身份/面板迁到 `src/generated/`） | 与 Sparklin Drive legacy 手写版对照：测试与 `check-au` 结果一致 |
+| S2 | `rustomp pack` + macOS 三个后端（收敛现有脚本） | 本机一条命令产出 AU/VST3/CLAP |
+| S3 | Windows / Linux 后端 + CI 矩阵 | 三平台都能产出 `ARTIFACT:` |
+| S4 | standalone（三平台） | 能出声 |
+| S5 | 安装包与签名 | M4 |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2110,6 +2165,16 @@ rustomp-plugin (nih-plug)  ──►  .clap
 - 必须用完整二极管模型（Is/N/**Rs**/Cjo/M/tt，见 E2 §3.9）。
 
 ---
+
+### ADR-014 声明式构建与平台可插拔 ✅ 已定（2026-10-23）
+
+- 插件项目的"声明"只有两份：`rustomp.toml` + `circuit/`（手写 DSP）；
+- **代码生成与打包是两个平面**：生成在 host 上确定性完成、产物入库 `src/generated/`；
+  打包必须在**各自平台原生**执行（不交叉编译）；
+- 打包后端 = `scripts/pack/<platform>/<format>.sh` + 能力声明，驱动按 `[build].formats` 调度；
+- 平台范围：macOS（au/vst3/clap）、Windows 与 Linux（vst3/clap）、三平台 standalone；
+  **AAX 不可做**（GPL-3 与 Avid 协议冲突）；
+- 参数表达力先限定为 `percent/db/plain/enum`，参数值统一为"电位器位置 0..1"。
 
 ### ADR-013 电路导入与元件映射 ✅ 已定（2026-10-23）
 
@@ -2272,6 +2337,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **声明式构建规范落盘**（E33 + ADR-014）：代码生成（host，入 `src/generated/`）与打包（各平台原生）两个平面；打包后端契约 + 能力声明；Windows/Linux/standalone 入路线，AAX 排除；S1–S5 路线与 CI 矩阵验收 |
 | 2026-10-23 | **电路导入与映射规范落盘**（E32 + ADR-013）：导入器插件化；格式先网表后 `.asc`；映射分层（别名+项目映射常规、类别默认防呆、参数直通为 power user）；引脚按名绑定；替换必须可见可测 |
 | 2026-10-23 | **元件库精度规范落盘**（E31 + ADR-012）：确立「延迟与精度无关」「静态/动态双轴」「静态给足、动态按需」；逐器件给出档位（锗 BJT 需 D3、锗二极管 D2、1N4007/2N7000 到 C1）；写出验收实验模板与 CPU 预算。文档：`docs/component-library.md` |
 | 2026-10-23 | **插件拆分为独立仓库**（E30）：`sparklin-drive-legacy`（独立 git 仓库，完整快照，可脱离框架构建）；主仓库变为纯框架，`/plugins/` 成为下游输出目录，脚本改为按 `PLUGIN_DIR` 定位 |
