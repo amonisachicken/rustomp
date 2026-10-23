@@ -161,20 +161,58 @@ Sparklin Drive 的二极管只用了 `Is/N/Rs`，而 ngspice 用的是含 `Cjo/t
 
 器件库是「**闭集器件模型 + 通用 MNA 装配器**」路线（ADR-012）的第一层：
 
+实际落地（`crates/rustomp-dsp/src/mna.rs`）：
+
 ```rust
-/// 器件只负责"给定端电压 → 注入各节点的电流 + 雅可比"，不含拓扑。
-pub trait Device {
-    const EXTRA_NODES: usize = 0;      // 运放 1，其余 0
-    fn stamp(&self, v: &[f64], sys: &mut MnaSystem);
+/// 电路里的一个元件 = 型号 + 拓扑（节点号）。器件模型本身不知道拓扑。
+pub enum Element {
+    Diode  { model: Diode,  a, k },
+    Bjt    { model: Bjt,    npn: bool, c, b, e },
+    Jfet   { model: Jfet,   d, g, s },
+    Mosfet { model: Nmos,   d, g, s },
+    Resistor { a, b, r },
+    Capacitor { a, b, c, v_prev },          // 后向欧拉伴随模型
+    OpAmp  { model: OpAmpModel, state, p, m, out, branch, pin },
 }
 
-pub struct Bjt { is, bf, vaf, ikf, nk, ise, ne, br, isc, nc, rb, re, rc, .. }
-pub const BC549C: Bjt = Bjt { is: 7.049e-15, bf: 493.2, vaf: 23.89, .. };
+// 装配器：节点 0 = 地，其余为未知量；电压源各占一个支路未知量
+let mut net = Netlist::<5>::new();
+net.resistor(1, 2, 4_700.0)
+   .bjt(BC549C, true, 2, 3, GND)
+   .voltage_source(4, 1, GND, 9.0);
+let v = net.solve_dc();
 ```
 
-- **型号是闭集**：`BC549C` / `J201` / `OP07` / `1N4148` … 每个型号一个 `const`；
-- **实例只描述拓扑**：`BjtInstance { model: &'static Bjt, nodes: (c, b, e) }`；
-- 参数名与 SPICE 对齐（`Is/Bf/Vaf/...`），这样 LTspice 模型可以直接映射。
+**关键取舍：器件只提供"端电压 → 流入器件的电流"，雅可比由装配器数值差分。**
+
+```rust
+// 例：BJT 的"电流函数"（PNP 就是把电压/电流取反）
+sys.multiport(&[c, b, e], v, |vv| {
+    let (ic, ib) = model.terminal(s * (vv[1] - vv[2]), s * (vv[1] - vv[0]));
+    vec![s * ic, s * ib, -s * (ic + ib)]
+});
+```
+
+- 好处：**加一个新器件只需写一个电流函数**，不可能出现矩阵/符号写错；
+- 代价：每次牛顿迭代多算 `n+1` 次模型 —— 对 3 端器件可忽略（见 §6 预算）；
+- 热点（BJT/二极管）将来可以换成解析雅可比，接口不变。
+
+**求解器**：gmin 步进（`1e-3 → 0`，每级热启动）+ 阻尼牛顿 + 部分主元 LU。
+运放 DC 用**连续极限**（增益 `A0`）装配，饱和时"钉"在摆幅上重解（分段线性迭代）；
+瞬态用离散更新式 `v_out = a·v_out_prev + b·vd`（线性 → 直接进代数环）。
+
+### 对拍结果（`tests/mna.rs`）
+
+| 电路 | 量 | 与 ngspice 偏差 |
+|---|---|---|
+| 二极管削波（6 个 DC 点） | `v(out)` | **≤1.6 µV** |
+| BJT 共射偏置（BC549C） | `v(b)`, `v(c)` | **≤123 µV** |
+| JFET 共源（J201） | `v(d)` | **34 µV** |
+| RC + 削波瞬态（48 kHz，240 点） | 波形 | **≤17 mV**（后向欧拉 vs 梯形） |
+| 运放非反相 10× | DC 增益 / -3dB | 10.998 / 40.5 kHz（原型 54.5 kHz，见下） |
+
+> 运放在 192 kHz 采样下 -3dB 点偏低约 26%（54.5 → 40.5 kHz）：离散化取舍，已记档。
+> 近 Nyquist 的增益地板（`b/(2+bk)`）会被引擎的抽取滤波器滤掉，音频带内不受影响。
 
 ### 精度升级不能改"型号身份"
 
