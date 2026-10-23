@@ -1973,6 +1973,47 @@ cargo test  -p demo-drive-circuit --release          → 2 项通过
 
 ---
 
+## E32：电路导入与元件映射规范落盘（2026-10-23）
+
+结论写进 **`docs/circuit-import.md`**。
+
+### 32.1 可插拔性
+
+`rustomp-import` 的 `Importer` trait + `registry()` 已具备插件化；新增格式只需实现结构体并注册。
+导入器**只负责**产出中间表示（元件类别 + 节点 + 值 + 来源型号），
+不求解电路、不生成 DSP、不擅自决定映射结果。
+
+### 32.2 格式优先级：**先网表，后原理图**
+
+| 格式 | 工作量 | 决策 |
+|---|---|---|
+| `SpiceNetlist`（`.net/.cir`，LTspice 的 View → SPICE Netlist、KiCad、ngspice） | 小 | **优先实现** |
+| `LtspiceAsc`（`.asc`，原理图） | 大（坐标推连通性 + 旋转/镜像 + `.lib`） | 后续 |
+| `BreadSpice`（`.bread`） | — | 已完成 |
+
+### 32.3 元件映射：分层流水线（用户已确认）
+
+| 级 | 手段 | 标记 | 定位 |
+|---|---|---|---|
+| 1 | 精确命中 | `Exact` | — |
+| 2 | **归一化 + 别名**（`MMBT4148`→`1N4148`） | `Alias` | **常规** |
+| 3 | **项目 `mapping.toml`**（`2N5088`→`BC549C`） | `Project` | **常规** |
+| 4 | **类别默认** | `ClassDefault` | **防呆兜底**（必须写进 notes） |
+| 5 | 参数直通（用外部 `.model` 构造器件） | `Params` | **power user 开发接口，默认关闭，不进发布路径** |
+| 6 | 未解析 | `Unresolved` | 按 `[strict]`：error / warn / 用默认 |
+
+原则：**替换必须可见、可测** —— `report()` 打印映射表，oracle 基线必须与映射配置同源。
+
+### 32.4 引脚绑定：按**引脚名**，不按位置
+
+沿用现有规则：`1/2`（无源）、`a/k`（二极管）、`C/B/E`（BJT）、`D/G/S`（JFET/MOS）、
+`IN+/IN-/V+/V-/OUT`（运放）、`1/2/3`（电位器）。外部命名不一致时用别名表补，**禁止按位置猜**。
+
+规范还给出：`DeviceClass` 枚举、IR 扩展（`ImportedElement` + `Resolved`）、
+`mapping.toml` 的完整字段（aliases / defaults / strict）、以及三项待定。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2069,6 +2110,14 @@ rustomp-plugin (nih-plug)  ──►  .clap
 - 必须用完整二极管模型（Is/N/**Rs**/Cjo/M/tt，见 E2 §3.9）。
 
 ---
+
+### ADR-013 电路导入与元件映射 ✅ 已定（2026-10-23）
+
+- 导入器**一律插件化**（`Importer` + `registry()`），导入器不得擅自做映射决策；
+- 格式优先级：**先 `SpiceNetlist`，`.asc` 后置**；
+- 映射分层：**别名 + 项目映射为常规路径，类别默认作防呆兜底，参数直通仅作 power user 开发接口且默认关闭**；
+- **引脚按名绑定**（`C/B/E`、`D/G/S`、`IN+/IN-/V+/V-/OUT`、`a/k`），禁止按位置猜；
+- 替换必须**可见可测**（`report()` + 与 oracle 基线同源）。
 
 ### ADR-012 元件库精度规范：静态给足、动态按需 ✅ 已定（2026-10-23）
 
@@ -2223,6 +2272,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **电路导入与映射规范落盘**（E32 + ADR-013）：导入器插件化；格式先网表后 `.asc`；映射分层（别名+项目映射常规、类别默认防呆、参数直通为 power user）；引脚按名绑定；替换必须可见可测 |
 | 2026-10-23 | **元件库精度规范落盘**（E31 + ADR-012）：确立「延迟与精度无关」「静态/动态双轴」「静态给足、动态按需」；逐器件给出档位（锗 BJT 需 D3、锗二极管 D2、1N4007/2N7000 到 C1）；写出验收实验模板与 CPU 预算。文档：`docs/component-library.md` |
 | 2026-10-23 | **插件拆分为独立仓库**（E30）：`sparklin-drive-legacy`（独立 git 仓库，完整快照，可脱离框架构建）；主仓库变为纯框架，`/plugins/` 成为下游输出目录，脚本改为按 `PLUGIN_DIR` 定位 |
 | 2026-10-23 | **收尾 1/2/3**（E29）：历史残留归档到 `experiments/`（新增 README 说明不参与构建）；README 全文路径校对（脚本扫描 + 工作流一节重写）；新增 GitHub Actions CI（macOS，装 ngspice 则跑活体对拍，fmt 暂不阻塞）。本地 `cargo test --workspace --release` 17 个目标全绿 |
