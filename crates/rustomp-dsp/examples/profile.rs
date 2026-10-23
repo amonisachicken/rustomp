@@ -13,10 +13,9 @@ fn bench<F: FnMut()>(name: &str, iters: usize, mut f: F) -> f64 {
         for _ in 0..iters {
             f();
         }
-        let ns = t0.elapsed().as_secs_f64() / iters as f64 * 1e9;
-        best = best.min(ns);
+        best = best.min(t0.elapsed().as_secs_f64() / iters as f64 * 1e9);
     }
-    println!("  {name:<44} {best:>8.1} ns");
+    println!("  {name:<46} {best:>8.1} ns");
     best
 }
 
@@ -56,15 +55,11 @@ fn main() {
     };
 
     let d = Diode1n4148::default();
-    let d1 = bench("二极管：1 次 I-V + 电导（含内层牛顿）", N / 4, || {
+    bench("二极管：1 次 I-V + 电导（含内层牛顿）", N / 4, || {
         black_box(d.current_and_conductance(black_box(0.6)));
     });
-    let d23 = Diode1n4148 { n_vt: 2.0 * 0.0453, rs: 2.0 * 0.568, ..Diode1n4148::default() };
-    let d2 = bench("二极管(串联对)：1 次 I-V + 电导", N / 4, || {
-        black_box(d23.current_and_conductance(black_box(1.2)));
-    });
 
-    // 牛顿迭代次数统计
+    // 外层牛顿迭代次数
     let mut c = Fakedist::new(192_000.0);
     c.set_params(Params::default());
     let mut ph: f64 = 0.0;
@@ -80,11 +75,8 @@ fn main() {
     println!("\n=== 汇总 ===");
     println!("  外层牛顿平均迭代次数            {avg:.2} 次/样本");
     println!("  实测引擎                           {eng_ns:.1} ns/样本");
-    println!("  推算：4 次电路                     {:.1} ns", 4.0 * circ_ns);
-    println!("        + 过采样                     {os_ns:.1} ns");
-    println!("        = 合计                       {:.1} ns（实测 {eng_ns:.1}）", 4.0 * circ_ns + os_ns);
-    println!("\n  电路占引擎 {:.0}%，过采样占 {:.0}%",
+    println!("  推算：4 次电路 {:.1} ns + 过采样 {os_ns:.1} ns = {:.1} ns",
+        4.0 * circ_ns, 4.0 * circ_ns + os_ns);
+    println!("  电路占引擎 {:.0}%，过采样占 {:.0}%",
         4.0 * circ_ns / eng_ns * 100.0, os_ns / eng_ns * 100.0);
-    println!("  每次电路求解约含 {:.1} 次二极管模型调用（2 支路 × 外层迭代）", 2.0 * avg);
-    println!("  f64 exp 成本约等于一次二极管调用的主要部分：d1={d1:.1} ns, d23={d2:.1} ns");
 }
