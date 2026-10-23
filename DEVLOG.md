@@ -1033,6 +1033,101 @@ macOS 自带 bash 3.2 会把**紧跟变量的多字节字符**（如 `$NAME（` 
 
 ---
 
+## E15：技术评估 —— CPU 优化与 GUI（2026-10-23，先评估后动手）
+
+### 15.1 CPU 实测分解（`cargo run --example profile` / `--example diode_bench`）
+
+单声道、48 kHz 宿主、4x 过采样，Intel i9-10910：
+
+| 项目 | 成本 |
+|---|---|
+| **整个引擎（1 个 48k 样本）** | **1592 ns** |
+| 电路求解 1 次（192k 样本） | 396 ns → ×4 = 1585 ns |
+| 过采样 FIR（上+下采样） | **72.7 ns（≈4.6%）** |
+| 外层牛顿平均迭代 | 3.48 次/样本 |
+| 每次电路求解的二极管调用 | 2 支路 × 3.48 ≈ **7 次** |
+
+**二极管模型的成本随工作点剧烈变化**（这是关键发现）：
+
+| 端电压 | 单次 `current_and_conductance` |
+|---|---|
+| 0.0 V | 10.6 ns |
+| 0.5 V | 50.1 ns |
+| 0.65 V | 78.9 ns |
+| 0.80 V | 129.6 ns |
+| **1.20 V** | **315.6 ns** |
+
+而 `exp` 本身只要 **3.9 ns**（f64）/ 3.76 ns（f32）。
+
+→ **瓶颈是二极管里的内层牛顿**：高电流时它达到 12 次迭代上限还没收敛
+（因为初值 `vj = min(v,1.2)` 离真解很远，且容差 1e-9 过严）。
+这也解释了为什么"大信号段落"比小信号更吃 CPU。
+
+### 15.2 结论：哪些优化有效、哪些是伪优化
+
+| 优化 | 预期收益 | 是否改变输出 |
+|---|---|---|
+| **二极管内层牛顿：热启动 + 容差放宽到 1e-6 V + 上限 4 次** | **最大（2 倍以上）** | 否（1e-6 V 误差 ≈ −100 dB） |
+| 外层牛顿更好初值 | ~15% | 否（收敛解相同） |
+| 两声道合并处理（ILP） | 10~30% | 否（逐位相同） |
+| 预计算常数 / 减少重复除法 | 5% | 否 |
+| **f64 → f32** | **≈0**（exp 只快 3.6%） | 会（舍入不同） |
+| 减少 FIR 抽头 | ~2%（只占 4.6%） | 会（滤波变差） |
+| 快速 exp 近似（查表/多项式） | 有，但比第 1 项小得多 | **会**（需 A/B 量化） |
+| 降过采样到 2x | 省 2 倍电路 | **会**，且实测 8 kHz 输入已失真（0.313 vs 0.5）→ 不接受 |
+
+**保守估计**：只做「不改变输出」那几项，1592 ns → **600~800 ns**，
+CPU 15% → **6~8%**，且 h2…h9、THD、频响必须与现在**完全一致**（作为硬性验收）。
+
+### 15.3 音色影响的判定标准（写死，避免"优化着优化着声音变了"）
+
+每次优化只允许以下两种结果之一：
+
+- **A 类（数值等价类）**：`cargo test -p rustomp-dsp --release --test baseline` 的
+  h2–h9 与当前值（3.915 / 22.488 / 2.428 / 11.981 / 1.836 / 7.700 / 1.484 / 5.400）
+  误差 **≤0.01 pp**，频响误差 ≤0.05 dB，THD 差 ≤0.02 pp；
+- **B 类（近似类）**：允许更大偏差，但必须**先量化**并记录到 DEVLOG，且不与 A 类混在同一次提交里。
+
+### 15.4 GUI 的技术栈（三层）
+
+```
+Logic / 宿主
+   │  AUv2: kAudioUnitProperty_CocoaUI → AudioUnitCocoaViewInfo（NSView 工厂）
+   │  VST3: IPlugView      CLAP: clap.gui + CLAP_WINDOW_API_COCOA
+   ▼
+clap-wrapper 的 Cocoa 桥   ← 我们的 AU 二进制里已有符号 fillAUCV_wrapAsAUV2_...（通路是通的）
+   ▼
+nih-plug 的 baseview（Cocoa 窗口/事件/缩放）
+   ▼
+UI 框架：vizia / egui / iced（或自带 wgpu、softbuffer 渲染）
+```
+
+要点：
+
+1. clap-wrapper **只有**在 CLAP 的 GUI 声明支持 `CLAP_WINDOW_API_COCOA` 时，
+   才对宿主暴露 `kAudioUnitProperty_CocoaUI`（见 `wrapasauv2.cpp` 里那段判断）。
+   nih-plug 的 baseview 走的就是 Cocoa，所以接上 `Editor` 后 AU 会自动有界面。
+2. 我们现在的插件 **没有 GUI**（Logic 缓存里 `HasCustomView = false`），
+   所以只能看到 Logic 的通用参数面板。
+3. 线程模型：GUI 在**主线程**，音频在音频线程，两者只通过无锁原子（`FloatParam`）通信；
+   GUI 里绝不允许加锁或分配影响到音频线程。
+4. 还要处理：HiDPI/缩放、窗口尺寸持久化、打开/关闭不能阻塞（宿主的 GUI 超时有上限）。
+5. 两个声道变体共用同一套 GUI 代码，只是 bundle 名不同。
+
+### 15.5 GUI 框架选型（建议，待定）
+
+| 方案 | 优点 | 缺点 | 适用 |
+|---|---|---|---|
+| **egui**（`nih_plug_egui`） | 即时模式，画旋钮/贴图最直接；代码量最小；迭代快 | 每帧重绘；精细动效要自己写 | **快速做出可用的踏板 UI** |
+| **vizia**（`nih_plug_vizia`） | 声明式 + 类 CSS 样式，nih-plug 官方示例（Diopser/Crisp）在用 | 学习曲线，自定义绘制不如 egui 直接 | 追求精致/动画的成品界面 |
+| 自绘（baseview + wgpu/softbuffer） | 完全控制（可做拟物踏板、金属质感） | 工作量最大 | 品牌级外观 |
+
+三个后端都在同一 nih-plug rev 内（ISC 许可，与 GPL-3 兼容）。
+**倾向**：先用 **egui** 做一个「踏板面板图 + 2 个旋钮」的可用界面（约 1 天），
+外观定型后再决定是否换 vizia 或自绘。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1129,6 +1224,15 @@ rustomp-plugin (nih-plug)  ──►  .clap
 - 必须用完整二极管模型（Is/N/**Rs**/Cjo/M/tt，见 E2 §3.9）。
 
 ---
+
+### ADR-009 CPU 优化与 GUI 的评估结论 ⏳ 待拍板
+
+- **CPU**：瓶颈是二极管的内层牛顿（高电流时 315 ns/次 vs 低电流 10 ns）；
+  过采样 FIR 只占 4.6%，**f64→f32 几乎没有收益**（exp 只快 3.6%）。
+  只做"数值等价"优化即可把 15% → 6~8%。
+  验收标准写死在 E15.3（h2–h9 误差 ≤0.01 pp）。
+- **GUI**：AU 的界面经由 clap-wrapper 的 Cocoa 桥，路已通（符号已在二进制里）；
+  待选 egui / vizia / 自绘，倾向先用 egui 做可用界面。
 
 ### ADR-008 插件一律出「单声道版 + 立体声版」两个独立身份 ✅ 已定（强制）
 
@@ -1241,6 +1345,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **技术评估**（E15）：实测 CPU 分解（瓶颈＝二极管内层牛顿，FIR 仅 4.6%，f64→f32 无收益），给出优化收益表与音色验收标准；梳理 GUI 三层技术栈（AUv2 CocoaUI → clap-wrapper 桥 → baseview → vizia/egui），新 ADR-009 待拍板 |
 | 2026-10-23 | ✅ **M0 完成**：Waves 式声道变体生效，`Rustomp Fuzz Mono` 在 Logic 单声道音轨中出现（E14.5）。新增 `scripts/build-all.sh` 作为标准构建入口；确立硬性约定「每个插件都出 mono/stereo 两个独立身份」（ADR-008） |
 | 2026-10-23 | **Waves 式声道变体**（E14）：新增 `mono`/`stereo` feature 与 `scripts/build-variant.sh`，产出三个独立身份（RFz1 双布局 / **RFm1 单声道** / **RFs1 立体声**），均已安装并通过渲染自检。发现 Logic 的 pref 缓存从未真正刷新（`MIDIProtocol` 仍是修复前的 1）——Logic 运行时会把内存值写回，故新增 `reset-logic-cache.sh`（先查 Logic 是否在跑）。另修 bash 3.2 的全角括号变量名坑 |
 | 2026-10-23 | **修复 Logic 菜单里找不到（E13 续）**：真因是声道布局——nih-plug 有 Mono+Stereo 两种 `audio-ports-config`，但 clap-wrapper 只认 `configurable-audio-ports`，导致 AU 只报 `{2,2}`，单声道音轨的插入菜单把它过滤掉。补丁让 wrapper 用 `audio-ports-config` 枚举并 `select()`；实测 AU 现在同时报 2/2 与 1/1，单/立体声渲染均正常 |
