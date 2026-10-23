@@ -76,6 +76,42 @@ COMPONENT="build/au/${PLUGIN_NAME}.component"
 lipo -info "$COMPONENT/Contents/MacOS/${PLUGIN_NAME}"
 lipo -info "$COMPONENT/Contents/PlugIns/${PLUGIN_NAME}.clap/Contents/MacOS/${PLUGIN_NAME}"
 
+# ---------------------------------------------------------------- 2b. Info.plist 归位
+# 坑（2026-10-23 实测）：clap-wrapper 的 auv2_Info.plist 是 **build 时**生成、
+# 再用 POST_BUILD 命令拷进 bundle 的。当 target 不需要重新链接时（增量构建），
+# 这个 POST_BUILD 不会执行，而 CMake 的 MACOSX_BUNDLE 默认模板会把 Info.plist
+# 覆盖成 `CFBundlePackageType=APPL` 且 **没有 AudioComponents** ——
+# 结果就是系统完全看不见这个 AU（auval: "didn't find the component"）。
+# 所以这里无条件把正确的 plist 放回去，并做断言。
+AU_PLIST_SRC="build/au/rustomp_as_auv2-build-helper-output/auv2_Info.plist"
+AU_PLIST="$COMPONENT/Contents/Info.plist"
+[ -f "$AU_PLIST_SRC" ] || { echo "找不到 clap-wrapper 生成的 plist：$AU_PLIST_SRC"; exit 1; }
+cp "$AU_PLIST_SRC" "$AU_PLIST"
+
+# 补齐 Logic 需要、而 clap-wrapper 没写的键
+plutil -replace CFBundleIdentifier -string "$BUNDLE_ID" "$AU_PLIST"
+plutil -replace CFBundlePackageType -string "BNDL" "$AU_PLIST"
+plutil -insert LSMinimumSystemVersion -string "10.13" "$AU_PLIST" 2>/dev/null || true
+plutil -insert CFBundleSupportedPlatforms -json '["MacOSX"]' "$AU_PLIST" 2>/dev/null || true
+# sandboxSafe=NO -> Logic 在进程内托管，不经过 AUHostingService（ad-hoc 签名下更稳）
+plutil -replace AudioComponents.0.sandboxSafe -bool NO "$AU_PLIST" 2>/dev/null || true
+
+# 断言：AU 声明必须与我们要的完全一致，否则宁可失败也不要装进去
+assert_plist() {
+    local key="$1" want="$2" got
+    got=$(plutil -extract "$key" raw "$AU_PLIST" 2>/dev/null || true)
+    if [ "$got" != "$want" ]; then
+        echo "Info.plist 校验失败：$key = '$got'，期望 '$want'"
+        exit 1
+    fi
+}
+assert_plist "AudioComponents.0.type"          "$AU_TYPE"
+assert_plist "AudioComponents.0.subtype"       "$AU_SUBTYPE"
+assert_plist "AudioComponents.0.manufacturer"  "$AU_MANUFACTURER"
+assert_plist "AudioComponents.0.factoryFunction" "wrapAsAUV2_inst0Factory"
+assert_plist "CFBundleIdentifier"              "$BUNDLE_ID"
+echo "    Info.plist 校验通过：$AU_TYPE/$AU_SUBTYPE/$AU_MANUFACTURER"
+
 # ---------------------------------------------------------------- 3. 签名
 echo "==> [4/7] ad-hoc 签名（先内层 clap，再外层 bundle）"
 codesign --force --sign - "$COMPONENT/Contents/PlugIns/${PLUGIN_NAME}.clap" 2>/dev/null || true

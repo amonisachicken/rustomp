@@ -52,6 +52,70 @@ static OSStatus input_callback(void *inRefCon, AudioUnitRenderActionFlags *flags
     return noErr;
 }
 
+
+// 从 Mach-O 路径推出 .component 包路径：<bundle>/Contents/MacOS/<name>
+static int bundle_path_from_macho(const char *macho, char *out, size_t outlen) {
+    char tmp[4096];
+    snprintf(tmp, sizeof(tmp), "%s", macho);
+    for (int i = 0; i < 3; i++) {
+        char *slash = strrchr(tmp, '/');
+        if (!slash) return -1;
+        *slash = '\0';
+    }
+    snprintf(out, outlen, "%s", tmp);
+    return 0;
+}
+
+static void cfstr_to_c(CFStringRef s, char *buf, size_t n) {
+    if (!s) { buf[0] = 0; return; }
+    CFStringGetCString(s, buf, (CFIndex)n, kCFStringEncodingUTF8);
+}
+
+// 校验 bundle 的 Info.plist 里确实声明了我们要的那一个 AudioComponent。
+// 这能抓住「AU 代码没问题、但 plist 漏了 AudioComponents」这类致命且难查的错误。
+static int verify_plist_declaration(const char *bundle, const char *want_type,
+                                    const char *want_sub, const char *want_manu,
+                                    const char *want_factory) {
+    CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+        NULL, (const UInt8 *)bundle, (CFIndex)strlen(bundle), true);
+    if (!url) { printf("[FAIL] 无法构造 bundle URL\n"); return -1; }
+    CFBundleRef b = CFBundleCreate(NULL, url);
+    CFRelease(url);
+    if (!b) { printf("[FAIL] CFBundleCreate 失败: %s\n", bundle); return -1; }
+
+    CFTypeRef ac = CFBundleGetValueForInfoDictionaryKey(b, CFSTR("AudioComponents"));
+    if (!ac || CFGetTypeID(ac) != CFArrayGetTypeID()) {
+        printf("[FAIL] Info.plist 里没有 AudioComponents（系统将完全看不见这个 AU）\n");
+        CFRelease(b);
+        return -1;
+    }
+    int ok = 0;
+    CFIndex n = CFArrayGetCount((CFArrayRef)ac);
+    printf("[info] Info.plist 声明了 %ld 个 AudioComponent\n", (long)n);
+    for (CFIndex i = 0; i < n; i++) {
+        CFTypeRef e = CFArrayGetValueAtIndex((CFArrayRef)ac, i);
+        if (!e || CFGetTypeID(e) != CFDictionaryGetTypeID()) continue;
+        CFDictionaryRef d = (CFDictionaryRef)e;
+        char t[16] = "", st[16] = "", mn[64] = "", fn[128] = "";
+        cfstr_to_c(CFDictionaryGetValue(d, CFSTR("type")), t, sizeof(t));
+        cfstr_to_c(CFDictionaryGetValue(d, CFSTR("subtype")), st, sizeof(st));
+        cfstr_to_c(CFDictionaryGetValue(d, CFSTR("manufacturer")), mn, sizeof(mn));
+        cfstr_to_c(CFDictionaryGetValue(d, CFSTR("factoryFunction")), fn, sizeof(fn));
+        printf("        [%ld] %s/%s/%s factory=%s\n", (long)i, t, st, mn, fn);
+        if (!strcmp(t, want_type) && !strcmp(st, want_sub) &&
+            !strcmp(mn, want_manu) && !strcmp(fn, want_factory))
+            ok = 1;
+    }
+    CFRelease(b);
+    if (!ok) {
+        printf("[FAIL] plist 声明与期望不符（期望 %s/%s/%s factory=%s）\n",
+               want_type, want_sub, want_manu, want_factory);
+        return -1;
+    }
+    printf("[ ok ] plist 中的 AudioComponent 声明正确\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 6) {
         fprintf(stderr,
@@ -74,6 +138,16 @@ int main(int argc, char **argv) {
                                          ((uint32_t)argv[5][2] << 8) | (uint32_t)argv[5][3]);
 
     printf("=== AU 冒烟测试 ===\n  bundle: %s\n  工厂: %s\n", macho, sym);
+
+    // 先校验 bundle 声明（这一步能抓住「plist 缺 AudioComponents」的致命错误）
+    char bundle[4096];
+    if (bundle_path_from_macho(macho, bundle, sizeof(bundle)) == 0) {
+        printf("  bundle: %s\n", bundle);
+        if (verify_plist_declaration(bundle, argv[3], argv[4], argv[5], sym) != 0)
+            return 5;
+    } else {
+        printf("[warn] 无法从路径推导 bundle，跳过 plist 校验\n");
+    }
 
     void *h = dlopen(macho, RTLD_LAZY | RTLD_LOCAL);
     if (!h) {

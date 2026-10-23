@@ -267,9 +267,9 @@ ngspice 的价值是**独立第三方**校验，避免我们自证自明。
 | Rust 插件 (nih-plug) | `crates/rustomp-plugin` | `cargo build --release` 通过 |
 | 通用二进制打包 | `Rustomp Skeleton.clap` / `.vst3` | `lipo -info` → **x86_64 + arm64** ✓ |
 | clap-wrapper → AUv2 | `Rustomp Skeleton.component` | `lipo -info` → x86_64 + arm64 ✓；`.clap` 已嵌入 `Contents/PlugIns/` ✓ |
-| AU 进程内冒烟测试 | `tools/au-smoke` | dlopen / 工厂 / Initialize / 渲染全部通过，**直通电平 0.250000** ✓ |
+| AU 进程内冒烟测试 | `tools/au-smoke` | plist 声明 + dlopen / 工厂 / Initialize / 渲染全部通过，**直通电平 0.250000** ✓ |
 | 安装 | `~/Library/Audio/Plug-Ins/{Components,VST3,CLAP}` | ✓ |
-| `auval` | — | ✗ 受本机环境阻塞（见 E5，与插件无关） |
+| `auval` | — | ✗ 受本机环境阻塞（见 E6.2，与插件无关）；且曾因 E6.1 的 plist bug 而必然失败，**已修复** |
 
 一条命令：`./scripts/build-au.sh`
 
@@ -351,6 +351,96 @@ sudo killall -9 AudioComponentRegistrar     # 无需重启
 这样能完整验证 dlopen → 工厂 → 实例化 → 格式设定 → Initialize（真正加载内嵌 CLAP）→ 渲染。
 
 这也意味着：**以后可以把 AU 行为写进 CI，不需要图形界面，也不需要 auval。**
+
+---
+
+## E6：Logic 看不到插件的真因（2026-10-23）🔴 已定位
+
+用户重启服务后 Logic 里仍找不到插件。排查出 **两个独立问题**，第一个是我们自己的 bug。
+
+### 6.1 问题 A（我们的 bug）：AU 包的 Info.plist 里没有 `AudioComponents`
+
+**直接看已安装的 plist：**
+
+```
+CFBundlePackageType => APPL        ← 不对，应该是 BNDL
+CFBundleIdentifier  => com.amonisachicken.rustomp.skeleton.component
+（完全没有 AudioComponents 键）
+```
+
+没有 `AudioComponents` 声明 = 这个 bundle **根本不是个 AU** → 系统注册表不会收录它，
+`auval` 报 `didn't find the component`，Logic 自然也看不到。
+
+**机制（重要，会重复发生）：**
+
+1. clap-wrapper 的正确 plist 是 **build 时**生成到 `build/au/rustomp_as_auv2-build-helper-output/auv2_Info.plist`；
+2. 再用一条 **POST_BUILD** 命令拷进 bundle（`cmake/wrap_auv2.cmake:283`）；
+3. 但 target 不需重新链接时（**增量构建**），POST_BUILD **不执行**；
+4. 而 CMake 的 `MACOSX_BUNDLE` 默认模板每次都会把 `Info.plist` 写成 `APPL` 且无 `AudioComponents`。
+
+→ 所以：**第一次完整构建正确，之后的增量构建静默损坏。** 这是最阴的一类回归：
+产物存在、能 dlopen、能渲染，只是系统看不到。
+
+**修复（`scripts/build-au.sh`）：**
+
+- 无条件把 `auv2_Info.plist` 拷回 `Contents/Info.plist`；
+- 补齐 `CFBundlePackageType=BNDL`、`LSMinimumSystemVersion=10.13`、`CFBundleSupportedPlatforms=[MacOSX]`；
+- `AudioComponents.0.sandboxSafe = NO`（让 Logic 在进程内托管，不走 AUHostingService，ad-hoc 签名下更稳）；
+- **断言** type/subtype/manufacturer/factoryFunction/bundleId 全部符合预期，不符直接构建失败；
+- 把 **plist 校验加进 `au-smoke`**：从 Mach-O 路径反推 bundle，用 `CFBundleCreate` + `CFBundleGetValueForInfoDictionaryKey("AudioComponents")` 逐项比对。
+
+> **教训（写给以后的自己）**：上一轮 E4 里 au-smoke “通过”给人一种虚假安全感 ——
+> 它直接 `dlopen` 了 Mach-O，**完全绕过了 Info.plist**。
+> 能加载 ≠ 能被系统发现。现在工具已补上这一环。
+
+### 6.2 问题 B（本机系统状态）：AudioComponentRegistrar 客户端路径全线失效
+
+修复 plist 后 `auval` 仍失败。做三路对照（全部看不到任何第三方 AU）：
+
+| 探测方式 | 结果 |
+|---|---|
+| `auval -a` | 只有 56 个 Apple 内置 AU |
+| `AudioComponentFindNext`（aufx/lpas/appl） | FOUND ✓（说明我的调用代码没问题） |
+| `AudioComponentFindNext`（aufx/Dqu0/Chow = 已装的 BYOD） | NULL ✗ |
+| `AVAudioUnitComponentManager.components`（Swift/AVFoundation） | **56 个，非 Apple = 0** ✗ |
+
+但注册表日志显示：重启后 11:13:35–11:15:07 扫描了 **88 个第三方 AU 全部 success**，
+且缓存文件里确实有 `Chow`/`BYOD` 条目。
+
+→ 结论：**扫描与写缓存正常，但客户端查不到**。
+
+**机制推断**：`launchctl print system` 显示
+
+```
+43081  -9  com.apple.audio.AudioComponentRegistrar   ← 被 SIGKILL，未重启
+```
+
+system 域的 registrar 已死（用户执行 killall 后 launchd 没拉起来），而客户端只拿到 Apple 内置表。
+GUI 域那个（PID 42801）负责扫描，但它不提供客户端查询端点。
+
+**修复（需要 root，我做不了）：**
+
+```bash
+sudo launchctl kickstart -k system/com.apple.audio.AudioComponentRegistrar
+# 或直接重启整机（最可靠）
+```
+
+验证命令（BYOD 是现成的对照组）：
+
+```bash
+auval -v aufx Dqu0 Chow     # 修好后应通过 → 证明环境好了
+auval -v aufx Rstp Amch     # 我们的插件
+```
+
+### 6.3 本次得到的可复用诊断手段
+
+| 手段 | 用途 |
+|---|---|
+| `plutil -p <AU>.component/Contents/Info.plist` | 5 秒判断“它到底有没有被声明成 AU” |
+| `auval -v aufx Dqu0 Chow`（BYOD） | **对照组**：区分“我们的问题”和“环境问题” |
+| `launchctl print system \| grep -A1 AudioComponentRegistrar` | 看 system 域 registrar 是否活着（`-9` = 死了） |
+| `log show --predicate 'process == "AudioComponentRegistrar"'` + `~/Library/Caches/AudioUnitCache/Logs/AUScan*.plist` | 看扫描/验证结果 |
+| `tools/au-smoke` | 绕开系统注册表验证 AU 本体 + plist 声明 |
 
 ---
 
@@ -534,4 +624,5 @@ rustomp-plugin (nih-plug)  ──►  .clap
 |---|---|
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
+| 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **M0-a 完成**（E4）：workspace + nih-plug 空插件 + 通用二进制 CLAP/VST3 + clap-wrapper AUv2 + 安装 + 冒烟测试通过。新增 `scripts/fetch-third-party.sh`、`scripts/build-au.sh`、`tools/au-smoke`、`cmake/CMakeLists.txt`。踩坑：AudioUnitSDK 需 1.1.0、制造商码需大写、bundle id 被 nih-plug 写死、AU 参数名走 cfNameString。发现本机 registrar 缓存损坏（E5，新增 R13/R14/R15）。**ngspice-47 编译成功**（前置依赖：Homebrew readline 8.3，系统 4.2 无 `rl_reset_after_signal`） |
