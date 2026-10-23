@@ -834,6 +834,69 @@ THD 27.648 %（基线 27.616 %），频响误差仍 ≤0.31 dB。
 
 ---
 
+## E13：修复「Logic 只在软件乐器插槽里出现」（2026-10-23）✅
+
+用户反馈：BYOD / CLA-76 等第三方效果器在音频轨的 Audio FX 里都能找到，
+**只有我们的找不到**；而且「从软件乐器槽拖到音频轨后就能找到了，但重启 Logic 又没了」。
+
+### 13.1 决定性证据：Logic 的 AU 缓存
+
+`~/Library/Preferences/com.apple.logic10.plist` 里有一份 **AU 能力缓存**，
+每个插件一个条目（`aufx-RFz1-Amch`）。对比：
+
+| 插件 | MIDIProtocol |
+|---|---|
+| **Rustomp Fuzz（我们）** | **1** ← 被当成 MIDI 插件 |
+| BYOD / Waves 等原生 AUv2 效果器 | **0** |
+
+Logic 把「类型=aufx 且支持 MIDI」的插件归类为 **"MIDI 控制效果器"**，
+而 MIDI 控制效果器在 Logic 里**只出现在软件乐器轨道的插槽**中。
+这解释了两个现象：音频轨找不到；拖过去之后 Logic 的缓存被就地改写于是短暂能用了，
+重启后重新读缓存又变回去。
+
+### 13.2 根因：clap-wrapper 无条件宣称支持 MIDI
+
+`third_party/clap-wrapper/src/wrapasauv2.cpp` 的 `GetPropertyInfo()` 里，
+`kAudioUnitProperty_AudioUnitMIDIProtocol` / `HostMIDIProtocol` /
+`MIDIOutputCallback(Info)` 都在 `#if AUSDK_MIDI2_AVAILABLE` 下**无条件**返回 `noErr`，
+完全不管被托管的 CLAP 有没有 note port。我们的插件是 `MidiConfig::None`，一个 note port 都没有。
+
+### 13.3 修复：给 clap-wrapper 打本地补丁
+
+`patches/0001-auv2-advertise-midi-only-when-present.patch`
+（`scripts/fetch-third-party.sh` 自动应用，幂等）：
+
+- 新增 `hasMIDI() = _midi_wants_midi_input || !_midi_outports.empty()`
+- 只有 `hasMIDI()` 为真时才返回 MIDI 相关属性，否则 `kAudioUnitErr_InvalidProperty`
+- `MIDIOutputCallback(Info)` / `MIDIOutputEventListCallback` 只在有 MIDI 输出时宣称
+
+`tools/au-smoke` 增加了这项检查：
+
+```
+[ ok ] 未宣称支持 MIDI（纯音频效果器）→ Logic 会归到 Audio FX
+```
+
+### 13.4 用户侧还需做一步：清掉 Logic 里的旧缓存
+
+Logic 缓存里已经有错误的 `MIDIProtocol=1`，需要让它重新扫。两种办法（选一）：
+
+```bash
+# A. 退出 Logic 后，删掉这两个缓存条目（旧的 Rstp 也在里面，一并清掉）
+plutil -remove "aufx-RFz1-Amch" ~/Library/Preferences/com.apple.logic10.plist
+plutil -remove "aufx-Rstp-Amch" ~/Library/Preferences/com.apple.logic10.plist
+killall cfprefsd
+```
+
+或 B. 打开 Logic → 设置 → 插件管理器 → 重置并重新扫描所选。
+
+### 13.5 经验
+
+> 第三方封装层「无条件宣称支持某个可选能力」，会让宿主做出错误的**分类**决定。
+> 这类问题不会报错、不影响出声，只会让插件"出现在错误的地方"，
+> 极难从插件自身代码看出来 —— 必须去看**宿主的缓存文件**。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1015,6 +1078,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **修复 Logic 分类错误**（E13）：clap-wrapper 无条件宣称 MIDI 属性 → Logic 缓存 `MIDIProtocol=1` → 被当成 MIDI 控制效果器只出现在软件乐器槽。用 `patches/0001-*` 让 AU 只在真有 note port 时才宣称 MIDI；au-smoke 增加该检查 |
 | 2026-10-23 | **修复自激 bug**（E12）：定位到牛顿无阻尼 + `v_out` 硬钳位不一致 + 状态无限幅，三者叠加导致瞬态后 ~10kHz 极限环；改为阻尼牛顿+残差判据+失败兜底+状态限幅+去掉钳位+引擎级复位。精度不变（h2 3.915→3.915），新增瞬态回归测试。同时取证：AU 是标准 `aufx`（1 进 1 出、{2,2}），Logic 插槽异常需对照实验 |
 | 2026-10-23 | **4x 过采样 + 插件接线完成**（E11）：`Rustomp Fuzz`（aufx/RFz1/Amch）已安装；发现 **1x 直接跑 48k 电路会失效**（3kHz 以上输出归零），4x 是正确性下限；THD 27.648% vs 基线 27.616% |
 | 2026-10-23 | **fakedist v1 的 WDF 实现完成并对拍通过**（E10）：DC 精确、频响 ≤0.31dB、THD 27.650% vs 27.616%、h2–h9 逐次误差 ≤0.03pp。踩坑：串联二极管的 N 也要翻倍（h2 归零的元凶）、`.four` 不能当基准。未做：4x 过采样、Cjo/tt、插件接线 |

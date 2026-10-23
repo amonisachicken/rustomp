@@ -38,6 +38,17 @@ for d in clap-wrapper clap AudioUnitSDK; do
     printf "  %-14s %s\n" "$d" "$(git -C "$TP/$d" rev-parse --short HEAD 2>/dev/null || echo '?')"
 done
 
+# 应用本地补丁（vendored 第三方代码的必要修复，见 patches/README.md）
+for p in "$ROOT"/patches/*.patch; do
+    [ -e "$p" ] || continue
+    if git -C "$TP/clap-wrapper" apply --check "$p" 2>/dev/null; then
+        git -C "$TP/clap-wrapper" apply "$p"
+        echo "[patch] 已应用 $(basename "$p")"
+    else
+        echo "[patch] 跳过 $(basename "$p")（可能已应用）"
+    fi
+done
+
 # 便捷链接：clap-wrapper 也支持在自身目录下找 AudioUnitSDK
 ln -sfn "$TP/AudioUnitSDK" "$TP/clap-wrapper/AudioUnitSDK" 2>/dev/null || true
 echo "完成。"

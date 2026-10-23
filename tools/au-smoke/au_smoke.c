@@ -277,6 +277,20 @@ int main(int argc, char **argv) {
         }
     }
 
+    // MIDI 能力检查：纯效果器**不应**宣称支持 MIDI 属性
+    // （否则 Logic 会把它归类成 "MIDI 控制效果器"，只出现在软件乐器插槽）
+    {
+        SInt32 proto = 0;
+        UInt32 psz = sizeof(proto);
+        OSStatus st = AudioUnitGetProperty(inst, kAudioUnitProperty_AudioUnitMIDIProtocol,
+                                           kAudioUnitScope_Global, 0, &proto, &psz);
+        if (st == noErr) {
+            printf("[warn] 宣称支持 MIDI (protocol=%d) → Logic 会归类为 MIDI 控制效果器\n", (int)proto);
+        } else {
+            printf("[ ok ] 未宣称支持 MIDI（纯音频效果器）→ Logic 会归到 Audio FX\n");
+        }
+    }
+
     // 渲染：输入恒 0.25，输出应为 0.25 * gain（默认 0 dB = 0.25）
     printf("[info] 声道数: %u\n", (unsigned)nch);
     float **chan = (float **)calloc(nch, sizeof(float *));
