@@ -22,7 +22,8 @@ if [ ! -d "$COMP" ]; then
 fi
 
 echo "== 安装 ==="
-ls -ld "$COMP" | awk '{print "  路径:", $NF, "\n  时间:", $6, $7, $8}'
+echo "  路径: $COMP"
+echo "  时间: $(date -r "$COMP" '+%Y-%m-%d %H:%M:%S')"
 printf "  签名: "; codesign -dv "$COMP" 2>&1 | grep -E "^Signature" | sed 's/Signature=//' || echo "?"
 
 echo
