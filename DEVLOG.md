@@ -1448,6 +1448,34 @@ CLAP: vendor = HONEYPIE EFFECTS
 
 ---
 
+## E22：窗口重开后界面消失（2026-10-23）
+
+**症状**：关闭插件窗口再打开，贴图全没了（面板、拨杆），但点击对应位置仍能调参数，
+只剩 LED 红点还在。
+
+**根因**：`TextureHandle` 绑定的是**创建它的那个 egui Context**。
+宿主每次打开编辑器都会走 `Editor::spawn()` → `EguiWindow::open_parented(...)`，
+即创建一个**全新的 egui Context**；而我们的 `UiState`（含纹理句柄）挂在
+`Arc<RwLock<_>>` 里跨窗口存活 → 旧句柄在新 Context 里是未知 id，`painter.image()`
+静默不画。LED 用 `circle_filled` 纯几何绘制，所以还在。
+
+**修复**：`create_egui_editor` 的 `build` 回调**每次 spawn 都会执行**，
+在那里把纹理缓存清空，下一帧自动重建（解码 + 上传）：
+
+```rust
+|ctx, state| {
+    ctx.set_visuals(Visuals::light());
+    state.texture = None;
+    state.sw_up = None;
+    state.sw_down = None;
+}
+```
+
+**教训**：GUI 里任何"跨帧缓存"的资源，只要它绑定的是上下文（纹理、字体、着色器），
+就必须在 `build`（每次新建上下文）时失效重建。纯数据缓存（比如解码后的像素）才可以长期持有。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1674,6 +1702,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-23 | **拨杆对齐 + 按下缩小修复**（E21）：两态贴图六边形基线相差 1.53，改为分别偏移（以水平两顶点连线为基准）；按下反馈改用 `Response::is_pointer_button_down_on()` 并以六边形基线中点为缩放原点 |
 | 2026-10-23 | **开源发布**（E20）：定位为「Rust 电路建模框架 + Sparklin Drive 示例插件」并新增根 README；拨杆发糙的真因是 PNG alpha 被忽略（改不透明导出）；拨杆改为底图删除 + 独立贴图；已推送 GitHub |
 | 2026-10-23 | **界面打磨**（E19）：拨杆用真实双状态贴图（六角形对齐、无重影）、LED 加外发光拉开对比、bypass 改为按住缩 0.9 倍（松开恢复）、厂商名统一为 HONEYPIE EFFECTS |

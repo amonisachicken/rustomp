@@ -266,8 +266,14 @@ impl Plugin for SparklinDrive {
         create_egui_editor(
             self.params.editor_state.clone(),
             UiState::default(),
-            |ctx, _state| {
+            |ctx, state| {
                 ctx.set_visuals(egui::Visuals::light());
+                // 每次窗口重新打开都会创建**新的 egui Context**，
+                // 之前缓存的 TextureHandle 全部失效（贴图不画、但交互还在，
+                // 因为交互是纯几何计算）。这里必须把缓存清空，让下一帧重建。
+                state.texture = None;
+                state.sw_up = None;
+                state.sw_down = None;
             },
             move |ctx, setter, state| {
                 egui::CentralPanel::default()
