@@ -27,6 +27,9 @@ STOP="${STOP:-3}"       # 总仿真时长
 SAVE="${SAVE:-0.02}"    # 只保存最后 20ms（否则 rawfile 会到 GB 级）
 TAIL=$(python3 -c "print(f'{$STOP-$SAVE:g}')")
 
+# 用框架里的 Rust 工具解析 rawfile（替代已删除的 tools/oracle/spice_raw.py）
+cargo build -q --release -p rustomp-oracle --bin spice-raw
+
 WORK="build/sim/$(basename "$DIR")"
 mkdir -p "$WORK"
 printf 'set filetype=ascii\n' > "$WORK/.spiceinit"

@@ -10,3 +10,6 @@ publish = false
 
 [dependencies]
 rustomp-dsp = { workspace = true }
+
+[dev-dependencies]
+rustomp-oracle = { path = "../../../crates/rustomp-oracle" }

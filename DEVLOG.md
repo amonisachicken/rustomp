@@ -1677,6 +1677,64 @@ AU：aufx / SPm1 / HpEf，4 参数，CocoaUI ✓，音频通路 ✓
 
 ---
 
+## E26：架构调整 第 4 步 —— ngspice 对拍接口 `rustomp-oracle`（2026-10-23）
+
+### 26.1 新 crate `crates/rustomp-oracle`
+
+| API | 作用 |
+|---|---|
+| `Oracle::discover()` | 找 ngspice：`NGSPICE` 环境变量 → `PATH`；找不到返回 `None`（测试应**跳过**而非失败） |
+| `Oracle::run_netlist(&str)` | 在临时目录写 `.spiceinit`（`set filetype=ascii`）+ 网表，跑 `ngspice -b -r`，读回 rawfile |
+| `RawFile::parse` | ASCII rawfile 解析（含"只有每点第一行带序号"这个格式细节） |
+| `RawFile::nominal_dt` / `resample` | **变步长重采样**（见 26.3） |
+| `harmonics` / `harmonics_percent` / `thd_percent` / `gain_db` | 统一的测量函数 |
+| `last_integer_periods` | 取稳态的整数个周期，避免频谱泄漏 |
+| `bin/spice-raw` | 命令行查看 rawfile（替代原 `tools/oracle/spice_raw.py`，已删除） |
+
+**关键设计**：这些测量函数对 **ngspice 输出** 和 **DSP 输出** 用的是**同一份代码** ——
+不会出现"两把尺子"（这是早期最大的隐患）。
+
+### 26.2 插件侧：活体对拍测试
+
+`plugins/sparklin-drive/circuit/tests/oracle.rs`：直接让 ngspice 跑本插件的网表，
+与 WDF 实现用同一套测量函数比较。没装 ngspice 时自动跳过。
+
+实测（0.2 V 峰值、1 kHz、电位器 50%）：
+
+| 谐波 | WDF % | ngspice % | 差 (pp) |
+|---|---|---|---|
+| h2 | 3.914 | 3.921 | −0.007 |
+| h3 | 22.487 | 22.457 | +0.030 |
+| h4 | 2.427 | 2.430 | −0.003 |
+| h5 | 11.981 | 11.939 | +0.042 |
+| h6 | 1.835 | 1.833 | +0.001 |
+| h7 | 7.699 | 7.649 | +0.050 |
+| h8 | 1.483 | 1.477 | +0.006 |
+| h9 | 5.400 | 5.344 | +0.056 |
+
+基波 0.4791 vs 0.4794 V；THD 27.648 % vs 27.581 %。**最大谐波偏差 0.056 pp。**
+
+与 `baseline.rs` 的分工：那边是"抄死的期望值"（快、无需 ngspice，适合日常）；
+这边是"每次重跑 ngspice"（慢 ~6 s，能抓出网表/电路改动带来的偏差）。
+
+### 26.3 关键坑：ngspice 的 `.tran` 是**变步长**
+
+第一版对拍差得离谱（h5：WDF 11.98 vs ngspice 4.37）。
+根因：`.tran 5u` 只是**步长上限**，削波处会自动缩小步长。按"样本个数"切整数周期
+是错的，DFT 直接失真。
+
+修复：`nominal_dt()`（相邻间隔的中位数）+ `resample(dt)`（线性插值到均匀网格），
+再取整数周期。修完后所有谐波一次对上。
+
+> 这条同样适用于任何用 ngspice 做音频对拍的场合 —— 必须显式重采样。
+
+### 26.4 其它
+
+`scripts/sim-baseline.sh` 改用 `target/release/spice-raw`（不再依赖 Python 解析器），
+`tools/oracle/spice_raw.py` 删除。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1918,6 +1976,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **架构调整第 4 步：对拍接口**（E26）：新增 `rustomp-oracle`（ngspice 驱动 + ASCII rawfile 解析 + **变步长重采样** + 统一测量函数）；插件新增活体对拍测试，h2–h9 最大偏差 0.056 pp；删除 Python 解析器 |
 | 2026-10-23 | **架构调整第 3 步：通用界面层**（E25）：新增 `crates/rustomp-gui`（PanelSpec/控件/ParamAccess/纹理生命周期/draw），界面声明由 build.rs 从 rustomp.toml 生成；插件外壳 559→296 行，框架内无素材与坐标 |
 | 2026-10-23 | **架构调整第 2 步：框架/电路分离**（E24）：引入 `Circuit` trait 与 `Engine<C>`；`fakedist` 移入 `plugins/sparklin-drive/circuit`，插件外壳移入 `plugin/`，身份由 `build.rs` 从 `rustomp.toml` 生成；框架内已无任何插件痕迹 |
 | 2026-10-23 | **拨杆对齐 + 按下缩小修复**（E21）：两态贴图六边形基线相差 1.53，改为分别偏移（以水平两顶点连线为基准）；按下反馈改用 `Response::is_pointer_button_down_on()` 并以六边形基线中点为缩放原点 |

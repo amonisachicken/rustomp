@@ -2005,6 +2005,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustomp-oracle"
+version = "0.1.0"
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2208,6 +2212,7 @@ name = "sparklin-drive-circuit"
 version = "0.1.0"
 dependencies = [
  "rustomp-dsp",
+ "rustomp-oracle",
 ]
 
 [[package]]

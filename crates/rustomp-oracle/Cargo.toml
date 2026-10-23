@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "rustomp-oracle"
+description = "rustomp 框架的 ngspice 对拍接口：跑网表、解析 rawfile、THD/谐波/频响测量"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
