@@ -1328,6 +1328,55 @@ CPU 仍为 **7.8%**（立体声 48k + 4x），DSP 测试 14 项全绿。
 
 ---
 
+## E19：界面细节打磨（2026-10-23）
+
+用户试弹后的四条反馈，全部落地：
+
+| 反馈 | 处理 |
+|---|---|
+| 旋钮很跟手 | 保持（260 逻辑像素 = 全行程） |
+| **LED 亮暗对比不够** | 灭 = 暗红 `(58,2,8)`；亮 = 接近纯红 `(255,72,66)` + **外发光圈**（半径 1+1.1t 倍，透明度随电平）。对比从 ~1.6× 拉到 ~4× |
+| **要真拨杆** | 用户补了两张状态图 `tuggle_{up,down}_*.svg`（viewBox 23.68×25.21），光栅化成 `assets/switch_{up,down}@4x.png`；切换时替换贴图 |
+| **bypass 不应改变外形** | 去掉压暗/内圈；改为**只有按住时**把开关区域缩到 **0.9 倍**，松开恢复 |
+| **厂商名要 HONEYPIE EFFECTS** | AU plist 的 `AudioComponents.name` 与 CLAP 描述符都改为 `HONEYPIE EFFECTS`（cmake 的 `RUSTOMP_AU_MANUFACTURER_NAME` + 构建脚本传参） |
+
+### 19.1 拨杆贴图的对位（这一步最容易出错）
+
+独立开关 SVG 的 viewBox 是 `23.68 × 25.21`，而面板上那个开关的 bbox 是
+`(73.4894, 109.989) 23.6813 × 23.2638`（比它矮 1.95 —— 因为独立文件要同时容纳
+"朝上"和"朝下"两种拨杆位置）。
+
+用**六角形**做基准对齐：
+
+- 面板里 `polyline36` 的 bbox 中心 = `(85.33, 121.825)`
+- 独立文件里那条 polyline 的顶点中心 = `(11.84, 13.37)`
+- ⇒ 贴图偏移 = `(85.33 − 11.84, 121.825 − 13.37) = (73.49, 108.455)`
+
+贴图前先用底色矩形盖住面板里画死的那个开关（否则会与旧拨杆重影）。
+**用 Inkscape 合成 mock 图核对过**：放大看无重影、六角形严丝合缝。
+
+### 19.2 bypass 按压反馈的实现
+
+不能直接缩放纹理的一部分，做法是：
+
+1. 从**面板纹理**用 `painter.image(tex, dest, uv, ...)` 取开关区域的子矩形（uv 子区域）；
+2. 先用底色填充原位置（抹掉）；
+3. 再把子矩形贴到 `0.9×` 的目标矩形里。
+
+`Response::is_pointer_button_down_on()` 判定按住状态，松开后下一帧不再重绘即恢复。
+
+### 19.3 验证
+
+```
+AU:  aufx / SPm1 / HpEf    name = "HONEYPIE EFFECTS: Sparklin Drive Mono"
+CLAP: vendor = HONEYPIE EFFECTS
+参数: Gain / Clip Mode SYM / Level / Bypass
+[ ok ] 提供自定义界面（CocoaUI）
+[ ok ] 音频通路正常
+```
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1554,6 +1603,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **界面打磨**（E19）：拨杆用真实双状态贴图（六角形对齐、无重影）、LED 加外发光拉开对比、bypass 改为按住缩 0.9 倍（松开恢复）、厂商名统一为 HONEYPIE EFFECTS |
 | 2026-10-23 | **GUI 完成 + 新功能 + 改名**（E18）：egui + 内嵌 PNG 面板；新增对称削波模式（ngspice 参考 h2 3.92%→0.049%）、true-bypass（15 样本对齐 + 5ms 淡化）、削波指示 LED；插件改名 **Sparklin Drive / HONEYPIE EFFECTS**（`aufx/SPm1/SPs1/HpEf`）。au-smoke 确认 4 参数 + CocoaUI + 无乐器/MIDI 属性 |
 | 2026-10-23 | **无 GUI 阶段冻结**（E17）：打 tag `v0.1.0-nogui`，二进制存档到 `dist/v0.1.0-nogui/`（3 变体 × 3 格式 + SHA256 + README）；评估面板 SVG（竖版 1:1.87，指针是画死的 rect、字体未嵌入、透明底），GUI 方案定为 resvg + nih_plug_egui |
 | 2026-10-23 | **CPU A 类优化完成**（E16）：1592 → 824 ns（1.93x），CPU 15% → **7.8%**，h2–h9 逐位不变。关键手段是外层牛顿线性外推（迭代 3.48→2.00）；记录了 6 个「实测无效」的方向。多线程原型实测 1.97x，但因单声道变体零收益 + 实时风险，暂不启用（ADR-010） |
