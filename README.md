@@ -63,6 +63,7 @@
 ```
 crates/
   rustomp-dsp/          框架：Circuit 契约、Engine<C>、元件库、过采样（与电路无关）
+  rustomp-gui/          框架：声明式面板 + 交互 + 纹理生命周期（不含素材）
 plugins/
   sparklin-drive/       示例插件（= 下游项目的样板，结构同构）
     rustomp.toml        身份 / 素材 / 界面坐标（唯一来源）

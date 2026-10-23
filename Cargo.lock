@@ -1997,6 +1997,14 @@ name = "rustomp-dsp"
 version = "0.1.0"
 
 [[package]]
+name = "rustomp-gui"
+version = "0.1.0"
+dependencies = [
+ "nih_plug_egui",
+ "png",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2190,8 +2198,8 @@ version = "0.1.0"
 dependencies = [
  "nih_plug",
  "nih_plug_egui",
- "png",
  "rustomp-dsp",
+ "rustomp-gui",
  "sparklin-drive-circuit",
 ]
 

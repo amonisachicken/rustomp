@@ -37,4 +37,19 @@ fn main() {
     }
     let dir = std::env::var("OUT_DIR").expect("OUT_DIR");
     std::fs::write(format!("{dir}/identity.rs"), &out.stdout).expect("写入 identity.rs 失败");
+
+    // 界面声明（rustomp_gui::PanelSpec）
+    let out = Command::new("python3")
+        .arg(&tool)
+        .arg(&toml)
+        .arg("--panel-rust")
+        .output()
+        .expect("运行 tools/meta/plugin_meta.py --panel-rust 失败");
+    if !out.status.success() {
+        panic!(
+            "plugin_meta.py --panel-rust 失败：\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    std::fs::write(format!("{dir}/panel.rs"), &out.stdout).expect("写入 panel.rs 失败");
 }

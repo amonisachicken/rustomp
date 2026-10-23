@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "rustomp-gui"
+description = "rustomp 框架的通用界面层：贴图面板 + 声明式控件 + 交互（不含任何素材）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+# egui 经 nih_plug_egui 转出，保证版本一致
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
+png = "0.17"

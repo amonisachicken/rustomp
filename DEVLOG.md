@@ -1625,6 +1625,58 @@ AU 自检：          aufx / SPm1 / HpEf，4 参数（Gain / Clip Mode SYM / Lev
 
 ---
 
+## E25：架构调整 第 3 步 —— 通用界面层 `rustomp-gui`（2026-10-23）
+
+### 25.1 新增框架 crate `crates/rustomp-gui`
+
+**只提供"怎么做"**：贴图面板、声明式控件、交互、纹理生命周期。**不含任何素材、坐标、参数名**。
+
+| 类型 | 作用 |
+|---|---|
+| `PanelSpec` | 面板声明（画布尺寸、窗口尺寸、背景色、旋钮/LED/拨杆/按钮） |
+| `KnobSpec` / `LedSpec` / `ToggleSpec` / `ButtonSpec` | 单个控件的几何与行为 |
+| `Assets` | 插件提供的素材（面板 PNG + 具名贴图），框架不持有素材 |
+| `ParamAccess` trait | 框架读写参数的唯一入口（布尔用 0/1），**因此不知道参数类型** |
+| `UiState` + `reset_textures()` | 纹理缓存与其生命周期（必须每次新建 Context 时清空） |
+| `draw()` | 绘制 + 命中测试 + 拖动/滚轮/双击/按住缩放 |
+
+关键设计：**界面声明由 `build.rs` 从 `rustomp.toml` 生成 Rust 字面量**
+（`plugin_meta.py --panel-rust` → `OUT_DIR/panel.rs`），
+所以运行时不解析 TOML、不引入额外依赖，且坐标只有一份来源。
+
+### 25.2 插件侧瘦身
+
+`plugins/sparklin-drive/plugin/src/lib.rs` 从 **559 行降到 296 行**，
+只剩：参数定义、`GuiAccess`（把 `ParamAccess` 接到 nih-plug 参数）、
+`process`、`editor` 的十行胶水、导出宏。
+
+界面相关代码全部搬到框架（394 行）。
+
+验证框架无状态：
+
+```
+$ grep -rn "sparklin\|Sparklin\|Fakedist" crates/rustomp-gui/src/
+（无输出）
+```
+
+### 25.3 踩坑
+
+1. `&PANEL`（const）传给 `&'static PanelSpec` 参数能成立，靠的是 **rvalue static promotion**；
+   一旦 `PanelSpec` 里出现 `String`/`Vec` 之类就不是 `'static` 了，必须保持全 `&'static` 字段。
+2. 拨杆点击区曾写成 `(y_down - y_up).max(0.0)`；两态顺序颠倒时会得到 0 高度 → 改成 `.abs()`。
+3. 滚轮灵敏度原本写死 `1000.0 * scale`，通用化后不能再用"旋钮自身的 drag_range"推导
+   （会得到 3.846 这种魔法数），直接固定 1000。
+
+### 25.4 验证
+
+```
+AU：aufx / SPm1 / HpEf，4 参数，CocoaUI ✓，音频通路 ✓
+已安装：Sparklin Drive Mono / Stereo
+本轮构建：2 次（check + 正式构建），无重复基准/渲染
+```
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1866,6 +1918,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **架构调整第 3 步：通用界面层**（E25）：新增 `crates/rustomp-gui`（PanelSpec/控件/ParamAccess/纹理生命周期/draw），界面声明由 build.rs 从 rustomp.toml 生成；插件外壳 559→296 行，框架内无素材与坐标 |
 | 2026-10-23 | **架构调整第 2 步：框架/电路分离**（E24）：引入 `Circuit` trait 与 `Engine<C>`；`fakedist` 移入 `plugins/sparklin-drive/circuit`，插件外壳移入 `plugin/`，身份由 `build.rs` 从 `rustomp.toml` 生成；框架内已无任何插件痕迹 |
 | 2026-10-23 | **拨杆对齐 + 按下缩小修复**（E21）：两态贴图六边形基线相差 1.53，改为分别偏移（以水平两顶点连线为基准）；按下反馈改用 `Response::is_pointer_button_down_on()` 并以六边形基线中点为缩放原点 |
 | 2026-10-23 | **开源发布**（E20）：定位为「Rust 电路建模框架 + Sparklin Drive 示例插件」并新增根 README；拨杆发糙的真因是 PNG alpha 被忽略（改不透明导出）；拨杆改为底图删除 + 独立贴图；已推送 GitHub |

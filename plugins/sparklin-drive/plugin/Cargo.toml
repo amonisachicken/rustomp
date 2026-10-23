@@ -18,12 +18,12 @@ crate-type = ["cdylib", "lib"]
 rustomp-dsp = { workspace = true }
 # 本插件的电路
 sparklin-drive-circuit = { path = "../circuit" }
+# 框架的通用界面层
+rustomp-gui = { path = "../../../crates/rustomp-gui" }
 
 # nih-plug 不在 crates.io，用 git 依赖并固定 rev
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
-# 只用来解内嵌的面板 PNG
-png = "0.17"
 
 [features]
 default = []

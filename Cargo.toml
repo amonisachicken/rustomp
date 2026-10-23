@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/rustomp-dsp",
+    "crates/rustomp-gui",
     "plugins/sparklin-drive/circuit",
     "plugins/sparklin-drive/plugin",
     "tools/netlist/nlgen",
