@@ -1,10 +1,18 @@
 # rustomp
 
-**用 Rust 做电路级建模的音频效果器框架**，并附带一个完整的示例插件 **Sparklin Drive**
-（HONEYPIE EFFECTS）。
+**用 Rust 做电路级建模的音频效果器框架。**
 
 > 目标：让"把一块模拟效果器数字化"变成可复用、可验证的工程流程 ——
 > 从面包板/原理图 → SPICE 网表 → 与 ngspice 对拍的 DSP 实现 → VST3 / CLAP / AUv2 插件。
+
+当前状态（2026-10-23）：
+
+| 层 | 状态 |
+|---|---|
+| **元件库** | ✅ 二极管×3 / BJT×3 / JFET / MOSFET / 通用运放 —— 全部与 ngspice 逐点对拍 |
+| **MNA 装配器** | ✅ 任意拓扑 + 5 类器件 + 牛顿求解（DC 对拍 µV 级、瞬态 mV 级） |
+| 示例插件 | ✅ `Sparklin Drive` 已完整交付并拆为独立仓库（`sparklin-drive-legacy`） |
+| 下一步 | 用 MNA 路径重写 Sparklin Drive 做回归验证 → 声明式代码生成（S1） |
 
 ---
 
@@ -14,8 +22,10 @@
 - [核心特性](#核心特性)
 - [仓库结构](#仓库结构)
 - [快速开始（macOS）](#快速开始macos)
+- [新建一个插件](#新建一个插件)
 - [电路建模的工作流](#电路建模的工作流)
 - [质量把关：与 ngspice 对拍](#质量把关与-ngspice-对拍)
+- [持续集成](#持续集成)
 - [宿主兼容性（Logic）](#宿主兼容性logic)
 - [示例插件 Sparklin Drive](#示例插件-sparklin-drive)
 - [已知限制与路线图](#已知限制与路线图)
@@ -31,11 +41,13 @@
 
 它由三层组成：
 
-| 层 | crate | 作用 |
+| 层 | 位置 | 作用 |
 |---|---|---|
-| **DSP 核心** | `rustomp-dsp` | 电路元件、牛顿求解、过采样、削波/旁通等通用机制 |
-| **电路资产** | `circuits/` | 面包板工程 / 网表 / 基线数据 / 电路解读文档 |
-| **插件外壳** | `rustomp-plugin` | nih-plug 外壳 + egui 界面 + 单声道/立体声变体 |
+| **器件库** | `crates/rustomp-dsp/src/devices/` | 闭集器件模型（二极管/BJT/JFET/MOSFET/运放），参数与 SPICE 对齐 |
+| **电路装配** | `crates/rustomp-dsp/src/mna.rs` | 通用 MNA：器件 + 拓扑 → 可求解电路（牛顿、gmin 步进、伴随模型） |
+| **框架机制** | `crates/rustomp-dsp/src/{engine,oversample,circuit}.rs` | `Circuit` 契约、`Engine<C>`、4× 过采样、真旁通、NaN 熔断 |
+| **SPICE 模型库** | `devices/` | 清洗后的 `devices.lib` + 手写子电路 + 对拍报告 |
+| **插件外壳** | `template/` + `scripts/new-plugin.sh` | nih-plug + egui + 单声道/立体声变体（下游项目生成到 `plugins/`） |
 
 `Sparklin Drive` 是第一个用这套框架做出来的插件，也是"怎么用这个框架"的活样板。
 
@@ -43,13 +55,21 @@
 
 ## 核心特性
 
-- **电路级建模**：非线性用一维牛顿法逐样本求解；线性储能元件用梯形伴随模型
-  （与 WDF 单端口等价：`i[n] = (2C/T)(v[n]−v[n−1]) − i[n−1]`）。
-- **运放宏模型**：单极点（A0 / GBW）+ 压摆率，**反馈环内没有一采样延迟**。
+- **元件库是闭集、且每个型号都对拍过**：`1N4148` `1N34A` `1N4007` `BC549C` `AC127` `AC128`
+  `J201` `2N7000` + 通用运放 `OP07`（NPN/PNP/锗管/增强型 MOS 都在内）。
+  参数名与 SPICE 一致（`Is/Bf/Vaf/Ikf/Ise/Ne/Rb/Re/Rc/...`），LTspice 模型可直接映射。
+- **两套求解器共用器件模型**：
+  - **MNA 装配器**（`mna.rs`）—— 任意拓扑、任意多管电路。器件只写"端电压 → 流入器件的电流"，
+    雅可比由装配器数值差分得到：加新器件不会写错矩阵。
+  - **一维牛顿 / WDF** —— 简单电路（如单级削波）更快，用于性能敏感的级。
+- **精度分档明确**（ADR-012）：静态 D1/D2/D3、动态 C0/C1/C2，逐器件给出档位；
+  「静态给足、动态按需」，元件精度**不影响延迟**（固定 15 样本）。
+- **运放宏模型**：单极点（A0 / GBW）+ 压摆率 + 输出钳位，
+  **更新式代进节点方程，反馈环内没有一采样延迟**。
 - **数值鲁棒**：阻尼牛顿、残差判据、失败兜底、状态限幅、引擎级 NaN 熔断。
   曾经在瞬态后锁死成 ~10 kHz 自激，修复过程与证据完整记录在 `DEVLOG.md` E12。
-- **可验证**：每个电路都有 **ngspice 基线**，逐次谐波（h2–h9）对拍；
-  `Sparklin Drive` 的误差 ≤0.03 个百分点。
+- **可验证到器件级**：二极管 0.00%、BJT ≤0.09%、JFET 0.00%、MOSFET ≤0.01%；
+  MNA 装配后的整机 DC 工作点对拍 µV 级、瞬态 mV 级。
 - **三个插件格式**：VST3 / CLAP 由 nih-plug 直接导出；**AUv2** 由 `clap-wrapper` 包装
   （含三处必要补丁，见 `patches/`）。
 - **单声道 / 立体声独立变体**（Waves 式）：宿主按通道条声道数过滤 AU，
@@ -61,8 +81,13 @@
 ## 仓库结构
 
 ```
+devices/                器件库（SPICE 侧）：models.add 清洗→ devices.lib，手写子电路，对拍报告
+  build.sh              models.add → parsed.lib + handwritten.lib + reference.lib → devices.lib
+  REPORT.md             每个型号的实测数据与"丢弃了哪些字段、为什么"
 crates/
-  rustomp-dsp/          框架：Circuit 契约、Engine<C>、元件库、过采样（与电路无关）
+  rustomp-dsp/          框架：器件库（devices/）、MNA 装配器（mna.rs）、Engine、过采样
+    src/devices/        Diode / Bjt / Jfet / Nmos / OpAmp（型号是闭集 const）
+    src/mna.rs          Element 枚举 + Netlist<N> + 牛顿求解
   rustomp-gui/          框架：声明式面板 + 交互 + 纹理生命周期（不含素材）
   rustomp-oracle/       框架：ngspice 对拍（跑网表 / 解析 rawfile / 统一测量函数）
   rustomp-import/       框架：外部电路导入（IR + 可插拔 Importer，内置 breadspice）
@@ -154,7 +179,35 @@ cargo test -p my-drive-circuit --release --test oracle
 
 ## 质量把关：与 ngspice 对拍
 
-`Sparklin Drive`（fakedist v1）的实测（电位器 50%）：
+对拍分三层，越往下越接近"整机"。
+
+### 1) 器件级：`tests/devices.rs`
+
+每个型号都扫一段 V-I 曲线（覆盖多个数量级），与 `devices/devices.lib` 里的 SPICE 模型逐点比较：
+
+| 器件 | 比较量 | 误差 |
+|---|---|---|
+| `1N4148` / `1N34A` / `1N4007` | 1 µA ~ 10 mA 的 `Vf` | **0.00%** |
+| `BC549C` / `AC127` / `AC128` | `Ic` 与 `Ib`（PNP 也测） | **≤0.09%**（BC549C 在 4.6 mA 处 0.67%） |
+| `J201` | 转移特性 + 输出特性（含三极管区） | **0.00%** |
+| `2N7000` | 沟道 8 点 + 体二极管 3 点 | **≤0.01%** |
+| `OP07` | 闭环 -3 dB（4× 过采样） | **<2%** |
+
+### 2) 装配器级：`tests/mna.rs`
+
+同一电路分别用 `Netlist` 和 ngspice 求解：
+
+| 电路 | 量 | 偏差 |
+|---|---|---|
+| 二极管削波（6 个 DC 点） | `v(out)` | **≤1.6 µV** |
+| BJT 共射偏置 | `v(b)` / `v(c)` | **≤123 µV** |
+| JFET 共源 | `v(d)` | **34 µV** |
+| RC + 削波瞬态（48 kHz，240 点） | 波形 | **≤17 mV**（后向欧拉 vs 梯形积分） |
+| 运放非反相 10× | DC 增益 / 饱和 / -3 dB | 10.998 / 钉在 7.8 V / 40.5 kHz |
+
+### 3) 整机：`Sparklin Drive`（fakedist v1，已交付）
+
+实测（电位器 50%）：
 
 | 项目 | WDF 实现 | ngspice | 误差 |
 |---|---|---|---|
@@ -200,6 +253,9 @@ AUv2 由 `clap-wrapper` 包装，为让 Logic 正确识别，本项目带三个�
 
 ## 示例插件 Sparklin Drive
 
+> 完整插件（电路 + 基线 + 界面 + 打包）已拆到独立仓库 **`sparklin-drive-legacy`**，
+> 本仓库只保留框架。下一次迭代会用 MNA 装配器重写同一电路做回归验证。
+
 单电源 9V、OP07、**反馈环内非对称二极管削波**的失真/法兹：
 
 ```
@@ -225,16 +281,21 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 
 **当前限制**
 
-- 二极管模型含 `Is / N / Rs`，尚未含结电容 `Cjo` 与渡越时间 `tt`（高频细节略偏硬）。
-- 运放只建模到单极点 + 压摆率，未用完整 OP07 `.SUBCKT`（30+ 内部节点）。
+- **动态（容性）部分大多未建模**：BJT 的 `Cje/Cjc/Tf/Tr`、二极管 `Cjo/tt`（1N4007 除外）、
+  MOSFET 的 `Cgs/Cgd` 都还是 C0 档；高频细节会偏硬。静态部分（D3）已完成并逐点对拍。
+- BC549C 在 `Ic≈4.6 mA` 处偏 +0.67%：疑似未建模的 `Nk`。**没有为拟合去猜 SPICE 语义**。
+- 运放在 192 kHz 下 -3 dB 偏低约 26%（54.5 → 40.5 kHz）：`vd` 无延迟进代数环的代价，
+  近 Nyquist 存在增益地板（该频段会被抽取滤波器滤掉）。4× 以上过采样可改善。
+- 运放只到单极点 + 压摆率 + 输出钳位；未建模失调、输入偏置电流、共模范围、噪声。
 - 单线程；多线程原型实测立体声 1.97x，但因单声道变体零收益 + 实时调度风险暂未启用（ADR-010）。
 - 界面是按像素贴图 + 程序化指针，未做矢量/多主题。
 
 **路线图**
 
-- [ ] M1：把"网表 → 电路代码"再自动化一层；把 oracle 对拍做成 CI
-- [ ] 二极管 `Cjo` / `tt`；电位器 A/C taper
-- [ ] 预设与状态管理、安装包（pkg）+ 签名公证
+- [ ] **用 MNA 装配器重写 Sparklin Drive**（同一电路、两条独立实现，比失真谱与输出电平）
+- [ ] S1：声明式代码生成（网表 → `Element` 列表）；之后再把 oracle 对拍铺进 CI 矩阵
+- [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
+- [ ] 电位器 A/C taper；预设与状态管理；安装包（pkg）+ 签名公证
 - [ ] 更多示例电路（BJT 前级 / 光电压缩 / BBD）
 
 ---
@@ -248,7 +309,8 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 | `docs/component-library.md` | **元件库精度规范**：档位定义、逐器件推荐、验收实验模板 |
 | `docs/circuit-import.md` | **电路导入与元件映射规范**：可插拔导入、映射流水线、引脚绑定、mapping.toml |
 | `docs/declarative-build.md` | **声明式构建规范**：代码生成 vs 打包两个平面、后端契约、多平台矩阵、S1–S5 路线 |
-| `crates/rustomp-dsp/README.md` | DSP 核心设计、对拍结果、过采样必要性 |
+| `crates/rustomp-dsp/README.md` | DSP 核心：器件库、MNA 装配器、Engine、对拍结果 |
+| `devices/REPORT.md` | 器件模型的清洗报告（保留/丢弃了哪些参数、为什么） |
 | `patches/README.md` | 三个宿主兼容补丁的原因与验证方法 |
 | `tools/oracle/smoke/README.md` | ngspice 冒烟测试的用法与基线数字 |
 
