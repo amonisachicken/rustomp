@@ -1847,6 +1847,49 @@ cargo test  -p demo-drive-circuit --release          → 2 项通过
 
 ---
 
+## E29：收尾 1/2/3 —— 归档整理、README 校对、CI（2026-10-23）
+
+### 29.1 归档历史残留
+
+| 原来 | 现在 | 说明 |
+|---|---|---|
+| `circuits/v1-fuzz/` + `tools/netlist/easyeda_asc.py` | `experiments/v1-easyeda-pcb/` | 早期从 EasyEDA **PCB 导出**反推电路的脚本与结果，已被 `plugins/sparklin-drive` 取代 |
+| `experiments/e1_wdf_diode_clipper/` | 不动 | 最早的可行性 spike |
+| —— | 新增 `experiments/README.md` | 说明这些目录**不参与构建**，只是历史留档 |
+
+`circuits/` 与 `tools/netlist/` 目录随之消失（后者的功能已被 `rustomp-import` 接管）。
+
+### 29.2 README 校对
+
+改掉了所有失效路径（用脚本扫描 markdown 里的反引号路径逐个 `test -e`）：
+
+- 目录结构块：去掉 `circuits/`，补 `template/`、`experiments/`、`.github/workflows/`、`tools/meta/`
+- 「电路建模的工作流」整节重写：路径改成插件项目内的实际位置
+  （`plugins/sparklin-drive/circuit/netlist`），并补上"先对一遍导入结果再写 DSP"的习惯建议
+- 质量表补一行**活体对拍**（≤0.056 pp），并说明两套测试的分工
+- 新增「持续集成」一节
+
+### 29.3 CI
+
+`.github/workflows/ci.yml`：
+
+- **test**（macOS runner）：`cargo test --workspace --release`，
+  先 `brew install ngspice`（`continue-on-error`），装上了活体对拍就生效、装不上自动跳过；
+  另打印 ngspice 版本便于排查。
+- **fmt**：`cargo fmt --all --check`，但标记为 `continue-on-error` ——
+  仓库还没统一跑过一次 rustfmt（当前 59 个文件有格式差异），
+  先作提示，等一次性 `cargo fmt` 后再改成阻塞。
+
+本地先跑过一遍 `cargo test --workspace --release`：**17 个测试目标全绿**，
+其中含 `tests/oracle.rs`（活体对拍）。
+
+### 29.4 其它
+
+`plugin_meta.py` 在缺少 `tomllib`（Python <3.11）时给出明确错误提示，
+避免 CI 上只看到一个 ImportError。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2088,6 +2131,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **收尾 1/2/3**（E29）：历史残留归档到 `experiments/`（新增 README 说明不参与构建）；README 全文路径校对（脚本扫描 + 工作流一节重写）；新增 GitHub Actions CI（macOS，装 ngspice 则跑活体对拍，fmt 暂不阻塞）。本地 `cargo test --workspace --release` 17 个目标全绿 |
 | 2026-10-23 | **架构调整第 6 步：脚手架**（E28）：`template/` + `scripts/new-plugin.sh`，一条命令生成同构空插件并注册 workspace；实测生成的 Demo Drive `cargo check` 通过、测试 2 项通过 |
 | 2026-10-23 | **架构调整第 5 步：可插拔导入**（E27）：新增 `rustomp-import`（IR + `Importer` trait + breadspice 实现 + `--spice/--skeleton/--json` CLI）；生成的元件行与旧管线逐行一致，**删掉 nlgen 与 bread_to_circuit.py，框架不再依赖外部 git 仓库** |
 | 2026-10-23 | **架构调整第 4 步：对拍接口**（E26）：新增 `rustomp-oracle`（ngspice 驱动 + ASCII rawfile 解析 + **变步长重采样** + 统一测量函数）；插件新增活体对拍测试，h2–h9 最大偏差 0.056 pp；删除 Python 解析器 |

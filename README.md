@@ -72,18 +72,16 @@ plugins/
     circuit/            电路实现 + 网表 + 对拍测试 + 分析脚本
     plugin/             nih-plug 外壳 + egui 界面（build.rs 生成身份）
     assets/             面板与拨杆贴图（含原始设计稿 source/）
-circuits/
-  v1-fuzz/              （历史）早期 PCB 网表导出
+template/               脚手架模板（new-plugin.sh 用；与下游插件结构同构）
 tools/
-  netlist/              （历史）EasyEDA PCB 导出的解析脚本
+  meta/                 rustomp.toml 读取器（身份/界面声明生成）
   oracle/               ngspice 冒烟测试用的最小电路
   au-smoke/             AU 进程内自检（绕过系统注册表）
   clap-probe/           最小 CLAP 宿主（查端口 / feature / 参数）
 patches/                第三方补丁（clap-wrapper 的宿主兼容修复）
 scripts/                构建、网表生成、基线仿真、自检、缓存清理
-template/               脚手架模板（new-plugin.sh 用）
-experiments/            一次性验证 spike（WDF 可行性）
-assets/                 插件界面素材（面板、拨杆）
+experiments/            归档的一次性验证代码（不参与构建，见其 README）
+.github/workflows/      CI：cargo test --workspace（macOS + 可选 ngspice）
 DEVLOG.md               开发日志：每个决策、实验数据、踩过的坑
 ```
 
@@ -126,22 +124,35 @@ PLUGIN_DIR=$PWD/plugins/my-drive ./scripts/build-all.sh
 
 ## 电路建模的工作流
 
-以 `circuits/fakedist` 为例：
+以示例插件为例（路径都是插件项目内的相对位置）：
 
 ```bash
-./scripts/make-netlist.sh circuits/fakedist   # 面包板工程 → SPICE 网表
-./scripts/sim-baseline.sh circuits/fakedist   # ngspice 跑 op / ac / tran+THD / 波形统计
-cargo test -p rustomp-dsp --release           # WDF 实现与基线逐次谐波对拍
+# 1) 面包板工程（.bread） → 中间表示 → SPICE 网表
+./scripts/make-netlist.sh plugins/sparklin-drive/circuit/netlist
+
+# 2) ngspice 跑 op / ac / tran+THD / 波形统计，产出 baseline.txt
+./scripts/sim-baseline.sh plugins/sparklin-drive/circuit/netlist
+
+# 3) 与 DSP 实现对拍（不需要 ngspice 的快速回归）
+cargo test -p sparklin-drive-circuit --release
+
+# 4) 活体对拍（每次真的跑 ngspice；没装则自动跳过）
+cargo test -p sparklin-drive-circuit --release --test oracle
 ```
 
 要接入**你自己的电路**：
 
-1. 用 [breadspice](https://github.com/amonisachicken/breadspice) 画面包板，导出 `.bread`；
-2. 放进 `circuits/<你的电路>/`，跑上面两条脚本得到基线；
-3. 在 `crates/rustomp-dsp/src/` 里照着 `fakedist.rs` 写电路实现
-   （线性部分用伴随模型 / 非线性用一维牛顿）；
-4. 写一个像 `tests/baseline.rs` 那样的对拍测试，把 h2–h9 锁住；
-5. 在 `rustomp-plugin` 里挂上参数与界面。
+1. `./scripts/new-plugin.sh "My Circuit"` 生成同构项目；
+2. 用 [breadspice](https://github.com/amonisachicken/breadspice) 画面包板，把 `.bread`
+   放进 `<项目>/circuit/netlist/`，跑上面第 1、2 步拿到基线；
+3. 在 `<项目>/circuit/src/` 里实现 `rustomp_dsp::Circuit`
+   （线性用梯形伴随模型 / 非线性用一维牛顿；参考
+   `plugins/sparklin-drive/circuit/src/fakedist.rs`）；
+4. 写对拍测试把 h2–h9 锁住（参考示例的 `baseline.rs` 与 `oracle.rs`）；
+5. 在 `<项目>/plugin/src/lib.rs` 里挂参数，在 `rustomp.toml` 的 `[ui]` 里挂控件。
+
+> 好习惯：先用 `rustomp-import --spice` 把导入结果的元件行与"手写网表"对一遍，
+> 确认拓扑和数值没读错，再开始写 DSP。
 
 ---
 
@@ -156,11 +167,26 @@ cargo test -p rustomp-dsp --release           # WDF 实现与基线逐次谐波�
 | THD @0.2 V（2–9 次） | 27.650 % | 27.616 % | +0.034 pp |
 | 对称模式 THD | 25.595 % | 25.516 % | +0.08 pp |
 | h2–h9（非对称） | 3.915 / 22.488 / 2.428 / 11.981 / 1.836 / 7.700 / 1.484 / 5.400 % | 3.920 / 22.470 / 2.430 / 11.960 / 1.837 / 7.674 / 1.483 / 5.374 % | ≤0.03 pp |
+| **活体对拍**（每次重跑 ngspice） | 同上 | 3.921 / 22.457 / … / 5.344 % | **≤0.056 pp** |
+
+两套测试互补：
+
+| 测试 | 是否跑 ngspice | 用途 |
+|---|---|---|
+| `plugins/sparklin-drive/circuit/tests/baseline.rs` | 否（期望值是抄下来的常量） | 日常回归，快 |
+| `plugins/sparklin-drive/circuit/tests/oracle.rs` | **是**（每次重跑） | 抓网表/电路改动，无 ngspice 时自动跳过 |
 
 > 基准一律从 **ngspice 原始波形**自己算 DFT，不用 `.four`
-> （后者只取 1 个周期 + 线性插值，高次谐波偏低）。
+> （它只取 1 个周期 + 线性插值，高次谐波偏低）。
+> 另外 ngspice 的 `.tran` 是**变步长**，对拍前必须先重采样（见 `RawFile::resample`）。
 
 ---
+
+## 持续集成
+
+`.github/workflows/ci.yml`：macOS runner 上跑 `cargo test --workspace --release`，
+并尝试 `brew install ngspice` 让活体对拍生效（装不上时自动跳过，不算失败）。
+格式检查先设为"不阻塞"（仓库还没统一跑过一次 `cargo fmt`）。
 
 ## 宿主兼容性（Logic）
 
@@ -222,10 +248,10 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 | 文档 | 内容 |
 |---|---|
 | **`DEVLOG.md`** | 开发日志（**最重要**）：每个决策、实测数据、踩坑与修复 |
-| `circuits/fakedist/CIRCUIT.md` | 示例电路的逐级解读、建模要点、基线数据 |
+| `plugins/sparklin-drive/circuit/netlist/CIRCUIT.md` | 示例电路的逐级解读、建模要点、基线数据 |
 | `crates/rustomp-dsp/README.md` | DSP 核心设计、对拍结果、过采样必要性 |
 | `patches/README.md` | 三个宿主兼容补丁的原因与验证方法 |
-| `tools/*/README.md` | 网表 / oracle / AU 自检工具的用法 |
+| `tools/oracle/smoke/README.md` | ngspice 冒烟测试的用法与基线数字 |
 
 ---
 

@@ -10,7 +10,7 @@
 TO-92 的 1/2/3 与 C/B/E 的对应关系必须人工确认（见 NETLIST.md 的警告）。
 
 用法：
-  python3 tools/netlist/easyeda_asc.py circuits/v1-fuzz/source.asc -o circuits/v1-fuzz
+  python3 experiments/v1-easyeda-pcb/easyeda_asc.py experiments/v1-easyeda-pcb/source.asc -o experiments/v1-easyeda-pcb
 """
 from __future__ import annotations
 
@@ -172,7 +172,7 @@ def main() -> None:
     # ---------------- Markdown ----------------
     L = []
     L.append(f"# 网表：{args.asc.name}\n")
-    L.append("> 由 `tools/netlist/easyeda_asc.py` 自动生成，**不要手改**（改源文件后重新生成）。\n")
+    L.append("> 由 `experiments/v1-easyeda-pcb/easyeda_asc.py` 自动生成，**不要手改**（改源文件后重新生成）。\n")
     L.append(f"- 格式：{data['format']}")
     L.append(f"- 元件数：{len(parts)}　网数：{len(nets)}\n")
 

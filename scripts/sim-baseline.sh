@@ -7,7 +7,7 @@
 #   tran  瞬态 + THD（大信号、小信号各一次）
 #   stats 波形统计（min/max/pp/rms）
 #
-#   ./scripts/sim-baseline.sh circuits/fakedist
+#   ./scripts/sim-baseline.sh plugins/sparklin-drive/circuit/netlist
 #
 # 输出：<dir>/baseline.txt（同时打印到终端）
 set -euo pipefail

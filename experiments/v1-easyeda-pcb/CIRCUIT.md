@@ -4,7 +4,7 @@
 # v1 电路解读（**待核对**）
 
 > 来源：`source.asc`（EasyEDA Pro 导出的 PADS-PowerPCB ASCII，PCB 版）
-> 自动生成的网表见 `NETLIST.md`（由 `tools/netlist/easyeda_asc.py` 生成）
+> 自动生成的网表见 `NETLIST.md`（由 `experiments/v1-easyeda-pcb/easyeda_asc.py` 生成）
 > 本文是我的**人工解读**，请逐条确认或修正 —— 错一条，后面的 WDF 就白写。
 
 ## 1. 我读出的信号链

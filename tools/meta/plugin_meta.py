@@ -19,8 +19,12 @@ from __future__ import annotations
 import json
 import shlex
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib  # Python ≥3.11
+except ModuleNotFoundError:  # pragma: no cover
+    sys.exit("plugin_meta.py 需要 Python ≥3.11（tomllib）。请检查 `python3 --version`。")
 
 
 def load(path: str) -> dict:

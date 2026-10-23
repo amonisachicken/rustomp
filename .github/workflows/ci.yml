@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 构建与测试
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo
+        uses: Swatinem/rust-cache@v2
+
+      # ngspice 只用于"活体对拍"测试；装不上时那些测试会自动跳过
+      - name: 安装 ngspice（可选）
+        continue-on-error: true
+        run: brew install ngspice
+
+      - name: 单元 / 集成测试
+        run: cargo test --workspace --release
+
+      - name: 对拍环境确认
+        run: |
+          if command -v ngspice >/dev/null; then
+            ngspice --version | head -2
+          else
+            echo "没有 ngspice —— oracle 活体对拍测试会被跳过（不算失败）"
+          fi
+
+  fmt:
+    name: 格式检查（暂不阻塞）
+    runs-on: macos-14
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      # 仓库目前没有统一跑过 rustfmt；先只作提示，待一次性 `cargo fmt` 后再改成阻塞
+      - run: cargo fmt --all --check

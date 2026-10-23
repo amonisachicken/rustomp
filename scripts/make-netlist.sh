@@ -3,7 +3,7 @@
 #
 # 从 breadspice 面包板工程（*.bread）生成 ngspice 网表。
 #
-#   ./scripts/make-netlist.sh circuits/fakedist
+#   ./scripts/make-netlist.sh plugins/sparklin-drive/circuit/netlist
 #
 # 产物（都在目标目录下）：
 #   circuit.json   breadspice 后端的 Circuit 契约
