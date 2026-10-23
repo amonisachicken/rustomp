@@ -1377,6 +1377,43 @@ CLAP: vendor = HONEYPIE EFFECTS
 
 ---
 
+## E20：开源发布 —— 定位为「框架 + 示例插件」（2026-10-23）
+
+项目已推送到 <https://github.com/amonisachicken/rustomp>（GPL-3.0，master + tag `v0.1.0-nogui`）。
+
+### 20.1 定位调整
+
+用户的意图明确后，仓库定位从「一个插件」调整为：
+
+> **rustomp = 用 Rust 做电路级建模的音频效果器框架**
+> **Sparklin Drive = 框架自带的示例插件**
+
+据此新增根 `README.md`：三层结构（`rustomp-dsp` / `circuits` / `rustomp-plugin`）、
+快速开始、**「接入你自己的电路」的 5 步工作流**、对拍数据表、Logic 兼容的三个补丁说明、
+示例插件介绍、已知限制与路线图、文档索引。
+
+### 20.2 界面收尾（本轮）
+
+| 反馈 | 处理 |
+|---|---|
+| LED 颜色 | 暗 `#a00000` → 亮 `#ff0000` 线性插值 |
+| **拨杆看起来糙** | 真因是**解码时忽略了 PNG 的 alpha**，透明像素被当成黑色，边缘发脏。改用 `--export-background="#faf1e0"` 导出**不透明**贴图 |
+| **删除画死的拨杆** | 在 `assets/panel.svg` 里用底色矩形盖掉原拨杆（含下方那段残留弧，覆盖范围 `72.3,108.5,26.0,28.8`），烘焙进底图；运行时不再需要盖布，无重影 |
+| 点击区域 | 取两种状态贴图的**并集**（两者 viewBox 相同，即同一个矩形） |
+| 按住反馈 | 以开关中心**缩放到 0.9 倍**，松开恢复 |
+
+贴图对齐仍用六角形基准：偏移 `(73.49, 108.455)`；已用 Inkscape 合成两态 mock 放大核对，
+确认无残留、无重影。
+
+### 20.3 仓库整理
+
+- 素材分层：`assets/` 只放**构建产物**（`panel@2x.png`、`switch_*@4x.png`），
+  原始设计稿移到 `assets/source/`；
+- `dist/`、`target/`、`build/` 不入库；`third_party/` 由
+  `scripts/fetch-third-party.sh` 按固定 commit 拉取并自动打补丁。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1603,6 +1640,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **开源发布**（E20）：定位为「Rust 电路建模框架 + Sparklin Drive 示例插件」并新增根 README；拨杆发糙的真因是 PNG alpha 被忽略（改不透明导出）；拨杆改为底图删除 + 独立贴图；已推送 GitHub |
 | 2026-10-23 | **界面打磨**（E19）：拨杆用真实双状态贴图（六角形对齐、无重影）、LED 加外发光拉开对比、bypass 改为按住缩 0.9 倍（松开恢复）、厂商名统一为 HONEYPIE EFFECTS |
 | 2026-10-23 | **GUI 完成 + 新功能 + 改名**（E18）：egui + 内嵌 PNG 面板；新增对称削波模式（ngspice 参考 h2 3.92%→0.049%）、true-bypass（15 样本对齐 + 5ms 淡化）、削波指示 LED；插件改名 **Sparklin Drive / HONEYPIE EFFECTS**（`aufx/SPm1/SPs1/HpEf`）。au-smoke 确认 4 参数 + CocoaUI + 无乐器/MIDI 属性 |
 | 2026-10-23 | **无 GUI 阶段冻结**（E17）：打 tag `v0.1.0-nogui`，二进制存档到 `dist/v0.1.0-nogui/`（3 变体 × 3 格式 + SHA256 + README）；评估面板 SVG（竖版 1:1.87，指针是画死的 rect、字体未嵌入、透明底），GUI 方案定为 resvg + nih_plug_egui |
