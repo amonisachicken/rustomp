@@ -71,3 +71,70 @@ fn handwritten_2n7000_subckt_is_calibrated() {
     assert!(ids.windows(2).all(|w| w[1] > w[0]), "转移特性不单调");
     assert!((0.15..0.30).contains(&ids[2]), "Vgs=5V 时 Id={} 不在 0.15~0.30 A", ids[2]);
 }
+
+// ---------------------------------------------------------------- BJT
+
+/// Vbe 扫描，与 ngspice 逐点比 Ic / Ib。
+///
+/// NPN：`VBE` 源扫基极、集电极 5 V。PNP 用"电压取反"的等价形式：
+/// 我们的模型按 NPN 公式计算，PNP 传 `(-veb, -vcb)`。
+fn compare_bjt(oracle: &Oracle, b: rustomp_dsp::Bjt, model: &str, npn: bool, sweep: &[f64]) {
+    let mut worst = 0.0f64;
+    for &v in sweep {
+        let netlist = if npn {
+            format!("{LIB}\nVBE b 0 {v}\nVCE c 0 5\nQ1 c b 0 {model}\n.op\n.end\n")
+        } else {
+            // PNP：发射极接 +v；基极、集电极各经 0V 源接地（便于分别测 Ib / Ic）
+            format!("{LIB}\nVEB e 0 {v}\nVB b 0 0\nVC c 0 0\nQ1 c b e {model}\n.op\n.end\n")
+        };
+        let raw = oracle.run_netlist(&netlist).expect("ngspice 运行失败");
+        let ic_spice = raw
+            .get("i(vce)")
+            .or_else(|| raw.get("i(vc)"))
+            .map(|x| x.last().unwrap().abs())
+            .unwrap_or(0.0);
+        // 基极电流（NPN 用 i(vbe)，PNP 用 i(veb)）
+        let ib_spice = raw
+            .get(if npn { "i(vbe)" } else { "i(vb)" })
+            .map(|x| x.last().unwrap().abs())
+            .unwrap_or(0.0);
+        // 我们的模型
+        // PNP：SPICE 内部用 `type = -1` 把电压取反，等价于把 (veb, vcb) 直接喂给 NPN 公式
+        let (ic, ib) = if npn {
+            b.terminal(v, v - 5.0)
+        } else {
+            b.terminal(v, 0.0)
+        };
+        let ic = ic.abs();
+        let ib = ib.abs();
+        if ic_spice < 1e-9 {
+            continue;
+        }
+        let rel_ic = (ic - ic_spice).abs() / ic_spice;
+        let rel_ib = if ib_spice > 1e-12 {
+            (ib - ib_spice).abs() / ib_spice
+        } else {
+            0.0
+        };
+        worst = worst.max(rel_ic.max(rel_ib));
+        let kind = if npn { "NPN" } else { "PNP" };
+        println!(
+            "  {model:8} {kind} Vbe={v:.3}  Ic: {ic_spice:.4e}/{ic:.4e} ({:+.2}%)  Ib: {ib_spice:.3e}/{ib:.3e} ({:+.2}%)",
+            (ic - ic_spice) / ic_spice * 100.0,
+            (ib - ib_spice) / ib_spice.max(1e-15) * 100.0
+        );
+    }
+    assert!(worst < 0.05, "{model}: Ic/Ib 最大相对误差 {:.2}% 超过 5%", worst * 100.0);
+}
+
+#[test]
+fn bjts_match_ngspice_dc() {
+    let Some(oracle) = Oracle::discover() else {
+        eprintln!("跳过：本机没有 ngspice");
+        return;
+    };
+    println!("\n=== BJT V-I 对拍（Vce=5V, Vbc 随动）===");
+    compare_bjt(&oracle, rustomp_dsp::BC549C, "BC549C", true, &[0.55, 0.60, 0.65, 0.70]);
+    compare_bjt(&oracle, rustomp_dsp::AC127, "AC127", true, &[0.05, 0.10, 0.15, 0.20]);
+    compare_bjt(&oracle, rustomp_dsp::AC128, "AC128", false, &[0.05, 0.10, 0.15, 0.20]);
+}

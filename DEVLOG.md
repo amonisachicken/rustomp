@@ -2188,6 +2188,53 @@ could not find a valid modelname
 
 ---
 
+## E36：器件库第二块——BJT（Gummel-Poon 静态 D3）（2026-10-23）
+
+### 36.1 模型内容
+
+`crates/rustomp-dsp/src/devices/bjt.rs`：`Bjt` = Gummel-Poon **静态**模型
+
+- 传输电流 `Ict = Is/qb·(e_be − e_bc)`，基极区电荷因子
+  `qb = q1/2·(1+√(1+4q2))`，`q1 = 1/(1 − vbc/Vaf − vbe/Var)`，`q2 = Is/Ikf·(e_be−1) + Is/Ikr·(e_bc−1)`
+- 两个结电流 `Ibe = Is/Bf·(e_be−1) + Ise·(e_vbe/Ne/Vt − 1)`，`Ibc` 对称
+- **体电阻 `Rb/Re/Rc`**：端电压与本征结电压之间做一次 2 维牛顿
+- 库内型号：`BC549C`（硅）/ `AC127`（锗 NPN）/ `AC128`（锗 PNP）
+
+### 36.2 对拍结果（Vce=5V，Vbe 扫描，Ic 与 Ib 都测）
+
+| 器件 | Vbe | Ic 误差 | Ib 误差 |
+|---|---|---|---|
+| BC549C | 0.55 / 0.60 / 0.65 / 0.70 | −0.00% / +0.01% / +0.09% / **+0.67%** | ≤0.01% |
+| AC127 | 0.05 / 0.10 / 0.15 / 0.20 | **−0.00%** | −0.00% |
+| AC128 (PNP) | 同上 | **−0.00%** | −0.00% |
+
+### 36.3 三个踩坑（都很值钱）
+
+**① 数值雅可比写错 → AC127 在高电流点差 8%**
+第一版 `terminal()` 里手推的解析雅可比有误。改成"**直接对残差做中心差分**"（几乎不可能写错的形式）后，
+0.2 V 处的 8.17% 立刻变成 0.00%。
+→ 教训：**嵌套内层牛顿的雅可比不要手推**，除非有对拍兜底。
+
+**② PNP 的电压约定**
+SPICE 内部用 `type = -1` 把电压取反。等价做法：把 `(veb, vcb)` 直接喂给 NPN 公式，返回电流取负。
+一开始我传了 `(-veb, 0)`，结果 PNP 完全不导通（因为变成反偏）。
+
+**③ 测 Ib 时把发射极电流当成了基极电流**
+PNP 测试电路里基极直接接地 → `i(veb)` 测到的是 `Ie ≈ Ic`，于是"hFE≈1"这种荒谬结果。
+给基极也加一个 0 V 源单独测 `Ib` 后才对上。
+
+### 36.4 已知偏差
+
+BC549C 在 `Ic≈4.6 mA` 处偏 +0.67%。可能原因是未建模的 `Nk=0.6339`
+（`Nk` 在 SPICE3 的 GP 里语义模糊）。**决定不猜**：远低于 5% 门槛，先记录现状；
+若将来某电路正好工作在大电流区再专项处理。
+
+### 36.5 下一步
+
+`Jfet`（`Beta/Vto/Lambda`）+ `J201` → 然后 `Nmos`（按已标定的 2N7000 参数）→ 运放（随 MNA）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2456,6 +2503,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **器件库第二块：BJT**（E36）：Gummel-Poon 静态 D3（含 Rb/Re/Rc 的 2 维内层牛顿）+ BC549C/AC127/AC128；Ic 与 Ib 对拍：Ge 两管 ≤0.01%、BC549C ≤0.09%（大电流点 0.67%，疑 Nk 未建模，不猜）；踩坑三条（手推雅可比错、PNP 电压约定、Ib 测错） |
 | 2026-10-23 | **器件库第一块：二极管**（E35）：`devices/` 拆成 parsed/handwritten/reference 三段 + `build.sh`；手写 2N7000 子电路（Id@Vgs=5V=0.221A，Rds≈6Ω）与实测 1N4007（Cjo=15p）；Rust 侧通用 `Diode` + 三个型号，V-I 与 ngspice **误差 0.00%**（发现并修正 VT 应为 27°C） |
 | 2026-10-23 | **导入分立器件模型**（E34）：新增 `tools/meta/ltspice_models.py`（按 ngspice 参数白名单清洗），产出 `devices/{devices.lib,devices.json,REPORT.md}`；锗管/锗二极管/1N4007 均验证可用（Ge: Vbe=0.142V, hFE≈130；1N34A Vf@1mA=0.253V）；发现 2N7000 的 VDMOS 格式 ngspice 不支持，运放只有符号无模型 |
 | 2026-10-23 | **声明式构建规范落盘**（E33 + ADR-014）：代码生成（host，入 `src/generated/`）与打包（各平台原生）两个平面；打包后端契约 + 能力声明；Windows/Linux/standalone 入路线，AAX 排除；S1–S5 路线与 CI 矩阵验收 |

@@ -11,11 +11,13 @@
 //! | 器件 | 状态 |
 //! |---|---|
 //! | 二极管 `1N4148` / `1N34A` / `1N4007` | ✅ 静态完整（Is/N/Rs） |
-//! | BJT `BC549C` / `AC127` / `AC128` | ⬜ 下一步 |
+//! | BJT `BC549C` / `AC127` / `AC128` | ✅ 静态完整（Gummel-Poon D3，含 Rb/Re/Rc） |
 //! | JFET `J201` | ⬜ |
 //! | MOSFET `2N7000` | ⬜（SPICE 侧已手写子电路并标定） |
 //! | 运放（通用） | ⬜（参数已定，实现随 MNA） |
 
+pub mod bjt;
 pub mod diode;
 
+pub use bjt::{Bjt, AC127, AC128, BC549C};
 pub use diode::{Diode, D_1N34A, D_1N4007, D_1N4148};

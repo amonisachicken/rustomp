@@ -245,6 +245,16 @@ could not find a valid modelname
 | 器件 | Rust 模型 | 对拍结果（`crates/rustomp-dsp/tests/devices.rs`） |
 |---|---|---|
 | `D_1N4148` / `D_1N34A` / `D_1N4007` | `devices::Diode`（静态 **D2**：`Is / N / Rs`） | **V-I 与 ngspice 完全一致（0.00%）**，覆盖 1 µA~10 mA 五个数量级 |
+| `BC549C` / `AC127` / `AC128` | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc`） | **Ic 与 Ib 均对拍**：AC127/AC128 ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下） |
+
+> 精度说明（BJT）：
+> - 实现了 `Is/Bf/Nf/Vaf/Ikf/Ise/Ne/Br/Nr/Var/Ikr/Isc/Nc` 与 `Rb/Re/Rc`；
+> - **未实现**：`Nk`（BC549C 的 `Nk=0.6339`）、`IRB/RBM`、结电容 `Cje/Cjc/Tf/Tr`（后者属 C1/C2 档）；
+> - BC549C 在 `Ic≈4.6 mA` 处偏 +0.67%（其余 0.00~0.09%），推测与未建模的 `Nk` 有关，
+>   远低于 5% 门槛，暂不处理 —— **不为拟合而猜模型语义**。
+>
+> 极性约定：`Bjt` 是**极性无关**的（同一套 NPN 公式）。PNP 使用时把
+> `(veb, vcb)` 传进去，并对返回电流取负 —— 与 SPICE 内部 `type = -1` 的处理一致（已对拍验证）。
 
 > 重要细节：热电压取 **27 °C（`VT=0.025865`）**，与 SPICE 默认 `TNOM` 对齐；
 > 用 300 K 会带来约 −0.05% 的系统性偏差（实测发现并修正）。
