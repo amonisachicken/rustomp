@@ -7,6 +7,15 @@
 
 ## 维护约定
 
+### 本项目的两条硬性约定（务必遵守）
+
+1. **每个插件必须分别构建「单声道」和「立体声」两个独立身份**
+   （`./scripts/build-all.sh`，见 ADR-008 / E14）。
+   不要依赖"一个插件同时支持两种布局"。
+2. 新增第三方封装层（clap-wrapper 等）后，**必须用 `tools/au-smoke` + `tools/clap-probe`
+   核对能力字段**，并与正常商业插件（如 BYOD / Waves）的宿主缓存对照
+   （见 E13：这类问题不报错、能出声，只让插件出现在错误的地方或消失）。
+
 每次会话/每个里程碑追加一节，按下面的固定结构写：
 
 ```
@@ -23,7 +32,7 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | 阶段 0：可行性验证（已完成）→ M0 骨架待启动 |
+| 当前阶段 | **M0 完成**：fakedist v1 在 Logic（单声道 / 立体声）均可正常使用 |
 | 已确定路线 | 电路建模；WDF 为主 + 自研 MNA 作对拍 oracle（ngspice 后置交叉验证） |
 | 许可证 | **GPL-3.0-or-later**（ADR-005） |
 | 首款产品 | **二极管削波类失真**（ADR-007） |
@@ -31,7 +40,9 @@
 | 构建链 | nih-plug（CLAP）→ clap-wrapper（AUv2 + VST3） |
 | 代码资产 | `crates/rustomp-plugin`（nih-plug 空插件 / M0-a）、`cmake/`（AU 包装）、`scripts/`（构建链）、`tools/au-smoke`（AU 进程内测试）、`experiments/e1_wdf_diode_clipper`（spike） |
 | 外部参考 | `amonisachicken/breadspice`（GPL-3，可复用 oracle/器件模型） |
-| 一键构建 | `./scripts/build-au.sh`（→ CLAP + VST3 + AUv2，通用二进制，安装到用户目录并自测） |
+| 一键构建 | **`./scripts/build-all.sh`**（→ Mono + Stereo 两个 AU，通用二进制，安装并自测） |
+| 产物身份 | `Rustomp Fuzz Mono` = `aufx/RFm1/Amch`；`Rustomp Fuzz Stereo` = `aufx/RFs1/Amch` |
+| 自检 / 排障 | `./scripts/check-au.sh`、`./scripts/reset-logic-cache.sh` |
 | 未决事项 | 原理图获取、硬件 A/B 条件、Logic 版本（见 §7） |
 
 ### 2026-10-23 环境快照
@@ -999,10 +1010,26 @@ Rustomp Fuzz         → in=2 out=2 / in=1 out=1 RMS=0.348448 ✓
 macOS 自带 bash 3.2 会把**紧跟变量的多字节字符**（如 `$NAME（` 里的全角括号）
 当成变量名的一部分。→ 变量后面跟中文时必须写 `${NAME}`。
 
-### 14.5 量产时的取舍
+### 14.5 结论：有效 ✅
 
-三个身份共存只是过渡方案。确定 Logic 能正常使用单声道后，
-建议最终只保留需要的组合（例如只发 `Mono` + `Stereo` 两个，或只发双布局一个）。
+用户实测：**单声道音轨的 Audio FX 里终于出现了 `Rustomp Fuzz Mono`**。
+立体声轨用 `Rustomp Fuzz Stereo`。至此 M0 全部完成。
+
+**从这件事得到的通用规律（以后所有插件都照此办理）：**
+
+> 宿主在插入菜单里**按通道条的声道数过滤 AU**。
+> 一个"同时支持 mono + stereo"的插件能否被正确识别，
+> 取决于宿主是否可靠地探测到多套布局 —— 实测（Logic 11 / macOS 13）不可靠。
+> **拆成「单声道版 + 立体声版」两个只声明单一布局的独立身份最稳**，
+> 且各自拥有独立的 AU 码与缓存条目，互不干扰。
+
+标准入口已固化为 `./scripts/build-all.sh`（默认只出 Mono + Stereo；
+`--with-dual` 才会额外出双布局版本）。
+
+### 14.6 量产时的取舍
+
+三个身份共存只是过渡方案。**最终发布只发 `Mono` + `Stereo` 两个**
+（`build-all.sh` 默认行为），双布局版本仅作调试用，不进发行包。
 
 ---
 
@@ -1103,6 +1130,32 @@ rustomp-plugin (nih-plug)  ──►  .clap
 
 ---
 
+### ADR-008 插件一律出「单声道版 + 立体声版」两个独立身份 ✅ 已定（强制）
+
+**决定**：今后每个插件都构建两个只声明单一声道布局的独立插件：
+
+| 版本 | 布局 | AU 码（示例） |
+|---|---|---|
+| `Xxx Mono` | `{1,1}` | `aufx / RFm1 / Amch` |
+| `Xxx Stereo` | `{2,2}` | `aufx / RFs1 / Amch` |
+
+**理由**（实测，见 E13/E14）：
+
+1. 宿主在插入菜单里**按通道条的声道数过滤 AU**；单声道音轨需要 `in=1`。
+2. "一个插件同时支持两种布局"依赖宿主正确探测多布局。我们的实测：
+   nih-plug 通过 `clap.audio-ports-config` 暴露 Mono+Stereo，但 clap-wrapper 只认
+   `clap.configurable-audio-ports`，导致 AU 只报 `{2,2}` ——
+   即使打了补丁让 AU 报出两组，Logic 的插入菜单依然不认（还要配合清缓存）。
+3. 单一布局没有歧义，且**新身份 = 新缓存条目**，不受宿主陈旧缓存影响。
+
+**代价**：用户会在插件列表里看到两个条目（Waves / UAD 等商业厂商都是这么做的，
+用户已有预期）；构建时间翻倍（`build-all.sh`）。
+
+**实现**：`crates/rustomp-plugin` 的 `mono` / `stereo` feature +
+`scripts/build-variant.sh`；发布包只含这两个变体。
+
+---
+
 # 5. 里程碑与验收标准
 
 | 里程碑 | 内容 | 验收标准 | 状态 |
@@ -1187,6 +1240,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | ✅ **M0 完成**：Waves 式声道变体生效，`Rustomp Fuzz Mono` 在 Logic 单声道音轨中出现（E14.5）。新增 `scripts/build-all.sh` 作为标准构建入口；确立硬性约定「每个插件都出 mono/stereo 两个独立身份」（ADR-008） |
 | 2026-10-23 | **Waves 式声道变体**（E14）：新增 `mono`/`stereo` feature 与 `scripts/build-variant.sh`，产出三个独立身份（RFz1 双布局 / **RFm1 单声道** / **RFs1 立体声**），均已安装并通过渲染自检。发现 Logic 的 pref 缓存从未真正刷新（`MIDIProtocol` 仍是修复前的 1）——Logic 运行时会把内存值写回，故新增 `reset-logic-cache.sh`（先查 Logic 是否在跑）。另修 bash 3.2 的全角括号变量名坑 |
 | 2026-10-23 | **修复 Logic 菜单里找不到（E13 续）**：真因是声道布局——nih-plug 有 Mono+Stereo 两种 `audio-ports-config`，但 clap-wrapper 只认 `configurable-audio-ports`，导致 AU 只报 `{2,2}`，单声道音轨的插入菜单把它过滤掉。补丁让 wrapper 用 `audio-ports-config` 枚举并 `select()`；实测 AU 现在同时报 2/2 与 1/1，单/立体声渲染均正常 |
 | 2026-10-23 | **修复 Logic 分类错误**（E13）：clap-wrapper 无条件宣称 MIDI 属性 → Logic 缓存 `MIDIProtocol=1` → 被当成 MIDI 控制效果器只出现在软件乐器槽。用 `patches/0001-*` 让 AU 只在真有 note port 时才宣称 MIDI；au-smoke 增加该检查 |
