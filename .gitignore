@@ -1,0 +1,24 @@
+# 早期调研稿不进版本库
+/prepare.md
+
+# Rust
+target/
+**/*.rs.bk
+
+# 构建产物
+/bundled/
+/build/
+/dist/
+*.clap/
+*.vst3/
+*.component/
+*.aaxplugin/
+
+# 第三方源码（由 scripts/fetch-third-party.sh 拉取，不入库）
+/third_party/
+
+# macOS
+.DS_Store
+
+# pi harness 的会话脚本（环境产物，非项目代码）
+/pi.sh
