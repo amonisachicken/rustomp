@@ -876,6 +876,29 @@ Logic 把「类型=aufx 且支持 MIDI」的插件归类为 **"MIDI 控制效果
 [ ok ] 未宣称支持 MIDI（纯音频效果器）→ Logic 会归到 Audio FX
 ```
 
+### 13.3b 第一版补丁不够：还有 MusicDevice 专属属性
+
+只把 MIDI 属性门控住之后，Logic 仍然把插件归到乐器槽（用户复测失败），
+而且缓存里 `MIDIProtocol` 依旧是 **1**。说明触发点不止 MIDI 属性。
+
+继续读 `GetPropertyInfo()`，发现还有三个**乐器专属**属性是无条件宣称的：
+
+| 属性 | 用途 |
+|---|---|
+| **`kMusicDeviceProperty_InstrumentCount`** | MusicDevice（乐器）专属；**宿主正是靠它判断"是不是乐器"** |
+| `kMusicDeviceProperty_SupportsStartStopNote` | 同上 |
+| `kMusicDeviceProperty_DualSchedulingMode` | 同上 |
+
+→ 补丁扩展为「`kMusicDeviceProperty_*` 只在 `_autype == aumu_musicdevice` 时宣称」。
+
+验证（`tools/au-smoke` 新增检查）：
+
+```
+[ ok ] 不支持 kMusicDeviceProperty_InstrumentCount（效果器应有行为）
+[ ok ] 不支持 kMusicDeviceProperty_SupportsStartStopNote（效果器应有行为）
+[ ok ] 未宣称支持 MIDI（纯音频效果器）→ Logic 会归到 Audio FX
+```
+
 ### 13.4 用户侧还需做一步：清掉 Logic 里的旧缓存
 
 Logic 缓存里已经有错误的 `MIDIProtocol=1`，需要让它重新扫。两种办法（选一）：

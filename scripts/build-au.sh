@@ -155,6 +155,15 @@ killall -9 AudioComponentRegistrar 2>/dev/null \
     || echo "    (提示: 无法重启 AudioComponentRegistrar，需要 sudo 或重启系统才能刷新 AU 列表)"
 sleep 1
 
+# Logic 会缓存每个 AU 的能力（含"是否乐器/MIDI"），改了能力之后必须让它重扫
+cat <<EOF
+
+    如果 Logic 里的分类仍不对，先退出 Logic 再执行：
+        plutil -remove "aufx-${AU_SUBTYPE}-${AU_MANUFACTURER}" ~/Library/Preferences/com.apple.logic10.plist
+        killall cfprefsd
+    然后再打开 Logic（它会重新扫描并写入正确的分类）。
+EOF
+
 # ---------------------------------------------------------------- 6. auval
 if [ "$RUN_AUVAL" = "0" ]; then
     echo "==> 跳过 auval (--skip-auval)"
@@ -167,7 +176,7 @@ echo "$OUT" | tail -25
 if echo "$OUT" | grep -q "AU VALIDATION SUCCEEDED"; then
     echo "==> auval: 通过"
 else
-    cat <<'HINT'
+    cat <<HINT
 
 ==> auval 未通过。
     若日志里是 "didn't find the component"，先确认这是不是本机环境问题：

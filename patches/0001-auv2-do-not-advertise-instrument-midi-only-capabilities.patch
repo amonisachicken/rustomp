@@ -12,10 +12,35 @@ index 3dccebf..e2a643a 100644
    // rolling counter feeding the NoteInstanceID/note_id handed out by StartNote
    int32_t _noteInstanceCounter = 0;
 diff --git a/src/wrapasauv2.cpp b/src/wrapasauv2.cpp
-index 2c451b6..1095aa3 100644
+index 2c451b6..8ef337b 100644
 --- a/src/wrapasauv2.cpp
 +++ b/src/wrapasauv2.cpp
-@@ -1027,28 +1027,37 @@ OSStatus WrapAsAUV2::GetPropertyInfo(AudioUnitPropertyID inID, AudioUnitScope in
+@@ -987,6 +987,9 @@ OSStatus WrapAsAUV2::GetPropertyInfo(AudioUnitPropertyID inID, AudioUnitScope in
+         }
+         break;
+       case kMusicDeviceProperty_InstrumentCount:
++        // rustomp patch: MusicDevice 专属属性。效果器宣称它会让 Logic
++        // 把插件当成乐器/音乐设备（只出现在软件乐器插槽）。
++        if (_autype != AUV2_Type::aumu_musicdevice) return kAudioUnitErr_InvalidProperty;
+         outDataSize = sizeof(UInt32);
+         outWritable = false;
+         return noErr;
+@@ -1007,12 +1010,14 @@ OSStatus WrapAsAUV2::GetPropertyInfo(AudioUnitPropertyID inID, AudioUnitScope in
+         return noErr;
+ #ifdef DUAL_SCHEDULING_ENABLED
+       case kMusicDeviceProperty_DualSchedulingMode:
++        if (_autype != AUV2_Type::aumu_musicdevice) return kAudioUnitErr_InvalidProperty;
+         outWritable = true;
+         outDataSize = sizeof(UInt32);
+         return noErr;
+         break;
+ #endif
+       case kMusicDeviceProperty_SupportsStartStopNote:
++        if (_autype != AUV2_Type::aumu_musicdevice) return kAudioUnitErr_InvalidProperty;
+         outWritable = true;
+         outDataSize = sizeof(UInt32);
+         return noErr;
+@@ -1027,28 +1032,37 @@ OSStatus WrapAsAUV2::GetPropertyInfo(AudioUnitPropertyID inID, AudioUnitScope in
          return noErr;
          break;
  

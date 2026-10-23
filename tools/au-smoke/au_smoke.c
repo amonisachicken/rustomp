@@ -277,6 +277,22 @@ int main(int argc, char **argv) {
         }
     }
 
+    // 乐器专属能力检查：效果器**不应**宣称这些（否则 Logic 归到软件乐器插槽）
+    {
+        struct { AudioUnitPropertyID id; const char *name; } props[] = {
+            {kMusicDeviceProperty_InstrumentCount, "kMusicDeviceProperty_InstrumentCount"},
+            {kMusicDeviceProperty_SupportsStartStopNote, "kMusicDeviceProperty_SupportsStartStopNote"},
+        };
+        for (unsigned i = 0; i < sizeof(props) / sizeof(props[0]); i++) {
+            UInt32 v = 0, vsz = sizeof(v);
+            OSStatus st = AudioUnitGetProperty(inst, props[i].id, kAudioUnitScope_Global, 0, &v, &vsz);
+            if (st == noErr)
+                printf("[warn] 宣称支持 %s → Logic 会把插件当乐器！\n", props[i].name);
+            else
+                printf("[ ok ] 不支持 %s（效果器应有行为）\n", props[i].name);
+        }
+    }
+
     // MIDI 能力检查：纯效果器**不应**宣称支持 MIDI 属性
     // （否则 Logic 会把它归类成 "MIDI 控制效果器"，只出现在软件乐器插槽）
     {
