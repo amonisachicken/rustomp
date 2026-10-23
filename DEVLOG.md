@@ -444,6 +444,64 @@ auval -v aufx Rstp Amch     # 我们的插件
 
 ---
 
+## E7：导入 v1 电路网表（2026-10-23）
+
+用户提供了 `Netlist_Schematic1_2026-10-23.asc`（已归档为 `circuits/v1-fuzz/source.asc`）。
+
+### 7.1 格式判定：能用，但不是 SPICE 网表
+
+| 项 | 结论 |
+|---|---|
+| 实际格式 | **EasyEDA Pro 导出的 PADS-PowerPCB ASCII（PCB 版）**，不是 LTspice `.asc`、也不是 SPICE |
+| 是否含拓扑 | ✅ 有：`*NET*` 段里 `*SIGNAL* 网名` + `REF.PIN` 列表，共 **21 个网** |
+| 是否含数值 | ✅ 大部分有：`ATTRIBUTE VALUES` 段里有 `Name`/`Value` 属性 |
+| 是否含引脚语义 | ❌ 没有：引脚是 **PCB 焊盘号**（`Q1.1/2/3`），不是 B/C/E 名字 |
+| 是否含模型绑定 | ❌ 没有：没有 SPICE 模型、没有器件方向（阳极/阴极靠 pin 号约定） |
+
+**结论：够用来提取「拓扑 + 数值」，作为唯一真相来源不够 —— 必须配原理图消除歧义。**
+
+写了 `tools/netlist/easyeda_asc.py`：解析 asc → 生成 `netlist.json` + `NETLIST.md`
+（BOM、网表、器件视角、自动值冲突检测）。已入库。
+
+### 7.2 读出的电路（详见 `circuits/v1-fuzz/CIRCUIT.md`）
+
+**4 只分立三极管搭的「离散运放」失真 + 光控输出衰减**：
+
+```
+IR ─SWI─► C1 ─► Q1(射极跟随器) ─R5─► Q2/Q3(差分对) ─► Q4(Sziklai) ─► OPO
+                                    ▲                                  │
+                                    └── H1(FUZZ) ◄── 反馈 ─────────────┘
+                                        OPI- ─C2─R4─ GND
+OPO ─C3─► R6 ─┬─ D2(1N4007)─ GND      ← 硬削波
+              ├─ LED2 ─────── GND      ← 疑点，见 7.3
+              ├─ C4 ───────── GND
+              └─ H2(LEVEL) ─► FXOUT ─SWO─► OUT
+                                └─ R1(LDR) ─ GND   ← 光控衰减
+```
+
+- 反馈拓扑：`H1`（2/3 脚短接当可变电阻）从 `OPO` 接回 `OPI-`，`OPI-` 经 `C2`+`R4` 到地
+  → **非反相放大，AC 增益 ≈ 1 + H1/(R4 + 1/sC2)，DC 增益 = 1**。经典踏板增益级。
+- 电源：`V+ → D1(1N4007) → VCC` 反接保护；`V-` 接输入插座的环（电池开关）。
+- 电源指示：`VCC → R10(4.7k) → [C9 到地] → R9(4.7k) → LED1 → GND`，电流仅 ~0.7mA。
+
+### 7.3 发现的三个硬问题（已写进 CIRCUIT.md 等用户确认）
+
+| # | 问题 | 影响 |
+|---|---|---|
+| 1 | **网表里没有 OP07 也没有 1N4148**，只有 1N4007 + 2 只 LED + 4 只分立三极管 | 与用户此前所说「4148 + OP07」矛盾 → **建模对象未定** |
+| 2 | **LED2 与 1N4007 同向直接并联** → 1N4007 的 Vf(0.7V) 钳位，LED2(1.8V) **永远不导通** → LDR 没有音频光源 | 光控压缩根本无法工作。怀疑 EasyEDA 里 LED 与 Diode 符号的 pin1/pin2 约定相反，网表"看起来同向"实际"反向" |
+| 3 | **9 处元件值冲突**（库名 vs 属性名）：C1 4n7/10nF、C3 4n7/1µF、Q1 4n7... Q1-Q3 BC547B/BC549C、C9 10u/100µF | 取错值音色就完全不同。暂定以属性 `Name` 为准 |
+
+另缺：H1/H2 电位器阻值与 taper、LDR 型号（亮/暗阻）、LED 颜色。
+
+### 7.4 结论
+
+- `.asc` **可用于提取拓扑与数值**，不能作为唯一真相 —— 仍需原理图。
+- 我们**不需要** SPICE 网表作为产物输入：最终要手写 WDF 代码，网表只是拓扑/数值来源。
+- 但「二极管/LED 方向」和「到底是不是 OP07 版本」必须由原理图或用户确认。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -625,4 +683,5 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **导入 v1 网表**（E7）：判定为 EasyEDA Pro / PADS-PowerPCB ASCII（非 SPICE），写了 `tools/netlist/easyeda_asc.py` 解析器，生成 `circuits/v1-fuzz/{netlist.json,NETLIST.md,CIRCUIT.md}`。发现 3 个硬问题：无 OP07/1N4148、LED2 与 1N4007 同向并联疑似符号方向相反、9 处元件值冲突 |
 | 2026-10-23 | **M0-a 完成**（E4）：workspace + nih-plug 空插件 + 通用二进制 CLAP/VST3 + clap-wrapper AUv2 + 安装 + 冒烟测试通过。新增 `scripts/fetch-third-party.sh`、`scripts/build-au.sh`、`tools/au-smoke`、`cmake/CMakeLists.txt`。踩坑：AudioUnitSDK 需 1.1.0、制造商码需大写、bundle id 被 nih-plug 写死、AU 参数名走 cfNameString。发现本机 registrar 缓存损坏（E5，新增 R13/R14/R15）。**ngspice-47 编译成功**（前置依赖：Homebrew readline 8.3，系统 4.2 无 `rl_reset_after_signal`） |

@@ -1,0 +1,670 @@
+{
+  "source": "source.asc",
+  "format": "EasyEDA Pro / PADS-PowerPCB ASCII (PCB export)",
+  "components": {
+    "Q1": {
+      "refdes": "Q1",
+      "device": "BC547B",
+      "footprint": "TO-92(TO-92-3)-2.54",
+      "value": "BC549C",
+      "device_lib_value": "BC547B",
+      "attrs": {
+        "Name": "BC549C",
+        "Manufacturer Part": ""
+      },
+      "pins": {
+        "1": "VCC",
+        "2": "$1N3264",
+        "3": "$1N3269"
+      }
+    },
+    "V-": {
+      "refdes": "V-",
+      "device": "HDR-M-2.54_1x1",
+      "footprint": "HDR-M-2.54_1X1",
+      "value": "HDR-M-2.54_1x1",
+      "device_lib_value": "HDR-M-2.54_1x1",
+      "attrs": {
+        "Name": "HDR-M-2.54_1x1",
+        "Manufacturer Part": "Description"
+      },
+      "pins": {
+        "1": "$1N3213"
+      }
+    },
+    "V+": {
+      "refdes": "V+",
+      "device": "HDR-M-2.54_1x1",
+      "footprint": "HDR-M-2.54_1X1",
+      "value": "HDR-M-2.54_1x1",
+      "device_lib_value": "HDR-M-2.54_1x1",
+      "attrs": {
+        "Name": "HDR-M-2.54_1x1",
+        "Manufacturer Part": "Description"
+      },
+      "pins": {
+        "1": "$1N3254"
+      }
+    },
+    "LED1": {
+      "refdes": "LED1",
+      "device": "LED_TH-R_5mm",
+      "footprint": "LED-TH_5mm",
+      "value": "LED_TH-R_5mm",
+      "device_lib_value": "LED_TH-R_5mm",
+      "attrs": {
+        "Name": "Reuse Block"
+      },
+      "pins": {
+        "1": "$1N3252",
+        "2": "GND"
+      }
+    },
+    "R9": {
+      "refdes": "R9",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "4,7kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "4,7kΩ",
+        "Name": "4,7kΩ"
+      },
+      "pins": {
+        "1": "$1N3252",
+        "2": "$1N3249"
+      }
+    },
+    "R10": {
+      "refdes": "R10",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "4,7kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "4,7kΩ",
+        "Name": "4,7kΩ"
+      },
+      "pins": {
+        "1": "$1N3249",
+        "2": "VCC"
+      }
+    },
+    "C9": {
+      "refdes": "C9",
+      "device": "10u",
+      "footprint": "CAP-D5.0×F2.0",
+      "value": "100uF",
+      "device_lib_value": "10u",
+      "attrs": {
+        "Name": "100uF"
+      },
+      "pins": {
+        "1": "$1N3249",
+        "2": "GND"
+      }
+    },
+    "IR": {
+      "refdes": "IR",
+      "device": "HDR-M-2.54_1x1",
+      "footprint": "HDR-M-2.54_1X1",
+      "value": "HDR-M-2.54_1x1",
+      "device_lib_value": "HDR-M-2.54_1x1",
+      "attrs": {
+        "Name": "HDR-M-2.54_1x1",
+        "Manufacturer Part": "Description"
+      },
+      "pins": {
+        "1": "$1N3222"
+      }
+    },
+    "IG": {
+      "refdes": "IG",
+      "device": "HDR-M-2.54_1x1",
+      "footprint": "HDR-M-2.54_1X1",
+      "value": "HDR-M-2.54_1x1",
+      "device_lib_value": "HDR-M-2.54_1x1",
+      "attrs": {
+        "Name": "HDR-M-2.54_1x1",
+        "Manufacturer Part": "Description"
+      },
+      "pins": {
+        "1": "GND"
+      }
+    },
+    "IL": {
+      "refdes": "IL",
+      "device": "HDR-M-2.54_1x1",
+      "footprint": "HDR-M-2.54_1X1",
+      "value": "HDR-M-2.54_1x1",
+      "device_lib_value": "HDR-M-2.54_1x1",
+      "attrs": {
+        "Name": "HDR-M-2.54_1x1",
+        "Manufacturer Part": "Description"
+      },
+      "pins": {
+        "1": "$1N3213"
+      }
+    },
+    "H1": {
+      "refdes": "H1",
+      "device": "HDR-M_2.54_1x3P",
+      "footprint": "POT_5.04",
+      "value": "FUZZ",
+      "device_lib_value": "HDR-M_2.54_1x3P",
+      "attrs": {
+        "Name": "FUZZ",
+        "Supplier Part": "C2937625"
+      },
+      "pins": {
+        "1": "OPI-",
+        "2": "OPO",
+        "3": "OPO"
+      }
+    },
+    "H2": {
+      "refdes": "H2",
+      "device": "HDR-M_2.54_1x3P",
+      "footprint": "POT_5.04",
+      "value": "LEVEL",
+      "device_lib_value": "HDR-M_2.54_1x3P",
+      "attrs": {
+        "Name": "LEVEL",
+        "Supplier Part": "C2937625"
+      },
+      "pins": {
+        "1": "GND",
+        "2": "FXOUT",
+        "3": "$1N3277"
+      }
+    },
+    "OR": {
+      "refdes": "OR",
+      "device": "HDR-M-2.54_1x1",
+      "footprint": "HDR-M-2.54_1X1",
+      "value": "HDR-M-2.54_1x1",
+      "device_lib_value": "HDR-M-2.54_1x1",
+      "attrs": {
+        "Name": "HDR-M-2.54_1x1",
+        "Manufacturer Part": "Description"
+      },
+      "pins": {
+        "1": "OUT"
+      }
+    },
+    "OG": {
+      "refdes": "OG",
+      "device": "HDR-M-2.54_1x1",
+      "footprint": "HDR-M-2.54_1X1",
+      "value": "HDR-M-2.54_1x1",
+      "device_lib_value": "HDR-M-2.54_1x1",
+      "attrs": {
+        "Name": "HDR-M-2.54_1x1",
+        "Manufacturer Part": "Description"
+      },
+      "pins": {
+        "1": "GND"
+      }
+    },
+    "D1": {
+      "refdes": "D1",
+      "device": "D_1N4007A",
+      "footprint": "DO_1N4007",
+      "value": "D_1N4007A",
+      "device_lib_value": "D_1N4007A",
+      "attrs": {
+        "Name": "Description"
+      },
+      "pins": {
+        "1": "VCC",
+        "2": "$1N3254"
+      }
+    },
+    "R2": {
+      "refdes": "R2",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "10kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "10kΩ",
+        "Name": "10kΩ"
+      },
+      "pins": {
+        "1": "GND",
+        "2": "$1N3269"
+      }
+    },
+    "C2": {
+      "refdes": "C2",
+      "device": "4n7",
+      "footprint": "HDR-M-2.54_1X2",
+      "value": "47nF",
+      "device_lib_value": "4n7",
+      "attrs": {
+        "Name": "47nF"
+      },
+      "pins": {
+        "1": "$1N3265",
+        "2": "OPI-"
+      }
+    },
+    "R4": {
+      "refdes": "R4",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "4,7kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "4,7kΩ",
+        "Name": "4,7kΩ"
+      },
+      "pins": {
+        "1": "GND",
+        "2": "$1N3265"
+      }
+    },
+    "C1": {
+      "refdes": "C1",
+      "device": "4n7",
+      "footprint": "HDR-M-2.54_1X2",
+      "value": "10nF",
+      "device_lib_value": "4n7",
+      "attrs": {
+        "Name": "10nF"
+      },
+      "pins": {
+        "1": "$1N3295",
+        "2": "$1N3264"
+      }
+    },
+    "R5": {
+      "refdes": "R5",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "10kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "10kΩ",
+        "Name": "10kΩ"
+      },
+      "pins": {
+        "1": "$1N3269",
+        "2": "OPI+"
+      }
+    },
+    "C3": {
+      "refdes": "C3",
+      "device": "4n7",
+      "footprint": "HDR-M-2.54_1X2",
+      "value": "1uF",
+      "device_lib_value": "4n7",
+      "attrs": {
+        "Name": "1uF"
+      },
+      "pins": {
+        "1": "OPO",
+        "2": "$1N3272"
+      }
+    },
+    "R6": {
+      "refdes": "R6",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "10kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "10kΩ",
+        "Name": "10kΩ"
+      },
+      "pins": {
+        "1": "$1N3277",
+        "2": "$1N3272"
+      }
+    },
+    "D2": {
+      "refdes": "D2",
+      "device": "D_1N4007A",
+      "footprint": "DO_1N4007",
+      "value": "D_1N4007A",
+      "device_lib_value": "D_1N4007A",
+      "attrs": {
+        "Name": "Description"
+      },
+      "pins": {
+        "1": "GND",
+        "2": "$1N3277"
+      }
+    },
+    "LED2": {
+      "refdes": "LED2",
+      "device": "LED_TH-R_5mm",
+      "footprint": "LED-TH_5mm",
+      "value": "LED_TH-R_5mm",
+      "device_lib_value": "LED_TH-R_5mm",
+      "attrs": {
+        "Name": "Reuse Block"
+      },
+      "pins": {
+        "1": "GND",
+        "2": "$1N3277"
+      }
+    },
+    "C4": {
+      "refdes": "C4",
+      "device": "4n7",
+      "footprint": "HDR-M-2.54_1X2",
+      "value": "1nF",
+      "device_lib_value": "4n7",
+      "attrs": {
+        "Name": "1nF"
+      },
+      "pins": {
+        "1": "GND",
+        "2": "$1N3277"
+      }
+    },
+    "ADJST": {
+      "refdes": "ADJST",
+      "device": "卧式/蓝白色",
+      "footprint": "RES-ADJ-SMD_RM065-V1",
+      "value": "1M",
+      "device_lib_value": "卧式/蓝白色",
+      "attrs": {
+        "Name": "1M",
+        "Supplier Part": "C9900019422",
+        "Manufacturer Part": "卧式/蓝白色"
+      },
+      "pins": {
+        "1": "GND",
+        "2": "$1N3264",
+        "3": "VCC"
+      }
+    },
+    "R1": {
+      "refdes": "R1",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "LDR",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "LDR",
+        "Name": "LDR"
+      },
+      "pins": {
+        "1": "FXOUT",
+        "2": "GND"
+      }
+    },
+    "Q2": {
+      "refdes": "Q2",
+      "device": "BC547B",
+      "footprint": "TO-92(TO-92-3)-2.54",
+      "value": "BC549C",
+      "device_lib_value": "BC547B",
+      "attrs": {
+        "Name": "BC549C",
+        "Manufacturer Part": ""
+      },
+      "pins": {
+        "1": "$1N3281",
+        "2": "OPI+",
+        "3": "$1N3289"
+      }
+    },
+    "Q3": {
+      "refdes": "Q3",
+      "device": "BC547B",
+      "footprint": "TO-92(TO-92-3)-2.54",
+      "value": "BC549C",
+      "device_lib_value": "BC547B",
+      "attrs": {
+        "Name": "BC549C",
+        "Manufacturer Part": ""
+      },
+      "pins": {
+        "1": "$1N3283",
+        "2": "OPI-",
+        "3": "$1N3289"
+      }
+    },
+    "R7": {
+      "refdes": "R7",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "10kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "10kΩ",
+        "Name": "10kΩ"
+      },
+      "pins": {
+        "1": "$1N3281",
+        "2": "VCC"
+      }
+    },
+    "R8": {
+      "refdes": "R8",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "10kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "10kΩ",
+        "Name": "10kΩ"
+      },
+      "pins": {
+        "1": "$1N3283",
+        "2": "VCC"
+      }
+    },
+    "Q4": {
+      "refdes": "Q4",
+      "device": "BC559CTA",
+      "footprint": "TO-92-3_L4.9-W3.7-P2.54-L",
+      "value": "BC559C",
+      "device_lib_value": "BC559CTA",
+      "attrs": {
+        "Name": "BC559C",
+        "Supplier Part": "C258161"
+      },
+      "pins": {
+        "1": "OPO",
+        "2": "$1N3281",
+        "3": "VCC"
+      }
+    },
+    "R11": {
+      "refdes": "R11",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "10kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "10kΩ",
+        "Name": "10kΩ"
+      },
+      "pins": {
+        "1": "GND",
+        "2": "$1N3289"
+      }
+    },
+    "R12": {
+      "refdes": "R12",
+      "device": "Res_AXIAL-1/4W",
+      "footprint": "Res_1/4W",
+      "value": "2,2kΩ",
+      "device_lib_value": "Res_AXIAL-1/4W",
+      "attrs": {
+        "Value": "2,2kΩ",
+        "Name": "2,2kΩ"
+      },
+      "pins": {
+        "1": "GND",
+        "2": "OPO"
+      }
+    },
+    "SWI": {
+      "refdes": "SWI",
+      "device": "HDR-F_2.54_1x2P",
+      "footprint": "SW-2.54",
+      "value": "HDR-F_2.54_1x2P",
+      "device_lib_value": "HDR-F_2.54_1x2P",
+      "attrs": {
+        "Manufacturer Part": "2.54-1*2P母",
+        "Supplier Part": "C49661",
+        "Name": "Reuse Block"
+      },
+      "pins": {
+        "1": "$1N3222",
+        "2": "$1N3295"
+      }
+    },
+    "SWO": {
+      "refdes": "SWO",
+      "device": "HDR-F_2.54_1x2P",
+      "footprint": "SW-2.54",
+      "value": "HDR-F_2.54_1x2P",
+      "device_lib_value": "HDR-F_2.54_1x2P",
+      "attrs": {
+        "Manufacturer Part": "2.54-1*2P母",
+        "Supplier Part": "C49661",
+        "Name": "Reuse Block"
+      },
+      "pins": {
+        "1": "OUT",
+        "2": "FXOUT"
+      }
+    }
+  },
+  "nets": {
+    "VCC": [
+      "Q1.1",
+      "R10.2",
+      "D1.1",
+      "ADJST.3",
+      "R7.2",
+      "R8.2",
+      "Q4.3"
+    ],
+    "$1N3264": [
+      "Q1.2",
+      "C1.2",
+      "ADJST.2"
+    ],
+    "$1N3269": [
+      "Q1.3",
+      "R2.2",
+      "R5.1"
+    ],
+    "$1N3213": [
+      "V-.1",
+      "IL.1"
+    ],
+    "$1N3254": [
+      "V+.1",
+      "D1.2"
+    ],
+    "GND": [
+      "LED1.2",
+      "C9.2",
+      "IG.1",
+      "H2.1",
+      "OG.1",
+      "R2.1",
+      "R4.1",
+      "D2.1",
+      "LED2.1",
+      "C4.1",
+      "ADJST.1",
+      "R1.2",
+      "R11.1",
+      "R12.1"
+    ],
+    "$1N3252": [
+      "LED1.1",
+      "R9.1"
+    ],
+    "$1N3249": [
+      "R9.2",
+      "R10.1",
+      "C9.1"
+    ],
+    "$1N3222": [
+      "IR.1",
+      "SWI.1"
+    ],
+    "OPI-": [
+      "H1.1",
+      "C2.2",
+      "Q3.2"
+    ],
+    "OPO": [
+      "H1.2",
+      "H1.3",
+      "C3.1",
+      "Q4.1",
+      "R12.2"
+    ],
+    "FXOUT": [
+      "H2.2",
+      "R1.1",
+      "SWO.2"
+    ],
+    "$1N3277": [
+      "H2.3",
+      "R6.1",
+      "D2.2",
+      "LED2.2",
+      "C4.2"
+    ],
+    "OUT": [
+      "OR.1",
+      "SWO.1"
+    ],
+    "$1N3265": [
+      "C2.1",
+      "R4.2"
+    ],
+    "$1N3295": [
+      "C1.1",
+      "SWI.2"
+    ],
+    "OPI+": [
+      "R5.2",
+      "Q2.2"
+    ],
+    "$1N3272": [
+      "C3.2",
+      "R6.2"
+    ],
+    "$1N3281": [
+      "Q2.1",
+      "R7.1",
+      "Q4.2"
+    ],
+    "$1N3289": [
+      "Q2.3",
+      "Q3.3",
+      "R11.2"
+    ],
+    "$1N3283": [
+      "Q3.1",
+      "R8.1"
+    ]
+  },
+  "warnings": [
+    "Q1: *PART* 里 Device=`BC547B`，但属性 Name=`BC549C` —— 以哪个为准？",
+    "C9: *PART* 里 Device=`10u`，但属性 Name=`100uF` —— 以哪个为准？",
+    "D1: *PART* 里 Device=`D_1N4007A`，但属性 Name=`Description` —— 以哪个为准？",
+    "C2: *PART* 里 Device=`4n7`，但属性 Name=`47nF` —— 以哪个为准？",
+    "C1: *PART* 里 Device=`4n7`，但属性 Name=`10nF` —— 以哪个为准？",
+    "C3: *PART* 里 Device=`4n7`，但属性 Name=`1uF` —— 以哪个为准？",
+    "D2: *PART* 里 Device=`D_1N4007A`，但属性 Name=`Description` —— 以哪个为准？",
+    "C4: *PART* 里 Device=`4n7`，但属性 Name=`1nF` —— 以哪个为准？",
+    "ADJST: *PART* 里 Device=`卧式/蓝白色`，但属性 Name=`1M` —— 以哪个为准？",
+    "Q2: *PART* 里 Device=`BC547B`，但属性 Name=`BC549C` —— 以哪个为准？",
+    "Q3: *PART* 里 Device=`BC547B`，但属性 Name=`BC549C` —— 以哪个为准？",
+    "Q4: *PART* 里 Device=`BC559CTA`，但属性 Name=`BC559C` —— 以哪个为准？"
+  ]
+}
