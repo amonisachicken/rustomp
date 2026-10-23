@@ -15,6 +15,9 @@ crate-type = ["cdylib", "lib"]
 # nih-plug 不在 crates.io，必须用 git 依赖并固定 rev
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
 rustomp-dsp.workspace = true
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
+# 只用来解一张内嵌的面板 PNG（无 SVG/字体依赖）
+png = "0.17"
 
 [features]
 default = []

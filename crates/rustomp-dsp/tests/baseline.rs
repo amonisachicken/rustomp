@@ -15,6 +15,14 @@ use std::f64::consts::TAU;
 
 const FS: f64 = 192_000.0;
 
+fn measure_gain(f: f64, amp: f64) -> f64 {
+    measure_gain_with(f, amp, Params::default())
+}
+
+fn measure_harmonics(amp: f64, f0: f64, nh: usize) -> (f64, Vec<f64>) {
+    measure_harmonics_with(amp, f0, nh, Params::default())
+}
+
 /// 先用 3 秒把 0.5s 的直流恢复走完，再测量（与 `scripts/sim-baseline.sh` 一致）。
 const WARMUP_S: f64 = 3.0;
 
@@ -23,9 +31,9 @@ fn db(x: f64) -> f64 {
 }
 
 /// 用小信号测某频点的增益（线性化对拍 ngspice 的 `.ac`）。
-fn measure_gain(f: f64, amp: f64) -> f64 {
+fn measure_gain_with(f: f64, amp: f64, p: Params) -> f64 {
     let mut d = Fakedist::new(FS);
-    d.set_params(Params::default());
+    d.set_params(p);
     let t = 1.0 / FS;
     let mut ph: f64 = 0.0;
     let n_warm = (WARMUP_S * FS) as usize;
@@ -50,9 +58,9 @@ fn measure_gain(f: f64, amp: f64) -> f64 {
 }
 
 /// 测 THD 与各次谐波（单点 DFT，1kHz，取整数周期）。
-fn measure_harmonics(amp: f64, f0: f64, nh: usize) -> (f64, Vec<f64>) {
+fn measure_harmonics_with(amp: f64, f0: f64, nh: usize, p: Params) -> (f64, Vec<f64>) {
     let mut d = Fakedist::new(FS);
-    d.set_params(Params::default());
+    d.set_params(p);
     let t = 1.0 / FS;
     let mut ph: f64 = 0.0;
     let n_warm = (WARMUP_S * FS) as usize;
@@ -157,4 +165,26 @@ fn thd_and_harmonics_match_ngspice() {
             "h{h} 偏差过大：{got:.3} vs {w:.3}"
         );
     }
+}
+
+
+/// 对称削波模式（短接 D3）与 ngspice 对拍。
+///
+/// 参考值来自 `build/sim/sym`：把网表里的 DD3 换成 0.001Ω 短接后重跑，
+/// 得到基波 0.3509 V、THD(2..9) = 25.516%、h2 = 0.049%（对称 ⇒ 偶次几乎为零）。
+#[test]
+fn symmetric_mode_matches_ngspice() {
+    let p = Params { symmetric: true, ..Params::default() };
+    let (thd, hs) = measure_harmonics_with(0.2, 1000.0, 9, p);
+    println!("\n对称模式：THD(2..9) = {thd:.3} %（ngspice 25.516 %）");
+    let want = [0.049, 20.912, 0.021, 11.357, 0.012, 7.472, 0.015, 5.382];
+    for (i, (got, w)) in hs.iter().zip(want.iter()).enumerate() {
+        let h = i + 2;
+        println!("  h{h:<2} WDF {got:>7.3} %   ngspice {w:>7.3} %   差 {:+.3}", got - w);
+        assert!((got - w).abs() < 0.15, "对称模式 h{h} 偏差过大：{got:.3} vs {w:.3}");
+    }
+    assert!((thd - 25.516).abs() < 0.3, "对称模式 THD 偏差过大：{thd:.3}");
+
+    // 偶次谐波必须显著低于非对称模式（3.9%），这是"对称"的判据
+    assert!(hs[0] < 0.5, "对称模式 h2 应为 ~0，实测 {:.3}%", hs[0]);
 }

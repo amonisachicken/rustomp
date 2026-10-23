@@ -4,7 +4,7 @@ use std::f64::consts::TAU;
 
 fn run(fs: f64, gain: f64, level: f64, amp: f64, f0: f64, secs: f64) -> (f64, f64, bool) {
     let mut e = Engine::new(fs);
-    e.set_params(Params { gain, level });
+    e.set_params(Params { gain, level, ..Params::default() });
     let t = 1.0 / fs;
     let mut ph: f64 = 0.0;
     let n = (secs * fs) as usize;

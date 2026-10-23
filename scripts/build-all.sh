@@ -42,7 +42,7 @@ for d in "$HOME"/Library/Audio/Plug-Ins/Components/*.component; do
     f="$d/Contents/Info.plist"
     [ -f "$f" ] || continue
     printf "  %-34s %s\n" "$(basename "$d" .component)" \
-        "$(plutil -extract AudioComponents.0.subtype raw "$f" 2>/dev/null)/Amch"
+        "$(plutil -extract AudioComponents.0.subtype raw "$f" 2>/dev/null)/HpEf"
 done
 cat <<'EOF'
 

@@ -11,11 +11,24 @@ pub const OVERSAMPLING: usize = 4;
 /// 输出电平保护阈值（远超任何可能的合法信号）
 const GUARD_LIMIT: f64 = 100.0;
 
+/// 与过采样链路等长的干路延迟（bypass 时用，保证与湿路相位对齐）
+const DRY_LEN: usize = Oversampler4x::latency_samples() as usize;
+
 /// 单声道处理引擎。
 pub struct Engine {
     dsp: Fakedist,
     os: Oversampler4x,
     fs: f64,
+    params: Params,
+    /// 干路延迟线（与湿路对齐，避免 bypass 切换时的梳状滤波）
+    dry: [f64; DRY_LEN],
+    dry_pos: usize,
+    /// bypass 交叉淡化量：0 = 干，1 = 湿
+    mix: f64,
+    mix_coef: f64,
+    /// 削波指示包络（0..1，给 GUI 的 LED）
+    clip_env: f32,
+    clip_decay: f64,
 }
 
 impl Engine {
@@ -24,6 +37,13 @@ impl Engine {
             dsp: Fakedist::new(fs * OVERSAMPLING as f64),
             os: Oversampler4x::new(),
             fs,
+            params: Params::default(),
+            dry: [0.0; DRY_LEN],
+            dry_pos: 0,
+            mix: 1.0,
+            mix_coef: 0.0,
+            clip_env: 0.0,
+            clip_decay: 0.0,
         };
         e.set_sample_rate(fs);
         e
@@ -33,15 +53,30 @@ impl Engine {
         self.fs = fs;
         self.dsp.set_sample_rate(fs * OVERSAMPLING as f64);
         self.os = Oversampler4x::new();
+        // bypass 切换 5 ms 交叉淡化；LED 释放 ~150 ms
+        self.mix_coef = 1.0 - (-1.0 / (0.005 * fs)).exp();
+        self.clip_decay = (-1.0 / (0.15 * fs)).exp();
+        self.reset();
     }
 
     pub fn set_params(&mut self, p: Params) {
+        self.params = p;
         self.dsp.set_params(p);
+    }
+
+    /// 削波指示电平（0..1），供 GUI 的 LED 使用
+    #[inline]
+    pub fn clip_indicator(&self) -> f32 {
+        self.clip_env
     }
 
     pub fn reset(&mut self) {
         self.dsp.reset();
         self.os = Oversampler4x::new();
+        self.dry = [0.0; DRY_LEN];
+        self.dry_pos = 0;
+        self.mix = if self.params.bypass { 0.0 } else { 1.0 };
+        self.clip_env = 0.0;
     }
 
     /// 插件应向上报的延迟（基带样本）。
@@ -60,11 +95,27 @@ impl Engine {
         for v in up.iter_mut() {
             *v = self.dsp.process(*v);
         }
-        let y = self.os.downsample(&up);
-        if !y.is_finite() || y.abs() > GUARD_LIMIT {
+        let wet = self.os.downsample(&up);
+        if !wet.is_finite() || wet.abs() > GUARD_LIMIT {
             self.reset();
             return 0.0;
         }
+
+        // 干路（延迟对齐后取）
+        let dry = self.dry[self.dry_pos];
+        self.dry[self.dry_pos] = x;
+        self.dry_pos = (self.dry_pos + 1) % DRY_LEN;
+
+        // true-bypass：淡入淡出，电路仍在运行（避免接回时状态陈旧产生爆音）
+        let target = if self.params.bypass { 0.0 } else { 1.0 };
+        self.mix += (target - self.mix) * self.mix_coef;
+        let y = dry * (1.0 - self.mix) + wet * self.mix;
+
+        // 削波指示：|u| 超过 ~0.55 V 起亮，慢释放
+        let u = self.dsp.clip_voltage();
+        let t = ((u - 0.55) / 0.8).clamp(0.0, 1.0) as f32;
+        self.clip_env = ((self.clip_env as f64 * self.clip_decay) as f32).max(t);
+
         y
     }
 
@@ -154,7 +205,7 @@ mod tests {
             for &gain in &[0.0, 0.5, 1.0] {
                 let fs = 48_000.0;
                 let mut e = Engine::new(fs);
-                e.set_params(Params { gain, level: 0.5 });
+                e.set_params(Params { gain, level: 0.5, ..Params::default() });
                 let n = (4.0 * fs) as usize;
                 let mut peak = 0.0f64;
                 let mut tail = 0.0f64;

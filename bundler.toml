@@ -2,4 +2,4 @@
 # 注意：AU 不在 nih-plug 的导出范围内，AUv2 由 clap-wrapper 从 .clap 包装生成。
 
 [rustomp-plugin]
-name = "Rustomp Fuzz"
+name = "Sparklin Drive"

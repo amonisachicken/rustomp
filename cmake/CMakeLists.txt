@@ -18,10 +18,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ---- 我们的插件身份（AU 的四字符码，一旦发布不可更改）----
-set(RUSTOMP_PLUGIN_NAME   "Rustomp Fuzz"                     CACHE STRING "插件显示名")
-set(RUSTOMP_BUNDLE_ID     "com.amonisachicken.rustomp.fuzz"  CACHE STRING "AU bundle id")
-set(RUSTOMP_AU_SUBTYPE    "RFz1"                                 CACHE STRING "AU subtype (4 chars)")
-set(RUSTOMP_AU_MANUFACTURER_CODE "Amch"                          CACHE STRING "AU manufacturer (4 chars)")
+set(RUSTOMP_PLUGIN_NAME   "Sparklin Drive"                     CACHE STRING "插件显示名")
+set(RUSTOMP_BUNDLE_ID     "com.honeypieeffects.sparklindrive"  CACHE STRING "AU bundle id")
+set(RUSTOMP_AU_SUBTYPE    "SPd1"                                 CACHE STRING "AU subtype (4 chars)")
+set(RUSTOMP_AU_MANUFACTURER_CODE "HpEf"                          CACHE STRING "AU manufacturer (4 chars)")
 set(RUSTOMP_AU_MANUFACTURER_NAME "amonisachicken"                CACHE STRING "AU manufacturer name")
 # aufx = 效果器；aumu = 乐器。我们是效果器。
 set(RUSTOMP_AU_TYPE       "aufx"                                 CACHE STRING "AU component type")

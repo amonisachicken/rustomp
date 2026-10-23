@@ -19,14 +19,14 @@ cd "$ROOT"
 VARIANT="${1:?用法: $0 <mono|stereo>}"
 case "$VARIANT" in
     mono)
-        NAME="Rustomp Fuzz Mono"
-        SUBTYPE="RFm1"
-        BUNDLE_ID="com.amonisachicken.rustomp.fuzz.mono"
+        NAME="Sparklin Drive Mono"
+        SUBTYPE="SPm1"
+        BUNDLE_ID="com.honeypieeffects.sparklindrive.mono"
         ;;
     stereo)
-        NAME="Rustomp Fuzz Stereo"
-        SUBTYPE="RFs1"
-        BUNDLE_ID="com.amonisachicken.rustomp.fuzz.stereo"
+        NAME="Sparklin Drive Stereo"
+        SUBTYPE="SPs1"
+        BUNDLE_ID="com.honeypieeffects.sparklindrive.stereo"
         ;;
     *) echo "未知变体：$VARIANT（只支持 mono / stereo）"; exit 1 ;;
 esac
@@ -34,8 +34,8 @@ esac
 echo "==> [1/5] 构建 ${NAME}（通用二进制，feature=${VARIANT}）"
 cargo nih-plug bundle-universal rustomp-plugin --release --features "$VARIANT"
 
-SRC_CLAP="target/bundled/Rustomp Fuzz.clap"
-SRC_VST3="target/bundled/Rustomp Fuzz.vst3"
+SRC_CLAP="target/bundled/Sparklin Drive.clap"
+SRC_VST3="target/bundled/Sparklin Drive.vst3"
 DST_CLAP="target/bundled/${NAME}.clap"
 DST_VST3="target/bundled/${NAME}.vst3"
 
@@ -45,7 +45,7 @@ mv "$SRC_CLAP" "$DST_CLAP"
 mv "$SRC_VST3" "$DST_VST3"
 for b in "$DST_CLAP" "$DST_VST3"; do
     rm -rf "$b/Contents/_CodeSignature"
-    mv "$b/Contents/MacOS/Rustomp Fuzz" "$b/Contents/MacOS/$NAME"
+    mv "$b/Contents/MacOS/Sparklin Drive" "$b/Contents/MacOS/$NAME"
     plutil -replace CFBundleExecutable -string "$NAME" "$b/Contents/Info.plist"
     plutil -replace CFBundleName -string "$NAME" "$b/Contents/Info.plist"
     plutil -replace CFBundleDisplayName -string "$NAME" "$b/Contents/Info.plist" 2>/dev/null || true
@@ -62,7 +62,7 @@ cmake -B "$BUILD_DIR" -S cmake \
       -DCLAP_BUNDLE="$ROOT/$DST_CLAP" \
       -DRUSTOMP_PLUGIN_NAME="$NAME" \
       -DRUSTOMP_AU_SUBTYPE="$SUBTYPE" \
-      -DRUSTOMP_AU_MANUFACTURER_CODE="Amch" \
+      -DRUSTOMP_AU_MANUFACTURER_CODE="HpEf" \
       -DRUSTOMP_BUNDLE_ID="$BUNDLE_ID" > "$BUILD_DIR/configure.log" 2>&1 \
     || { tail -30 "$BUILD_DIR/configure.log"; exit 1; }
 cmake --build "$BUILD_DIR" --config Release -j"$(sysctl -n hw.ncpu)" > "$BUILD_DIR/build.log" 2>&1 \
@@ -100,8 +100,8 @@ CH=1; [ "$VARIANT" = "stereo" ] && CH=2
 [ -x build/au_smoke ] || cc -O2 -o build/au_smoke tools/au-smoke/au_smoke.c \
     -framework AudioToolbox -framework CoreFoundation
 ./build/au_smoke "$COMPONENT/Contents/MacOS/${NAME}" wrapAsAUV2_inst0Factory \
-    aufx "$SUBTYPE" Amch 512 "$CH" 2>&1 \
+    aufx "$SUBTYPE" HpEf 512 "$CH" 2>&1 \
     | grep -E "SupportedNumChannels|in=|渲染|音频通路|FAIL" | sed 's/^/    /'
 
 echo
-echo "完成：$NAME  →  aufx / $SUBTYPE / Amch"
+echo "完成：${NAME}  →  aufx / ${SUBTYPE} / HpEf"

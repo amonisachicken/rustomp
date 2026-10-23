@@ -1241,6 +1241,93 @@ UI 框架：vizia / egui / iced（或自带 wgpu、softbuffer 渲染）
 
 ---
 
+## E18：GUI（egui）+ 新功能（对称削波 / bypass / 削波指示）+ 改名（2026-10-23）
+
+### 18.1 面板素材
+
+用户提供了两版：`assets/sparklindrive.svg`（初版）与
+`sparklindrive_画板 1.svg`（**GAIN/LEVEL 已转曲，无 text 元素、不依赖字体**）。
+
+加工流程（已固化）：
+
+1. 用脚本删掉两个指针 `rect`（GUI 里程序化绘制可旋转指针）；
+2. 插入 `#faf1e0` 背景矩形 → `assets/panel.svg`；
+3. `inkscape --export-width=680` 光栅化成 **`assets/panel@2x.png`**（680×1269）；
+4. 插件 `include_bytes!` 内嵌这张 PNG，运行时解码并缩放到窗口像素尺寸；
+   不引入 SVG/字体解析依赖。
+
+面板几何（SVG 坐标，`viewBox 170.08 × 317.48`，窗口 **340×635**）：
+
+| 元素 | 坐标 | 交互 |
+|---|---|---|
+| LED | `(85.04, 33.83) r=8.5` | 削波指示；bypass 时变灰 |
+| LEVEL 旋钮 | `(43.41, 71.59) r=27.86` | 上下拖动 / 滚轮 / 双击回 50% |
+| GAIN 旋钮 | `(126.51, 70.43) r=27.86` | 同上 |
+| 削波模式开关 | `(85, 124.5)` | 点击切换：上=非对称（3 只），下=对称（2 只） |
+| bypass 开关 | `(85.33, 236.17)` | 点击切换；按下时压暗 |
+
+指针角度：`−135° + 270° × value`（0.5 = 正上方，与素材一致）。
+用 Inkscape 合成预期画面核对过角度（LEVEL 72% / GAIN 30% 的指向正确）。
+
+### 18.2 新增功能
+
+**对称削波模式**（开关向下）：物理上等于**短接 D3**，剩 D1 ∥ D2（正反各一只）。
+先用 ngspice 建参考（把 `DD3` 换成 0.001Ω 短接）：
+
+| 指标 | 非对称（原状） | 对称 |
+|---|---|---|
+| THD(2..9) @0.2V | 27.616% | **25.516%** |
+| h2 | 3.92% | **0.049%**（偶次几乎为零 ← 对称的判据） |
+| h3 / h5 / h7 | 22.47 / 11.96 / 7.67 | 20.91 / 11.36 / 7.47 |
+| 基波 | 0.4791 V | 0.3509 V |
+
+WDF 实现与参考逐次谐波误差 ≤0.05 pp（`symmetric_mode_matches_ngspice`）。
+
+**True bypass**：干路做了与过采样链路等长的 **15 样本延迟对齐**，
+切换用 **5 ms 交叉淡化**，因此不会产生梳状滤波和爆音；
+bypass 时电路**继续运行**（避免接回时状态陈旧）。LED 变灰由 GUI 处理。
+
+**削波指示**：`Fakedist` 暴露削波环两端电压 `|u|`，
+`Engine` 做 `(|u|−0.55)/0.8` 映射 + 150 ms 慢释放包络，供 LED 使用。
+原子（`AtomicU32` 存 f32 位）传给 GUI，音频线程不加锁。
+
+### 18.3 改名与身份
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| 插件名 | Rustomp Fuzz Mono/Stereo | **Sparklin Drive Mono/Stereo** |
+| 厂商 | amonisachicken | **HONEYPIE EFFECTS** |
+| AU 码 | `aufx/RFm1/RFs1/Amch` | **`aufx/SPm1/SPs1/HpEf`** |
+| bundle id | com.amonisachicken... | **com.honeypieeffects.sparklindrive[.mono/.stereo]** |
+| CLAP/VST3 id | 同步更新 | 同步更新 |
+
+旧的 `Rustomp Fuzz*` 已从 `~/Library/Audio/Plug-Ins/*` 清除。
+
+### 18.4 验证（au-smoke）
+
+```
+[info] 注册的组件类型: aufx / SPm1 / HpEf
+        in=1 out=1
+[info] 参数数量: 4
+        [0] "Gain"  [1] "Clip Mode SYM"  [2] "Level"  [3] "Bypass"
+[ ok ] 不支持 kMusicDeviceProperty_InstrumentCount
+[ ok ] 不支持 kMusicDeviceProperty_SupportsStartStopNote
+[ ok ] 提供自定义界面（CocoaUI）        ← GUI 已通过 clap-wrapper 接通
+[ ok ] 未宣称支持 MIDI
+[ ok ] 音频通路正常
+```
+
+CPU 仍为 **7.8%**（立体声 48k + 4x），DSP 测试 14 项全绿。
+
+### 18.5 待打磨
+
+- 削波模式开关目前用**小圆点**表示拨杆方向（上/下）；素材里那个拨杆是画死的，
+  要做得更像实物需要单独出一张"拨杆"图层。
+- bypass 按下状态用压暗表示；同样可以出一张"按下"图层。
+- LED 亮度曲线、指针粗细可微调。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -1467,6 +1554,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
+| 2026-10-23 | **GUI 完成 + 新功能 + 改名**（E18）：egui + 内嵌 PNG 面板；新增对称削波模式（ngspice 参考 h2 3.92%→0.049%）、true-bypass（15 样本对齐 + 5ms 淡化）、削波指示 LED；插件改名 **Sparklin Drive / HONEYPIE EFFECTS**（`aufx/SPm1/SPs1/HpEf`）。au-smoke 确认 4 参数 + CocoaUI + 无乐器/MIDI 属性 |
 | 2026-10-23 | **无 GUI 阶段冻结**（E17）：打 tag `v0.1.0-nogui`，二进制存档到 `dist/v0.1.0-nogui/`（3 变体 × 3 格式 + SHA256 + README）；评估面板 SVG（竖版 1:1.87，指针是画死的 rect、字体未嵌入、透明底），GUI 方案定为 resvg + nih_plug_egui |
 | 2026-10-23 | **CPU A 类优化完成**（E16）：1592 → 824 ns（1.93x），CPU 15% → **7.8%**，h2–h9 逐位不变。关键手段是外层牛顿线性外推（迭代 3.48→2.00）；记录了 6 个「实测无效」的方向。多线程原型实测 1.97x，但因单声道变体零收益 + 实时风险，暂不启用（ADR-010） |
 | 2026-10-23 | **技术评估**（E15）：实测 CPU 分解（瓶颈＝二极管内层牛顿，FIR 仅 4.6%，f64→f32 无收益），给出优化收益表与音色验收标准；梳理 GUI 三层技术栈（AUv2 CocoaUI → clap-wrapper 桥 → baseview → vizia/egui），新 ADR-009 待拍板 |

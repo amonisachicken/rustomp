@@ -10,7 +10,7 @@ fn zero_cross_rate(y: &[f64]) -> f64 {
 
 fn run(name: &str, fs: f64, gain: f64, gen: impl Fn(usize, f64) -> f64, secs: f64) {
     let mut e = Engine::new(fs);
-    e.set_params(Params { gain, level: 0.5 });
+    e.set_params(Params { gain, level: 0.5, ..Params::default() });
     let t = 1.0 / fs;
     let n = (secs * fs) as usize;
     let mut y = Vec::with_capacity(n);

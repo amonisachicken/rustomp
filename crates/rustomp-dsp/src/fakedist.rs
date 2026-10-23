@@ -105,6 +105,11 @@ pub struct Params {
     pub gain: f64,
     /// LEVEL（P2）位置：0 = 静音，1 = 全量
     pub level: f64,
+    /// 削波模式：`false` = 3 只二极管非对称（D1 ∥ D2+D3）；
+    /// `true` = 2 只二极管对称（短接 D3，剩 D1 ∥ D2，正反各一只）
+    pub symmetric: bool,
+    /// true-bypass：信号直通，电路仍继续运行（避免接回时状态陈旧产生爆音）
+    pub bypass: bool,
 }
 
 impl Default for Params {
@@ -113,6 +118,8 @@ impl Default for Params {
         Self {
             gain: 0.5,
             level: 0.5,
+            symmetric: false,
+            bypass: false,
         }
     }
 }
@@ -162,6 +169,8 @@ pub struct Fakedist {
     v_inm_prev: f64,
     /// 再上一步的解（用于线性外推初值）
     v_inm_prev2: f64,
+    /// 本次样本中削波环两端的电压 |u|（供 LED 指示）
+    last_clip_u: f64,
     /// 上一次求解用掉的牛顿迭代次数（诊断用）
     pub last_iters: u32,
 }
@@ -204,6 +213,7 @@ impl Fakedist {
             d_prev: 0.0,
             v_inm_prev: 0.5 * 4.5,
             v_inm_prev2: 0.5 * 4.5,
+            last_clip_u: 0.0,
             last_iters: 0,
         };
         s.recompute();
@@ -295,10 +305,17 @@ impl Fakedist {
     /// 写成**不借用 `self`** 的形式：热循环里只碰局部变量，否则借用检查器会
     /// 迫使每个字段每轮从内存重载，性能会掉 30%（实测 1592 → 2048 ns）。
     #[inline(always)]
-    fn clipper(d1: &Diode1n4148, d23: &Diode1n4148, u: f64) -> (f64, f64) {
+    fn clipper(d1: &Diode1n4148, d23: &Diode1n4148, u: f64, symmetric: bool) -> (f64, f64) {
         // u = v_inm - v_out
-        // 支路 A：D2+D3 串联，u > 0 时正向导通
-        let (i_a, g_a) = d23.current_and_conductance(u);
+        //
+        // 非对称（开关向上，实物原状）：D1 ∥ (D2+D3 串联反向)
+        //   正方向 1 只（0.7V）、负方向 2 只串联（1.4V）
+        // 对称（开关向下，短接 D3）：D1 ∥ D2，正反各一只
+        let (i_a, g_a) = if symmetric {
+            d1.current_and_conductance(u)
+        } else {
+            d23.current_and_conductance(u)
+        };
         // 支路 B：D1，阳极在 OUT、阴极在 IN-，-u > 0 时导通
         let (i_b, g_b) = d1.current_and_conductance(-u);
         (i_a - i_b, g_a + g_b)
@@ -320,6 +337,7 @@ impl Fakedist {
         let i2 = self.i2;
         let d1 = self.d1;
         let d23 = self.d23;
+        let symmetric = self.params.symmetric;
 
         // ---------- 1. 输入级：C1 + 偏置电阻 → v_inp ----------
         let v_inp = (self.g1 * (x - self.vc1) - self.i1 + self.in_bias_over_r) * (1.0 / self.in_g_total);
@@ -351,7 +369,7 @@ impl Fakedist {
             iters += 1;
             let u = one_plus_beta * v_inm - a;
             let i_br = g_branch * (v_inm - vc2) - i2 * g2_r5_inv;
-            let (i_cl, g_cl) = Self::clipper(&d1, &d23, u);
+            let (i_cl, g_cl) = Self::clipper(&d1, &d23, u, symmetric);
             let i_rf = u * g_f;
             let f = i_br + i_rf + i_cl;
             let scale = i_br.abs() + i_rf.abs() + i_cl.abs() + 1e-12;
@@ -383,6 +401,7 @@ impl Fakedist {
         // 一旦瞬态把输出推到轨外，就会锁死成 ~10 kHz 极限环。
         // 物理上限由反馈环里的二极管负责，不需要再补一刀。
         self.v_out = a - beta * v_inm;
+        self.last_clip_u = (one_plus_beta * v_inm - a).abs();
         self.d_prev = v_inp - v_inm;
         self.v_inm_prev2 = self.v_inm_prev;
         self.v_inm_prev = v_inm;
@@ -394,6 +413,12 @@ impl Fakedist {
 
         // 抽头 = 分压比 = 位置（线性电位器）
         n1 * self.params.level
+    }
+
+    /// 本样本削波环两端的电压绝对值（0 = 未削波；>0.7 附近开始导通）
+    #[inline]
+    pub fn clip_voltage(&self) -> f64 {
+        self.last_clip_u
     }
 
     /// 内部节点快照（测试/调试用）。

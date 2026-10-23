@@ -293,6 +293,18 @@ int main(int argc, char **argv) {
         }
     }
 
+    // 是否有自定义界面（AUv2 的 CocoaUI 属性）
+    {
+        UInt32 sz = 0;
+        bool writable = false;
+        OSStatus st = AudioUnitGetPropertyInfo(inst, kAudioUnitProperty_CocoaUI,
+                                               kAudioUnitScope_Global, 0, &sz, &writable);
+        if (st == noErr)
+            printf("[ ok ] 提供自定义界面（CocoaUI）\n");
+        else
+            printf("[warn] 没有自定义界面（宿主将显示通用参数面板）\n");
+    }
+
     // MIDI 能力检查：纯效果器**不应**宣称支持 MIDI 属性
     // （否则 Logic 会把它归类成 "MIDI 控制效果器"，只出现在软件乐器插槽）
     {

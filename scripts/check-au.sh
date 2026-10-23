@@ -11,9 +11,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-NAME="${RUSTOMP_PLUGIN_NAME:-Rustomp Fuzz}"
-SUBTYPE="${RUSTOMP_AU_SUBTYPE:-RFz1}"
-MANU="${RUSTOMP_AU_MANUFACTURER_CODE:-Amch}"
+NAME="${RUSTOMP_PLUGIN_NAME:-Sparklin Drive Mono}"
+SUBTYPE="${RUSTOMP_AU_SUBTYPE:-SPm1}"
+MANU="${RUSTOMP_AU_MANUFACTURER_CODE:-HpEf}"
 COMP="$HOME/Library/Audio/Plug-Ins/Components/$NAME.component"
 
 if [ ! -d "$COMP" ]; then
