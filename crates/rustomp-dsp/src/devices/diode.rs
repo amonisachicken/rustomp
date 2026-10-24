@@ -53,7 +53,13 @@ impl Diode {
     /// 端电压 → (端电流, 小信号电导 dI/dV)。
     #[inline]
     pub fn current_and_conductance(&self, v: f64) -> (f64, f64) {
-        // 解 vj + Rs·I(vj) = v
+        // 解 vj + Rs·I(vj) = v（牛顿，二次收敛）
+        //
+        // 收敛阈值 1e-9（相对 vj）：**不能放松**。
+        // 试过 1e-6 省一次 `exp`（实时路径快 ~15%），但高电流处（如 1N34A 在 40 mA）
+        // 内层解电压只准到 ~1.4 µV，导致 `current()` 的相对误差 ~3e-5 ——
+        // 比数值微分测试用的扰动（h=1e-6 V 对应的电流变化 7e-6）还大，雅可比直接失真。
+        // 精度优先：实时路径的多余开销在稀疏 LU 里再找回来。
         let mut vj = v.min(1.2);
         for _ in 0..12 {
             let (i, g) = self.junction(vj);

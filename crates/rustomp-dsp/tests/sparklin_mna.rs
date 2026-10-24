@@ -280,3 +280,212 @@ fn frequency_response_matches_baseline() {
     // 高频端受运放离散化影响（192 kHz 下 GBW 等效偏低），留 1.5 dB 余量
     assert!(worst < 1.0, "频响最大偏差 {worst:.2} dB 超过 1.0 dB");
 }
+
+// ---------------------------------------------------------------- 实时路径
+
+/// 实时版节点表：比离线网表**折叠过**（14 → 11 个未知量）。
+///
+/// | 离线 | 实时 | 做法 |
+/// |---|---|---|
+/// | `BIAS` 节点 + R2/R3/R4 | 省掉 | Thevenin：`INP` 经 987k 接 VCC、经 987k 接地（4.5 V / 493.5k） |
+/// | `WIPER` 节点 | 省掉 | 电位器空载时抽头 = `v(VOL)·level`，用**标量缩放**代替一个节点 |
+mod rt {
+    pub const IN: usize = 1;
+    pub const INP: usize = 2;
+    pub const INM: usize = 3;
+    pub const R5: usize = 4;
+    pub const OUT: usize = 5;
+    pub const MID: usize = 6;
+    pub const VOL: usize = 7;
+    /// 9 V 轨（Thevenin 偏置也要接它）
+    pub const VCC: usize = 8;
+    /// 运放输出支路（唯一的支路未知量 —— 电源与输入都改成固定电位节点了）
+    pub const BR_OPAMP: usize = 9;
+}
+
+/// Sparklin Drive 的**实时 MNA 电路**（`Circuit` 适配层）。
+///
+/// 与离线版本的三点差别：
+/// 1. 节点折叠（14 → 11），见 [`rt`]；
+/// 2. [`Netlist::step_fixed`]：**固定迭代次数**，耗时是常数（线性部分只装一次，迭代里只装二极管）；
+/// 3. 电位器/开关用 `set_resistance` 改值，不重建网表。
+///
+/// 这份实现住在测试里 —— 按框架分工，真正的插件项目会把它复制过去。
+struct SparklinMna {
+    net: Netlist<10>,
+    fs: f64,
+    idx_gain: usize,
+    idx_level: usize,
+    idx_d3: usize,
+    idx_in: usize,
+    params: Params,
+    iters: usize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Params {
+    /// GAIN 电位器 0..1（映射到 0..500k 的反馈电阻）
+    gain: f64,
+    /// LEVEL 电位器 0..1（分压比）
+    level: f64,
+    /// true = 对称削波（短接 D3，只剩 D1 ∥ D2）
+    symmetric: bool,
+}
+
+impl Default for Params {
+    fn default() -> Self {
+        Self { gain: 0.5, level: 0.5, symmetric: false }
+    }
+}
+
+impl SparklinMna {
+    const GAIN_POT: f64 = 500_000.0;
+    const LEVEL_POT: f64 = 500_000.0;
+
+    fn build(fs: f64, params: Params) -> Self {
+        let v = Values::default();
+        // 固定电位节点（VCC、输入）不占未知量：9 个未知量 = 8 个节点 + 1 条运放支路
+        let mut net = Netlist::<10>::new();
+        let model = OP07.model(1.0 / fs);
+
+        // 偏置：Thevenin 等效（4.5 V 经 493.5k）→ 用两只 987k 从 9V 轨/地分压
+        let r_th = 2.0 * (v.r4 + v.r2 * v.r3 / (v.r2 + v.r3)); // 2 × 493.5k
+        net.resistor(rt::INP, rt::VCC, r_th)
+            .resistor(rt::INP, GND, r_th)
+            .capacitor(rt::INP, rt::IN, v.c1)
+            // 反馈网络
+            .resistor(rt::INM, rt::R5, v.r5)
+            .capacitor(rt::R5, GND, v.c2);
+        let idx_gain = net.push_resistor(rt::INM, rt::OUT, Self::GAIN_POT * params.gain.max(1e-4));
+        // 削波环
+        net.diode(D_1N4148, rt::OUT, rt::INM)
+            .diode(D_1N4148, rt::INM, rt::MID)
+            .diode(D_1N4148, rt::MID, rt::OUT);
+        let idx_d3 = net.push_resistor(rt::INM, rt::MID, if params.symmetric { 1e-3 } else { 1e12 });
+        // 输出隔直 + 电平电位器（空载时抽头就是等比缩放，省一个节点）
+        net.capacitor(rt::OUT, rt::VOL, v.c3);
+        let idx_level = net.push_resistor(rt::VOL, GND, Self::LEVEL_POT);
+        // 运放 + 电源 + 输入源
+        net.opamp(model, rt::INP, rt::INM, rt::OUT, rt::BR_OPAMP);
+        net.fix_node(rt::VCC, v.vcc);
+        let idx_in = net.fix_node(rt::IN, 0.0);
+
+        let mut this = Self {
+            net,
+            fs,
+            idx_gain,
+            idx_level,
+            idx_d3,
+            idx_in,
+            params,
+            iters: 2,
+        };
+        this.net.solve_dc();
+        this
+    }
+}
+
+impl rustomp_dsp::Circuit for SparklinMna {
+    type Params = Params;
+
+    fn new(sample_rate: f64) -> Self {
+        Self::build(sample_rate, Params::default())
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: f64) {
+        if (sample_rate - self.fs).abs() > 1e-9 {
+            *self = Self::build(sample_rate, self.params);
+        }
+    }
+
+    fn set_params(&mut self, params: Self::Params) {
+        if params == self.params {
+            return; // 最常走的分支：什么都不用做
+        }
+        self.net
+            .set_resistance(self.idx_level, Self::LEVEL_POT);
+        self.net
+            .set_resistance(self.idx_gain, Self::GAIN_POT * params.gain.max(1e-4));
+        self.net.set_resistance(
+            self.idx_d3,
+            if params.symmetric { 1e-3 } else { 1e12 },
+        );
+        self.params = params;
+    }
+
+    fn reset(&mut self) {
+        self.net.reset();
+        self.net.solve_dc();
+    }
+
+    fn process(&mut self, x: f64) -> f64 {
+        let dt = 1.0 / self.fs;
+        self.net.set_fixed(self.idx_in, x);
+        let v = self.net.step_fixed(dt, self.iters);
+        v[rt::VOL] * self.params.level
+    }
+}
+
+/// 实时路径必须复现离线求解器的结果（固定迭代次数够不够，用这个测出来）。
+#[test]
+fn realtime_path_matches_offline() {
+    use rustomp_dsp::Circuit;
+    const INNER_FS: f64 = 192_000.0;
+    println!("\n=== 实时路径 THD @0.2 V（离线 27.579%，ngspice 27.5682%）===");
+    for iters in [1usize, 2, 3] {
+        let mut c = SparklinMna::build(INNER_FS, Params::default());
+        c.iters = iters;
+        let n = (3.0 * INNER_FS) as usize;
+        let tail = (0.02 * INNER_FS) as usize;
+        let mut out = Vec::with_capacity(tail);
+        for i in 0..n {
+            let t = i as f64 / INNER_FS;
+            let x = 0.2 * (std::f64::consts::TAU * 1_000.0 * t).sin();
+            let y = c.process(x);
+            if i >= n - tail {
+                out.push(y);
+            }
+        }
+        let thd = thd_percent(&out, INNER_FS, 1_000.0, 9);
+        println!("  {iters} 次迭代 → THD = {thd:.3} %（差 {:+.3} pp）", thd - 27.579);
+        if iters == 1 {
+            // 1 次迭代是**已知不够**的：热启动的外推点在"只走一步"时反而离真解更远
+            println!("    ↑ 1 次迭代不够准，实时路径用 2 次");
+            continue;
+        }
+        assert!(
+            (thd - 27.579).abs() < 0.5,
+            "{iters} 次迭代时 THD {thd:.3}% 偏离离线 27.579% 太多"
+        );
+    }
+}
+
+/// CPU 实测：每个采样点耗时（192 kHz 内层速率）。
+///
+/// 参照：legacy WDF 实现（手工把整个电路化到 1 个未知量）优化后是 **824 ns/样本**。
+#[test]
+fn realtime_cpu_cost() {
+    use rustomp_dsp::Circuit;
+    const INNER_FS: f64 = 192_000.0;
+    println!("\n=== 实时路径 CPU（11 未知量，192 kHz）===");
+    for iters in [1usize, 2, 3] {
+        let mut c = SparklinMna::build(INNER_FS, Params::default());
+        c.iters = iters;
+        let n = 200_000usize;
+        for i in 0..10_000 {
+            let x = 0.2 * (std::f64::consts::TAU * 1_000.0 * i as f64 / INNER_FS).sin();
+            std::hint::black_box(c.process(x));
+        }
+        let t0 = std::time::Instant::now();
+        for i in 0..n {
+            let x = 0.2 * (std::f64::consts::TAU * 1_000.0 * i as f64 / INNER_FS).sin();
+            std::hint::black_box(c.process(x));
+        }
+        let ns = t0.elapsed().as_nanos() as f64 / n as f64;
+        println!(
+            "  {iters} 次迭代 → {ns:6.0} ns/样本 → 192 kHz 单核 {:5.1}%（legacy WDF: 824 ns → 15.8%）",
+            ns * 1e-9 * INNER_FS * 100.0
+        );
+        assert!(ns < 12_000.0, "{iters} 次迭代：{ns:.0} ns/样本 偏慢");
+    }
+}

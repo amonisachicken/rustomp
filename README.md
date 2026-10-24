@@ -303,7 +303,8 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 
 - [x] **用 MNA 装配器重写 Sparklin Drive** ✅ 整机 THD 27.579% vs ngspice 27.5682%（+0.011 pp）、
       DC ≤0.27 mV、频响 ≤0.5 dB（`crates/rustomp-dsp/tests/sparklin_mna.rs`）
-- [ ] 把 MNA 包成 `Circuit` 供实时使用（解析雅可比 + 固定迭代次数）
+- [x] 把 MNA 包成 `Circuit` 供实时使用 ✅ 2 次迭代 2072 ns/样本（192 kHz 单核 39.8%），THD +0.098 pp
+- [ ] 预计算稀疏 LU（预计把实时路径压到 ~1.3 µs/sample）
 - [ ] S1：声明式代码生成（网表 → `Element` 列表）；之后再把 oracle 对拍铺进 CI 矩阵
 - [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
 - [ ] 电位器 A/C taper；预设与状态管理；安装包（pkg）+ 签名公证

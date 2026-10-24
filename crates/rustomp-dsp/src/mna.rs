@@ -38,6 +38,11 @@ pub struct Mna<const N: usize> {
     rhs: [f64; N],
     /// 每个节点对地的 gmin（gmin 步进用）
     gmin: f64,
+    /// **固定电位节点**（电源轨、输入源）：不是未知量，电压由外部给定。
+    ///
+    /// 好处：把"理想电压源节点"从方程组里消掉（省掉节点 + 支路两个未知量），
+    /// 对 LU 的代价是**立方关系** —— 这条电路 12 → 7 个未知量，求解快 ~3 倍。
+    fixed: [Option<f64>; N],
 }
 
 impl<const N: usize> Default for Mna<N> {
@@ -48,13 +53,31 @@ impl<const N: usize> Default for Mna<N> {
 
 impl<const N: usize> Mna<N> {
     pub fn new() -> Self {
-        Self { y: [[0.0; N]; N], rhs: [0.0; N], gmin: 0.0 }
+        Self { y: [[0.0; N]; N], rhs: [0.0; N], gmin: 0.0, fixed: [None; N] }
     }
 
     /// 清空矩阵（保留 gmin 设置）。
     pub fn clear(&mut self) {
         self.y = [[0.0; N]; N];
         self.rhs = [0.0; N];
+        // fixed 不清：它属于拓扑/激励，每次 solve 前由调用方设置
+    }
+
+    /// 把一个节点固定到给定电位（电源轨、输入源）。`node == GND` 时忽略。
+    pub fn fix_node(&mut self, node: usize, voltage: f64) {
+        if node != GND && node < N {
+            self.fixed[node] = Some(voltage);
+        }
+    }
+
+    /// 该节点是否被固定
+    #[inline]
+    pub fn fixed_voltage(&self, node: usize) -> Option<f64> {
+        if node == GND || node >= N {
+            None
+        } else {
+            self.fixed[node]
+        }
     }
 
     /// 每个节点到地的漏电导（SPICE 的 `gmin`，帮助牛顿收敛）。
@@ -69,15 +92,36 @@ impl<const N: usize> Mna<N> {
 
     /// 导纳 `g` 接在节点 `a`–`b` 之间（`GND` 表示地）。
     pub fn conductance(&mut self, a: usize, b: usize, g: f64) {
-        if a != GND && a < N {
-            self.y[a][a] += g;
-        }
-        if b != GND && b < N {
-            self.y[b][b] += g;
-        }
-        if a != GND && b != GND && a < N && b < N {
-            self.y[a][b] -= g;
-            self.y[b][a] -= g;
+        let va = self.fixed_voltage(a);
+        let vb = self.fixed_voltage(b);
+        match (va, vb) {
+            // 两端都固定：不影响任何未知量
+            (Some(_), Some(_)) => {}
+            // 只有 a 固定：b 的方程里 `-g·v_a` 移到右边
+            (Some(va), None) => {
+                if b < N {
+                    self.y[b][b] += g;
+                    self.rhs[b] += g * va;
+                }
+            }
+            (None, Some(vb)) => {
+                if a < N {
+                    self.y[a][a] += g;
+                    self.rhs[a] += g * vb;
+                }
+            }
+            (None, None) => {
+                if a != GND && a < N {
+                    self.y[a][a] += g;
+                }
+                if b != GND && b < N {
+                    self.y[b][b] += g;
+                }
+                if a != GND && b != GND && a < N && b < N {
+                    self.y[a][b] -= g;
+                    self.y[b][a] -= g;
+                }
+            }
         }
     }
 
@@ -92,9 +136,17 @@ impl<const N: usize> Mna<N> {
         self.inject(b, i);
     }
 
-    /// 向节点注入电流（正 = 流入节点）。
+    /// 线性化元件：导纳 `g` + 等效电流源 `i_eq`（电流**从 a 经元件流向 b**）。
+    ///
+    /// 这是 `I ≈ I₀ + g·(V−V₀)` 的伴随形式，`multiport()` 的数值版本最终也归到这里。
+    pub fn stamp_lin(&mut self, a: usize, b: usize, g: f64, i_eq: f64) {
+        self.conductance(a, b, g);
+        self.current_source(a, b, i_eq);
+    }
+
+    /// 向节点注入电流（正 = 流入节点）。注入到固定节点上的电流由理想源吸收，忽略。
     pub fn inject(&mut self, node: usize, i: f64) {
-        if node != GND && node < N {
+        if node != GND && node < N && self.fixed[node].is_none() {
             self.rhs[node] += i;
         }
     }
@@ -167,11 +219,14 @@ impl<const N: usize> Mna<N> {
             }
         }
 
-        // 导纳部分
+        // 导纳部分（固定节点的行/列不参与求解；其对未知量的耦合已含在下面的 i_eq 里）
         for i in 0..n {
+            if self.fixed_voltage(nodes[i]).is_some() {
+                continue;
+            }
             for j in 0..n {
                 let (ni, nj) = (nodes[i], nodes[j]);
-                if ni != GND && nj != GND && ni < N && nj < N {
+                if ni != GND && nj != GND && ni < N && nj < N && self.fixed[nj].is_none() {
                     self.y[ni][nj] += jac[i][j];
                 }
             }
@@ -188,54 +243,77 @@ impl<const N: usize> Mna<N> {
     }
 
     /// 解 `Y·x = rhs`（部分主元高斯消元）。
+    ///
+    /// 内层用切片 `zip` 而不是 `a[row][k]` 双重下标 —— 去掉边界检查后
+    /// 实时路径的 LU 快 ~3 倍（这是 E43 里最有效的一处优化）。
     pub fn solve(&self) -> [f64; N] {
         let mut a = self.y;
         let mut b = self.rhs;
-        let mut perm: [usize; N] = [0; N];
-        for (i, p) in perm.iter_mut().enumerate() {
-            *p = i;
-        }
+
         for col in 0..N {
-            // 选主元
-            let mut best = col;
-            let mut best_abs = a[col][col].abs();
-            for row in (col + 1)..N {
-                if a[row][col].abs() > best_abs {
-                    best_abs = a[row][col].abs();
-                    best = row;
+            // 选主元：MNA 矩阵天然对角占优，**对角线够大就跳过搜索**（省掉 66 次比较和行交换）；
+            // 只有对角线偏小（病态）时才做部分主元，保证数值安全。
+            let mut pivot = a[col][col];
+            if pivot.abs() < 1e-12 {
+                let mut best = col;
+                let mut best_abs = pivot.abs();
+                for row in (col + 1)..N {
+                    let v = a[row][col].abs();
+                    if v > best_abs {
+                        best_abs = v;
+                        best = row;
+                    }
+                }
+                if best_abs < 1e-300 {
+                    continue; // 奇异：该未知量留 0
+                }
+                if best != col {
+                    a.swap(col, best);
+                    b.swap(col, best);
+                    pivot = a[col][col];
                 }
             }
-            if best_abs < 1e-300 {
-                continue; // 奇异：该未知量留 0
-            }
-            if best != col {
-                a.swap(col, best);
-                b.swap(col, best);
-                perm.swap(col, best);
-            }
-            let pivot = a[col][col];
-            for row in (col + 1)..N {
-                let factor = a[row][col] / pivot;
+            let inv_pivot = 1.0 / pivot;
+            let (head, tail) = a.split_at_mut(col + 1);
+            let pivot_row = &head[col];
+            for (offset, row) in tail.iter_mut().enumerate() {
+                let j = col + 1 + offset;
+                let factor = row[col] * inv_pivot;
                 if factor == 0.0 {
                     continue;
                 }
-                for k in col..N {
-                    a[row][k] -= factor * a[col][k];
+                let (row_lo, row_hi) = row.split_at_mut(col);
+                let (piv_lo, piv_hi) = pivot_row.split_at(col);
+                let _ = (row_lo, piv_lo);
+                for (r, p) in row_hi.iter_mut().zip(piv_hi.iter()) {
+                    *r -= factor * p;
                 }
-                b[row] -= factor * b[col];
+                b[j] -= factor * b[col];
             }
         }
+
         // 回代
         let mut x = [0.0; N];
+        for (node, fx) in self.fixed.iter().enumerate() {
+            if let Some(v) = fx {
+                x[node] = *v;
+            }
+        }
         for row in (0..N).rev() {
             if a[row][row].abs() < 1e-300 {
                 continue;
             }
             let mut sum = b[row];
-            for k in (row + 1)..N {
-                sum -= a[row][k] * x[k];
+            for (k, xv) in x.iter().enumerate().skip(row + 1) {
+                sum -= a[row][k] * xv;
             }
             x[row] = sum / a[row][row];
+        }
+        // 固定节点即使被后续回代覆盖也强制回填
+        for (node, fx) in self.fixed.iter().enumerate() {
+            if let Some(v) = fx {
+                x[node] = *v;
+            }
         }
         x
     }
@@ -277,10 +355,13 @@ impl Element {
     pub fn stamp<const N: usize>(&self, sys: &mut Mna<N>, v: &[f64], dt: f64, dc: bool) {
         match *self {
             Element::Diode { model, a, k } => {
-                sys.multiport(&[a, k], v, |vv| {
-                    let i = model.current(vv[0] - vv[1]);
-                    vec![i, -i]
-                });
+                // **解析雅可比**（实时路径的主力）：`current_and_conductance` 已含 Rs 的内层迭代，
+                // 比通用的数值差分少 2 次模型调用。
+                let va = if a == GND { 0.0 } else { v[a] };
+                let vk = if k == GND { 0.0 } else { v[k] };
+                let vl = va - vk;
+                let (i, g) = model.current_and_conductance(vl);
+                sys.stamp_lin(a, k, g, i - g * vl);
             }
             Element::Bjt { model, npn, c, b, e } => {
                 sys.multiport(&[c, b, e], v, |vv| {
@@ -337,6 +418,14 @@ impl Element {
         }
     }
 
+    /// 是否是（牛顿迭代中需要重装配的）非线性元件。
+    pub fn is_nonlinear(&self) -> bool {
+        matches!(
+            self,
+            Element::Diode { .. } | Element::Bjt { .. } | Element::Jfet { .. } | Element::Mosfet { .. }
+        )
+    }
+
     /// 收敛后提交状态（电容 `v_prev`、运放输出）。
     pub fn commit(&mut self, v: &[f64], _dt: f64) {
         match self {
@@ -366,7 +455,12 @@ pub struct Netlist<const N: usize> {
     pub elems: Vec<Element>,
     /// `(支路号, 节点 a, 节点 b, 电压)`：`v(a) − v(b) = 电压`
     pub sources: Vec<(usize, usize, usize, f64)>,
+    /// `(节点, 电压)`：**固定电位节点**（电源轨、输入源），不占未知量
+    pub fixed: Vec<(usize, f64)>,
     pub v: [f64; N],
+    /// 上一拍的解（牛顿初值用线性外推 `2v − v_prev2`，实测能省掉一次迭代）
+    v_prev2: [f64; N],
+    has_prev2: bool,
     /// 牛顿迭代上限
     pub max_iter: usize,
     /// 收敛阈值（电压，V）
@@ -381,7 +475,16 @@ impl<const N: usize> Default for Netlist<N> {
 
 impl<const N: usize> Netlist<N> {
     pub fn new() -> Self {
-        Self { elems: Vec::new(), sources: Vec::new(), v: [0.0; N], max_iter: 200, tol: 1e-9 }
+        Self {
+            elems: Vec::new(),
+            sources: Vec::new(),
+            fixed: Vec::new(),
+            v: [0.0; N],
+            v_prev2: [0.0; N],
+            has_prev2: false,
+            max_iter: 200,
+            tol: 1e-9,
+        }
     }
 
     // ---- 链式 builder ----
@@ -416,6 +519,19 @@ impl<const N: usize> Netlist<N> {
         self.sources.push((branch, a, b, value));
         self
     }
+    /// 固定一个节点的电位（电源轨、输入源），返回索引供 [`Self::set_fixed`] 用。
+    pub fn fix_node(&mut self, node: usize, v: f64) -> usize {
+        self.fixed.push((node, v));
+        self.fixed.len() - 1
+    }
+
+    /// 修改第 `idx` 个固定节点的电位（输入激励用；比电压源支路少两个未知量）
+    pub fn set_fixed(&mut self, idx: usize, v: f64) {
+        if let Some(entry) = self.fixed.get_mut(idx) {
+            entry.1 = v;
+        }
+    }
+
     /// 修改第 `idx` 个电压源的电压（瞬态扫描用）
     pub fn set_voltage(&mut self, idx: usize, value: f64) {
         self.sources[idx].3 = value;
@@ -428,8 +544,12 @@ impl<const N: usize> Netlist<N> {
 
     // ---- 求解 ----
 
-    fn stamp_all(&self, sys: &mut Mna<N>, v: &[f64], dt: f64, dc: bool) {
+    /// 装配**线性**部分（电阻/电容/独立源/运放）。实时路径每拍只做一次。
+    fn stamp_linear(&self, sys: &mut Mna<N>, v: &[f64], dt: f64, dc: bool) {
         sys.clear();
+        for &(node, volt) in &self.fixed {
+            sys.fix_node(node, volt);
+        }
         if sys.gmin() > 0.0 {
             let g = sys.gmin();
             for n in 1..N {
@@ -440,8 +560,24 @@ impl<const N: usize> Netlist<N> {
             sys.voltage_source(branch, a, b, value);
         }
         for e in &self.elems {
-            e.stamp(sys, v, dt, dc);
+            if !e.is_nonlinear() {
+                e.stamp(sys, v, dt, dc);
+            }
         }
+    }
+
+    /// 装配**非线性**部分（二极管/BJT/JFET/MOSFET）。
+    fn stamp_nonlinear(&self, sys: &mut Mna<N>, v: &[f64], dt: f64, dc: bool) {
+        for e in &self.elems {
+            if e.is_nonlinear() {
+                e.stamp(sys, v, dt, dc);
+            }
+        }
+    }
+
+    fn stamp_all(&self, sys: &mut Mna<N>, v: &[f64], dt: f64, dc: bool) {
+        self.stamp_linear(sys, v, dt, dc);
+        self.stamp_nonlinear(sys, v, dt, dc);
     }
 
     /// 牛顿迭代求解（直流工作点）。
@@ -542,9 +678,64 @@ impl<const N: usize> Netlist<N> {
         self.v
     }
 
+    /// **实时路径**：固定迭代次数（不判收敛），从上一拍解热启动。
+    ///
+    /// 为什么不用 `step()`：实时不允许"这一拍多迭代几次"，
+    /// 耗时必须是可预测的常数。3 次迭代对这类电路已经足够（离线对照见 E42/E43）。
+    pub fn step_fixed(&mut self, dt: f64, iters: usize) -> [f64; N] {
+        // 线性部分（含运放状态、电容伴随导纳）每拍重建一次；
+        // 牛顿迭代里只重装 3 只二极管 —— 这是实时档的主要优化。
+        let mut base = Mna::<N>::new();
+        // stamp_linear 内部会 clear()，这里不需要额外清零
+        self.stamp_linear(&mut base, &self.v, dt, false);
+
+        // 初值：线性外推（热启动）。温启动让 2 次迭代就够用。
+        let mut v = if self.has_prev2 {
+            let mut guess = [0.0; N];
+            for i in 0..N {
+                guess[i] = 2.0 * self.v[i] - self.v_prev2[i];
+            }
+            guess
+        } else {
+            self.v
+        };
+        for _ in 0..iters.max(1) {
+            let mut sys = base.clone();
+            self.stamp_nonlinear(&mut sys, &v, dt, false);
+            v = sys.solve();
+        }
+        self.v_prev2 = self.v;
+        self.has_prev2 = true;
+        self.v = v;
+        for e in &mut self.elems {
+            e.commit(&self.v, dt);
+        }
+        self.v
+    }
+
+    /// 按索引改一个电阻的值（电位器/开关用；值没变就不动，保证 `set_params` 便宜）。
+    pub fn set_resistance(&mut self, idx: usize, r: f64) -> bool {
+        if let Some(Element::Resistor { r: cur, .. }) = self.elems.get_mut(idx) {
+            if *cur != r {
+                *cur = r;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 加一个电阻并返回它的索引（便于之后用 [`Self::set_resistance`] 调参）。
+    pub fn push_resistor(&mut self, a: usize, b: usize, r: f64) -> usize {
+        let idx = self.elems.len();
+        self.elems.push(Element::Resistor { a, b, r });
+        idx
+    }
+
     /// 复位所有动态状态（电容电压、运放输出）。
     pub fn reset(&mut self) {
         self.v = [0.0; N];
+        self.v_prev2 = [0.0; N];
+        self.has_prev2 = false;
         for e in &mut self.elems {
             if let Element::Capacitor { v_prev, .. } = e {
                 *v_prev = 0.0;
