@@ -19,8 +19,11 @@
 use std::path::Path;
 
 mod breadspice;
+pub mod mna_codegen;
+pub mod spice;
 
 pub use breadspice::BreadSpice;
+pub use spice::SpiceNetlist;
 
 // ---------------------------------------------------------------- 中间表示
 
@@ -218,11 +221,22 @@ pub trait Importer {
 }
 
 /// 已注册的导入器（新增格式只需在这里加一行）。
-pub fn registry() -> &'static [&'static dyn Importer] {
-    &[&BreadSpice]
+/// 按内容自动选择导入器（顺序即优先级）。
+pub fn registry() -> Vec<Box<dyn Importer>> {
+    vec![Box::new(BreadSpice), Box::new(SpiceNetlist)]
 }
 
-/// 按内容自动选择导入器。
+/// 从字符串导入（测试/工具用；扩展名用 `name` 决定）。
+pub fn import_str(name: &str, content: &str) -> Result<ImportedCircuit, ImportError> {
+    let path = Path::new(name);
+    for imp in registry() {
+        if imp.matches(path, content) {
+            return imp.import(path, content);
+        }
+    }
+    Err(ImportError::UnsupportedFormat(name.to_string()))
+}
+
 pub fn import_file(path: &Path) -> Result<ImportedCircuit, ImportError> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| ImportError::Parse(format!("读不到 {}: {e}", path.display())))?;
