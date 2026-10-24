@@ -1,0 +1,9 @@
+* BJT 共射前级（S1b 夹具：验证 Q 卡片的引脚映射与模型表）
+VS1 in 0 DC 0 AC 0.01 SIN(0 0.01 1k)
+VCC vcc 0 9
+CIN in b 100n
+RB vcc b 2.2meg
+RC vcc c 2.2k
+Q1 c b 0 BC549C
+* @rustomp in=VS1 out=c
+.end

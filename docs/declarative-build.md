@@ -104,8 +104,20 @@ cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check]
 产物入库（`<project>/.../generated/*.rs`），并配**漂移守卫**测试：重新生成与仓库内容逐行比较。
 `--check` 只比对不写入，可直接进 CI。
 
+**参数化（S1b）**：网表注释里的指令
+
+```text
+* @rustomp in=VS1 out=n_t27R
+* @rustomp param RP1A gain pot max=500k              # R = max·gain
+* @rustomp param RP2B level pot max=500k invert      # R = max·(1−level)
+* @rustomp switch symmetric n_t10L n_t5L closed=0.001 open=1e12
+```
+
+会生成 `Params` 结构体 + `impl rustomp_dsp::Circuit` 的 `Ckt`（`set_params` 只改电阻值）。
+
 生成物必须在**行为层**验证（DC 工作点 + THD），不能只比文本 ——
-E44 里就有一个"编译通过、不报错、但音频被送进电源轨"的例子。
+E44 里有一个"编译通过、不报错、但音频被送进电源轨"的例子；
+E45 里还有一条"直流工作点被压摆率限制污染、开场凭空多出瞬态"（离线稳态测试看不见）。
 
 ### 3.5 平台代码片段（可插拔的代码生成侧）
 

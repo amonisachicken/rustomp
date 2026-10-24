@@ -1,19 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! **网表 → MNA 装配代码**（S1a）。
+//! **网表 → MNA 装配代码**（S1a/S1b）。
 //!
 //! 输入是 [`ImportedCircuit`]（SPICE 网表经 `spice` 导入器得到），输出是一段 Rust：
-//! 节点编号常量 + `build(fs) -> Netlist<N>`。产物是**确定的**（同输入同输出），
-//! 允许入库并做 `--check` 漂移检测。
+//! 节点常量 + `build()` + `Params` + 直接实现 `rustomp_dsp::Circuit` 的 `Ckt`。
+//! 产物是**确定的**（同输入同输出），允许入库并做 `--check` 漂移检测。
 //!
 //! 做的事：
-//! 1. **导线合并**：阻值 ≤ `WIRE_OHMS` 的电阻视为理想导线，把两端节点并成一个
-//!    （breadspice 会把面包板的连接线生成成 `0.001 Ω` 电阻）；
+//! 1. **导线合并**：阻值 ≤ `WIRE_OHMS` 的电阻视为理想导线（breadspice 会把连线生成为 0.001 Ω）；
 //! 2. **节点编号**：地 = 0，其余按名字排序（保证 diff 稳定）；
-//! 3. **模型映射**：闭集型号表（`1N4148` → `D_1N4148` …），未命中直接报错，
-//!    不做静默兜底（ADR-013：替换必须可见）；
-//! 4. **激励**：纯 DC 电压源 → **固定电位节点**；带 `SIN`/`AC` 的源 → **输入端口**；
-//! 5. **运放子电路**：按 `<in+> <in-> <v+> <v-> <out>` 的引脚约定映射成库里的宏模型。
+//! 3. **模型映射**：闭集型号表（`1N4148` → `D_1N4148`、`BC549C` → `BC549C` …），
+//!    未命中直接报错，不做静默兜底（ADR-013：替换必须可见）；
+//! 4. **激励**：纯 DC 电压源 → **固定电位节点**；带 `SIN`/`AC`/`PULSE` 的源 → **输入端口**；
+//! 5. **参数化（S1b）**：`* @rustomp param <元素> <字段> pot max=<阻值> [invert]`、
+//!    `* @rustomp switch <字段> <节点A> <节点B> closed=<r> open=<r>`；
+//! 6. **运放/三极管**：运放按 `<in+> <in-> <v+> <v-> <out>` 引脚约定映射成库里的宏模型。
+//!
+//! 指令行（写在网表注释里）：
+//!
+//! ```text
+//! * @rustomp in=VS1 out=n_t27R
+//! * @rustomp param RP1A gain pot max=500k
+//! * @rustomp param RP2B level pot max=500k invert
+//! * @rustomp switch symmetric n_t10L n_t5L closed=0.001 open=1e12
+//! ```
 
 use crate::{ElementKind, ImportedCircuit};
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,11 +36,11 @@ const MAX_UNKNOWNS: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct Options {
-    /// 输入端口对应的电压源名（默认：带 `SIN`/`AC` 的那个源）
+    /// 输入端口对应的电压源名（默认：带 `SIN`/`AC`/`PULSE` 的那个源）
     pub input: Option<String>,
     /// 输出节点名（默认：从 `* @rustomp out=…` 指令读）
     pub output: Option<String>,
-    /// 生成代码顶部的说明（例如网表路径）
+    /// 生成代码顶部的说明（例如网表文件名）
     pub source: String,
 }
 
@@ -52,24 +62,35 @@ pub struct Generated {
 /// 闭集型号表：SPICE 模型名 → (Rust 常量, 器件类别)
 fn model_const(name: &str) -> Option<(&'static str, ModelKind)> {
     let key = name.trim().to_lowercase();
-    let d = Some(("D_1N4148", ModelKind::Diode));
-    match key.as_str() {
-        "1n4148" => Some(("D_1N4148", ModelKind::Diode)),
-        "1n34a" => Some(("D_1N34A", ModelKind::Diode)),
-        "1n4007" => Some(("D_1N4007", ModelKind::Diode)),
-        "1n5817" => Some(("D_1N5817", ModelKind::Diode)),
-        "ledred" | "led_red" => Some(("LED_RED", ModelKind::Diode)),
-        "ledgreen" | "led_green" => Some(("LED_GREEN", ModelKind::Diode)),
-        "ledblue" | "led_blue" => Some(("LED_BLUE", ModelKind::Diode)),
-        "op07" | "op07a" => Some(("OP07", ModelKind::OpAmp)),
-        _ => d.filter(|_| false),
-    }
+    let m = match key.as_str() {
+        "1n4148" => ("D_1N4148", ModelKind::Diode),
+        "1n34a" => ("D_1N34A", ModelKind::Diode),
+        "1n4007" => ("D_1N4007", ModelKind::Diode),
+        "1n5817" => ("D_1N5817", ModelKind::Diode),
+        "ledred" | "led_red" => ("LED_RED", ModelKind::Diode),
+        "ledgreen" | "led_green" => ("LED_GREEN", ModelKind::Diode),
+        "ledblue" | "led_blue" => ("LED_BLUE", ModelKind::Diode),
+        "op07" | "op07a" => ("OP07", ModelKind::OpAmp),
+        // BJT（极性由常量名决定）
+        "bc549c" => ("BC549C", ModelKind::BjtNpn),
+        "bc559c" => ("BC559C", ModelKind::BjtPnp),
+        "ac127" => ("AC127", ModelKind::BjtNpn),
+        "ac128" => ("AC128", ModelKind::BjtPnp),
+        "j201" => ("J201", ModelKind::Jfet),
+        "2n7000" => ("NMOS_2N7000", ModelKind::Mosfet),
+        _ => return None,
+    };
+    Some(m)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModelKind {
     Diode,
     OpAmp,
+    BjtNpn,
+    BjtPnp,
+    Jfet,
+    Mosfet,
 }
 
 /// SPICE 数值（`4.7k` / `1meg` / `2.2u` / `4.7n`）→ f64。
@@ -79,9 +100,8 @@ pub fn parse_value(text: &str) -> Option<f64> {
         return None;
     }
     let lower = t.to_lowercase();
-    // 找第一个非"数字/小数点/指数"字符作为单位起点
-    let mut end = lower.len();
     let bytes = lower.as_bytes();
+    let mut end = lower.len();
     let mut i = 0;
     while i < bytes.len() {
         let c = bytes[i] as char;
@@ -117,7 +137,118 @@ pub fn parse_value(text: &str) -> Option<f64> {
     Some(num * mult)
 }
 
-/// 并查集（导线合并用）
+// ---------------------------------------------------------------- 指令
+
+#[derive(Debug, Clone)]
+struct PotParam {
+    /// 网表里的电阻名（例如 `RP1A`）
+    elem: String,
+    /// 参数名（生成 `Params` 的字段）
+    field: String,
+    /// 电位器总阻值
+    max: f64,
+    /// true ⇒ `R = max·(1−t)`（分压器上臂），false ⇒ `R = max·t`
+    invert: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SwitchSpec {
+    field: String,
+    node_a: String,
+    node_b: String,
+    closed: f64,
+    open: f64,
+}
+
+#[derive(Debug, Default, Clone)]
+struct Directives {
+    input: Option<String>,
+    output: Option<String>,
+    pots: Vec<PotParam>,
+    switches: Vec<SwitchSpec>,
+}
+
+fn parse_directives(notes: &[String]) -> Result<Directives, String> {
+    let mut d = Directives::default();
+    for note in notes {
+        let Some(rest) = note.strip_prefix("@rustomp") else { continue };
+        let tokens: Vec<&str> = rest.split_whitespace().collect();
+        if tokens.is_empty() {
+            continue;
+        }
+        // 形式一：`in=VS1 out=n_t27R`（键值对）
+        if tokens.iter().any(|t| t.contains('=')) && !matches!(tokens[0], "param" | "switch") {
+            for t in &tokens {
+                if let Some(v) = t.strip_prefix("in=") {
+                    d.input = Some(v.to_string());
+                } else if let Some(v) = t.strip_prefix("out=") {
+                    d.output = Some(v.to_string());
+                }
+            }
+            continue;
+        }
+        match tokens[0] {
+            "param" => {
+                // param <elem> <field> pot max=500k [invert]
+                if tokens.len() < 5 || tokens[3] != "pot" {
+                    return Err(format!(
+                        "参数指令格式：`* @rustomp param <元素> <字段> pot max=<阻值> [invert]`，收到 `{}`",
+                        rest.trim()
+                    ));
+                }
+                let max = tokens[4..]
+                    .iter()
+                    .find_map(|t| t.strip_prefix("max="))
+                    .and_then(parse_value)
+                    .ok_or_else(|| format!("参数指令缺 `max=`：{rest}"))?;
+                d.pots.push(PotParam {
+                    elem: tokens[1].to_string(),
+                    field: check_field(tokens[2])?,
+                    max,
+                    invert: tokens[4..].iter().any(|t| *t == "invert"),
+                });
+            }
+            "switch" => {
+                // switch <field> <nodeA> <nodeB> closed=0.001 open=1e12
+                if tokens.len() < 4 {
+                    return Err(format!(
+                        "开关指令格式：`* @rustomp switch <字段> <节点A> <节点B> closed=<r> open=<r>`，收到 `{}`",
+                        rest.trim()
+                    ));
+                }
+                let kv = |key: &str| {
+                    tokens
+                        .iter()
+                        .find_map(|t| t.strip_prefix(&format!("{key}=")))
+                        .and_then(parse_value)
+                };
+                d.switches.push(SwitchSpec {
+                    field: check_field(tokens[1])?,
+                    node_a: tokens[2].to_string(),
+                    node_b: tokens[3].to_string(),
+                    closed: kv("closed").ok_or_else(|| format!("开关指令缺 `closed=`：{rest}"))?,
+                    open: kv("open").ok_or_else(|| format!("开关指令缺 `open=`：{rest}"))?,
+                });
+            }
+            other => return Err(format!("未知指令 `{other}`")),
+        }
+    }
+    Ok(d)
+}
+
+fn check_field(name: &str) -> Result<String, String> {
+    let ok = !name.is_empty()
+        && name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if ok {
+        Ok(name.to_string())
+    } else {
+        Err(format!("参数名 `{name}` 不是合法的 Rust 标识符"))
+    }
+}
+
+// ---------------------------------------------------------------- 并查集
+
 struct Union {
     parent: BTreeMap<String, String>,
 }
@@ -137,48 +268,52 @@ impl Union {
     }
     fn union(&mut self, a: &str, b: &str) {
         let (ra, rb) = (self.find(a), self.find(b));
-        if ra != rb {
-            // 地优先当根，其余按字典序 —— 保证确定性
-            let (root, child) = if ra == "0" || (rb != "0" && ra < rb) {
-                (ra, rb)
-            } else {
-                (rb, ra)
-            };
-            self.parent.insert(child, root);
+        if ra == rb {
+            return;
         }
+        // 地优先当根，其余按字典序 —— 保证确定性
+        let (root, child) =
+            if ra == "0" || (rb != "0" && ra < rb) { (ra, rb) } else { (rb, ra) };
+        self.parent.insert(child, root);
     }
 }
+
+// ---------------------------------------------------------------- 生成
 
 /// 把网表 IR 生成为 MNA 装配代码。
 pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, String> {
     let mut notes = Vec::new();
+    let dirs = parse_directives(&circuit.notes)?;
 
     // ---- 1) 导线合并 ----
     let mut union = Union::new();
     for e in &circuit.elements {
         if e.kind == ElementKind::Resistor {
+            // 被参数化的电阻即使是 0.001 Ω 也不是导线（开关的 closed 值会长这样）
+            if dirs.pots.iter().any(|p| p.elem == e.name) {
+                continue;
+            }
             if let Some(v) = parse_value(&e.value) {
                 if v.abs() <= WIRE_OHMS {
                     union.union(&e.nodes[0], &e.nodes[1]);
-                    notes.push(format!("{}（{} Ω）视为导线，合并两个节点", e.name, e.value));
+                    notes.push(format!("{}（{}）视为导线，合并两个节点", e.name, e.value));
                 }
             }
         }
     }
-    // 先把所有出现过的节点做一次彻底的路径压缩，之后只读
     let mut all_nodes: BTreeSet<String> = BTreeSet::new();
     for e in &circuit.elements {
         for n in &e.nodes {
             all_nodes.insert(n.clone());
         }
     }
-    let canon_map: BTreeMap<String, String> = all_nodes
-        .iter()
-        .map(|n| (n.clone(), union.find(n)))
-        .collect();
-    let canon = |n: &str| -> String {
-        canon_map.get(n).cloned().unwrap_or_else(|| n.to_string())
-    };
+    for s in &dirs.switches {
+        all_nodes.insert(s.node_a.clone());
+        all_nodes.insert(s.node_b.clone());
+    }
+    let canon_map: BTreeMap<String, String> =
+        all_nodes.iter().map(|n| (n.clone(), union.find(n))).collect();
+    let canon = |n: &str| canon_map.get(n).cloned().unwrap_or_else(|| n.to_string());
 
     // ---- 2) 节点编号（地=0，其余按名字排序）----
     let mut names: BTreeSet<String> = BTreeSet::new();
@@ -187,23 +322,22 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
             names.insert(canon(n));
         }
     }
-    names.remove("0");
-    let mut node_index: BTreeMap<String, usize> = BTreeMap::new();
-    for (i, n) in names.iter().enumerate() {
-        node_index.insert(n.clone(), i + 1);
+    for s in &dirs.switches {
+        names.insert(canon(&s.node_a));
+        names.insert(canon(&s.node_b));
     }
-    let node_alias: BTreeMap<String, usize> = node_index
+    names.remove("0");
+    let node_index: BTreeMap<String, usize> = names
         .iter()
-        .map(|(k, v)| (k.clone(), *v))
+        .enumerate()
+        .map(|(i, n)| (n.clone(), i + 1))
         .collect();
-
-    // 名字 → 编号（含地）
     let idx = |n: &str| -> usize {
         let c = canon(n);
         if c == "0" {
             0
         } else {
-            *node_alias.get(&c).unwrap_or(&0)
+            *node_index.get(&c).unwrap_or(&0)
         }
     };
 
@@ -214,9 +348,9 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         if e.kind != ElementKind::VoltageSource {
             continue;
         }
-        if e.nodes[1] != "0" && canon(&e.nodes[1]) != "0" {
+        if idx(&e.nodes[1]) != 0 {
             return Err(format!(
-                "{}：只支持接地的电压源（另一个节点必须是 0），这里是 {}",
+                "{}：只支持接地的电压源（另一端必须是 0），这里是 {}",
                 e.name, e.nodes[1]
             ));
         }
@@ -238,7 +372,6 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
             fixed_nodes.push((node, dc, e.name.clone()));
         }
     }
-    // 显式指定输入源时以它为准，并从固定节点里去掉
     if let Some(name) = &opts.input {
         let node = circuit
             .elements
@@ -249,95 +382,194 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         fixed_nodes.retain(|(n, _, _)| *n != node);
         input_node = Some((node, name.clone()));
     }
-    let (input_node, _) = input_node.ok_or_else(|| {
-        "没找到输入源（带 SIN/AC/PULSE 的电压源），请用 `* @rustomp in=<源名>` 指定".to_string()
-    })?;
+    let has_input = input_node.is_some();
 
     // ---- 4) 输出端口 ----
     let output_name = opts
         .output
         .clone()
-        .or_else(|| {
-            circuit
-                .notes
-                .iter()
-                .find_map(|n| n.strip_prefix("@rustomp").and_then(|d| directive_value(d, "out")))
-        })
+        .or(dirs.output.clone())
         .ok_or_else(|| "没指定输出节点，请用 `* @rustomp out=<节点名>` 或 --output-node".to_string())?;
     let output_node = idx(&output_name);
     if output_node == 0 && canon(&output_name) == "0" {
         return Err(format!("输出节点 {output_name} 被合并到地了"));
     }
 
-    // ---- 5) 元件 → 代码行 ----
+    // ---- 5) 元件 → 代码 ----
     let mut body: Vec<String> = Vec::new();
-    let mut branch = node_alias.values().copied().max().unwrap_or(0) + 1;
     let mut uses: BTreeSet<String> = BTreeSet::new();
     uses.insert("Netlist".into());
     uses.insert("GND".into());
+    // 参数驱动的元件：(字段, 常量名, 阻值表达式)
+    let mut param_writes: Vec<(String, String, String)> = Vec::new();
+    let mut param_fields: Vec<(String, ParamType)> = Vec::new();
+    let mut next_branch = node_index.values().copied().max().unwrap_or(0) + 1;
+    // 已经 push 进 `Netlist` 的元件个数（= 下一个元件的下标）
+    let mut elem_count = 0usize;
+    // 参数元件：(常量名, 下标) —— 生成模块级 const，供 set_params 用
+    let mut param_consts: Vec<(String, usize)> = Vec::new();
+
+    let mut declare_param = |field: &str, ty: ParamType| -> Result<(), String> {
+        match param_fields.iter().find(|(f, _)| f == field) {
+            Some((_, existing)) if *existing != ty => Err(format!(
+                "参数 {field} 同时被声明为 {existing:?} 和 {ty:?}（一个参数只能有一种类型）"
+            )),
+            Some(_) => Ok(()),
+            None => {
+                param_fields.push((field.to_string(), ty));
+                Ok(())
+            }
+        }
+    };
 
     for e in &circuit.elements {
         match e.kind {
             ElementKind::Resistor => {
+                let (na, nb) = (idx(&e.nodes[0]), idx(&e.nodes[1]));
+                if na == nb {
+                    notes.push(format!("{} 两端同节点（自环），已跳过", e.name));
+                    continue;
+                }
+                if let Some(p) = dirs.pots.iter().find(|p| p.elem == e.name) {
+                    declare_param(&p.field, ParamType::Pot)?;
+                    let expr = if p.invert {
+                        format!("{} * (1.0 - p.{})", fmt_f64(p.max), p.field)
+                    } else {
+                        format!("{} * p.{}", fmt_f64(p.max), p.field)
+                    };
+                    let const_name = format!("IDX_{}", e.name.to_uppercase());
+                    body.push(format!(
+                        "    // {} = 电位器「{}」：R = {}（max = {} Ω）",
+                        e.name,
+                        p.field,
+                        if p.invert {
+                            format!("max·(1−{})", p.field)
+                        } else {
+                            format!("max·{}", p.field)
+                        },
+                        fmt_f64(p.max)
+                    ));
+                    body.push(format!(
+                        "    net.push_resistor({}, {}, {expr});",
+                        node_expr(na, &node_index),
+                        node_expr(nb, &node_index)
+                    ));
+                    param_consts.push((const_name.clone(), elem_count));
+                    elem_count += 1;
+                    // 注意：写入的表达式要用**新参数**（函数的形参 `params`）
+                    param_writes.push((p.field.clone(), const_name, expr.replace("p.", "params.")));
+                    continue;
+                }
                 let v = parse_value(&e.value)
                     .ok_or_else(|| format!("{}：读不出阻值 `{}`", e.name, e.value))?;
                 if v.abs() <= WIRE_OHMS {
                     continue; // 已并节点
                 }
-                let (na, nb) = (idx(&e.nodes[0]), idx(&e.nodes[1]));
-                if na == nb {
-                    // 自环（电位器的"短接一半"就长这样）：对电路没有影响，跳过
-                    notes.push(format!("{}（{} Ω）两端是同一个节点（自环），已跳过", e.name, e.value));
-                    continue;
-                }
                 body.push(format!(
-                    "    // {} ({} Ω) {}{}—{}{}",
+                    "    // {} ({} Ω) {}—{}",
                     e.name,
                     e.value,
-                    if na == 0 { "*" } else { "" },
                     canon(&e.nodes[0]),
-                    if nb == 0 { "*" } else { "" },
-                    canon(&e.nodes[1]),
+                    canon(&e.nodes[1])
                 ));
                 body.push(format!(
                     "    net.resistor({}, {}, {});",
-                    node_expr(na, &node_alias),
-                    node_expr(nb, &node_alias),
+                    node_expr(na, &node_index),
+                    node_expr(nb, &node_index),
                     fmt_f64(v)
                 ));
+                elem_count += 1;
             }
             ElementKind::Capacitor => {
                 let v = parse_value(&e.value)
                     .ok_or_else(|| format!("{}：读不出容值 `{}`", e.name, e.value))?;
+                body.push(format!("    // {} ({} F)", e.name, e.value));
                 body.push(format!(
-                    "    // {} ({} F)\n    net.capacitor({}, {}, {});",
-                    e.name,
-                    e.value,
-                    node_expr(idx(&e.nodes[0]), &node_alias),
-                    node_expr(idx(&e.nodes[1]), &node_alias),
+                    "    net.capacitor({}, {}, {});",
+                    node_expr(idx(&e.nodes[0]), &node_index),
+                    node_expr(idx(&e.nodes[1]), &node_index),
                     fmt_f64(v)
                 ));
+                elem_count += 1;
             }
             ElementKind::Diode => {
-                let model = e
-                    .model
-                    .as_deref()
-                    .ok_or_else(|| format!("{}：二极管没有模型名", e.name))?;
-                let (const_name, kind) = model_const(model)
-                    .ok_or_else(|| unknown_model_error(circuit, model, "二极管"))?;
+                let model = e.model.as_deref().ok_or_else(|| format!("{}：二极管没有模型名", e.name))?;
+                let (const_name, kind) =
+                    model_const(model).ok_or_else(|| unknown_model_error(circuit, model, "二极管"))?;
                 if kind != ModelKind::Diode {
                     return Err(format!("{}：模型 {model} 不是二极管", e.name));
                 }
                 uses.insert(const_name.into());
+                body.push(format!("    // {} {}（阳极 {}）", e.name, model, e.nodes[0]));
                 body.push(format!(
-                    "    // {} {} (阳极 {})\n    net.diode({}, {}, {});",
+                    "    net.diode({}, {}, {});",
+                    const_name,
+                    node_expr(idx(&e.nodes[0]), &node_index),
+                    node_expr(idx(&e.nodes[1]), &node_index)
+                ));
+                elem_count += 1;
+            }
+            ElementKind::Npn | ElementKind::Pnp => {
+                let model = e.model.as_deref().ok_or_else(|| format!("{}：三极管没有模型名", e.name))?;
+                let (const_name, kind) =
+                    model_const(model).ok_or_else(|| unknown_model_error(circuit, model, "三极管"))?;
+                let npn = match kind {
+                    ModelKind::BjtNpn => true,
+                    ModelKind::BjtPnp => false,
+                    _ => return Err(format!("{}：模型 {model} 不是 BJT", e.name)),
+                };
+                uses.insert(const_name.into());
+                body.push(format!(
+                    "    // {} {}（{}：c b e）",
                     e.name,
                     model,
-                    e.nodes[0],
-                    const_name,
-                    node_expr(idx(&e.nodes[0]), &node_alias),
-                    node_expr(idx(&e.nodes[1]), &node_alias)
+                    if npn { "NPN" } else { "PNP" }
                 ));
+                body.push(format!(
+                    "    net.bjt({}, {}, {}, {}, {});",
+                    const_name,
+                    npn,
+                    node_expr(idx(&e.nodes[0]), &node_index),
+                    node_expr(idx(&e.nodes[1]), &node_index),
+                    node_expr(idx(&e.nodes[2]), &node_index)
+                ));
+                elem_count += 1;
+            }
+            ElementKind::Jfet => {
+                let model = e.model.as_deref().ok_or_else(|| format!("{}：JFET 没有模型名", e.name))?;
+                let (const_name, kind) =
+                    model_const(model).ok_or_else(|| unknown_model_error(circuit, model, "JFET"))?;
+                if kind != ModelKind::Jfet {
+                    return Err(format!("{}：模型 {model} 不是 JFET", e.name));
+                }
+                uses.insert(const_name.into());
+                body.push(format!("    // {} {}（d g s）", e.name, model));
+                body.push(format!(
+                    "    net.jfet({}, {}, {}, {});",
+                    const_name,
+                    node_expr(idx(&e.nodes[0]), &node_index),
+                    node_expr(idx(&e.nodes[1]), &node_index),
+                    node_expr(idx(&e.nodes[2]), &node_index)
+                ));
+                elem_count += 1;
+            }
+            ElementKind::Nmos => {
+                let model = e.model.as_deref().ok_or_else(|| format!("{}：MOSFET 没有模型名", e.name))?;
+                let (const_name, kind) =
+                    model_const(model).ok_or_else(|| unknown_model_error(circuit, model, "MOSFET"))?;
+                if kind != ModelKind::Mosfet {
+                    return Err(format!("{}：模型 {model} 不是 MOSFET", e.name));
+                }
+                uses.insert(const_name.into());
+                body.push(format!("    // {} {}（d g s）", e.name, model));
+                body.push(format!(
+                    "    net.mosfet({}, {}, {}, {});",
+                    const_name,
+                    node_expr(idx(&e.nodes[0]), &node_index),
+                    node_expr(idx(&e.nodes[1]), &node_index),
+                    node_expr(idx(&e.nodes[2]), &node_index)
+                ));
+                elem_count += 1;
             }
             ElementKind::Subckt => {
                 let model = e.model.as_deref().unwrap_or("");
@@ -348,29 +580,30 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                 }
                 if e.nodes.len() < 5 {
                     return Err(format!(
-                        "{}：运放子电路需要 5 个引脚 <in+> <in-> <v+> <v-> <out>，只有 {}",
+                        "{}：运放需要 5 个引脚 <in+> <in-> <v+> <v-> <out>，只有 {}",
                         e.name,
                         e.nodes.len()
                     ));
                 }
                 uses.insert(const_name.into());
-                let br = branch;
-                branch += 1;
+                uses.insert("OP07".into());
+                let br = next_branch;
+                next_branch += 1;
+                body.push(format!("    // {} {}（in+ in- v+ v- out）", e.name, model));
                 body.push(format!(
-                    "    // {} {}（in+ in- v+ v- out）\n    net.opamp({}.model(1.0 / fs), {}, {}, {}, {});",
-                    e.name,
-                    model,
+                    "    net.opamp({}.model(1.0 / fs), {}, {}, {}, {});",
                     const_name,
-                    node_expr(idx(&e.nodes[0]), &node_alias),
-                    node_expr(idx(&e.nodes[1]), &node_alias),
-                    node_expr(idx(&e.nodes[4]), &node_alias),
+                    node_expr(idx(&e.nodes[0]), &node_index),
+                    node_expr(idx(&e.nodes[1]), &node_index),
+                    node_expr(idx(&e.nodes[4]), &node_index),
                     br
                 ));
+                elem_count += 1;
             }
-            ElementKind::VoltageSource => { /* 已在第 3 步处理 */ }
+            ElementKind::VoltageSource => { /* 第 3 步处理 */ }
             other => {
                 return Err(format!(
-                    "{}：暂不支持 {} 类元件（S1a 只覆盖 R/C/D/X/DC-V）",
+                    "{}：暂不支持 {} 类元件",
                     e.name,
                     other.spice_prefix()
                 ));
@@ -378,15 +611,52 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         }
     }
 
-    let unknowns = branch; // 节点 1..=max + 支路
+    // ---- 6) 开关（S1b）：生成一个可切换的电阻 ----
+    for s in &dirs.switches {
+        declare_param(&s.field, ParamType::Switch)?;
+        let (na, nb) = (idx(&s.node_a), idx(&s.node_b));
+        if na == nb {
+            return Err(format!("开关 {} 的两个节点合并到同一个了", s.field));
+        }
+        let const_name = format!("IDX_SW_{}", s.field.to_uppercase());
+        body.push(format!(
+            "    // 开关「{}」：{} — {}（闭合 {} Ω / 断开 {} Ω）",
+            s.field,
+            canon(&s.node_a),
+            canon(&s.node_b),
+            fmt_f64(s.closed),
+            fmt_f64(s.open)
+        ));
+        body.push(format!(
+            "    net.push_resistor({}, {}, if p.{field} {{ {c} }} else {{ {o} }});",
+            node_expr(na, &node_index),
+            node_expr(nb, &node_index),
+            field = s.field,
+            c = fmt_f64(s.closed),
+            o = fmt_f64(s.open),
+        ));
+        param_consts.push((const_name.clone(), elem_count));
+        elem_count += 1;
+        param_writes.push((
+            s.field.clone(),
+            const_name,
+            format!(
+                "if params.{0} {{ {1} }} else {{ {2} }}",
+                s.field,
+                fmt_f64(s.closed),
+                fmt_f64(s.open)
+            ),
+        ));
+    }
+
+    let unknowns = next_branch;
     if unknowns > MAX_UNKNOWNS {
         return Err(format!("未知量 {unknowns} 超过上限 {MAX_UNKNOWNS}"));
     }
 
-    // ---- 6) 输出 ----
+    // ---- 7) 生成代码 ----
     let mut code = String::new();
     code.push_str("// @generated by rustomp-import (netlist → MNA elements) — do not edit\n");
-    // 注意：生成物会被 `include!` 进别的文件，所以只能用 `//` 而不是 `//!`（内层文档注释）
     code.push_str(&format!(
         "// 由 {} 生成。改动请改网表后重新生成。\n",
         if opts.source.is_empty() { "网表" } else { &opts.source }
@@ -398,8 +668,35 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     code.push_str(&format!(
         "/// 未知量个数（`Netlist<N>` 的 N）\npub const N: usize = {unknowns};\n\n"
     ));
+    code.push_str("/// 实时路径的牛顿迭代次数（2 次已验证：THD 与离线求解相差 < 0.1 pp）\n");
+    code.push_str("pub const NEWTON_ITERS: usize = 2;\n\n");
+
+    // 参数结构体
+    if !param_fields.is_empty() {
+        code.push_str("/// 可调参数（电位器位置 0..1 / 开关布尔）。\n#[derive(Clone, Copy, PartialEq)]\npub struct Params {\n");
+        for (field, ty) in &param_fields {
+            code.push_str(&format!("    pub {field}: {},\n", ty.rust_ty()));
+        }
+        code.push_str("}\n\nimpl Default for Params {\n    fn default() -> Self {\n        Self {\n");
+        for (field, ty) in &param_fields {
+            code.push_str(&format!("            {field}: {},\n", ty.default_value()));
+        }
+        code.push_str("        }\n    }\n}\n\n");
+    } else {
+        code.push_str("/// 无可调参数。\n#[derive(Clone, Copy, PartialEq, Default)]\npub struct Params;\n\n");
+    }
+
+    // 参数元件的下标（供 set_params 定位）
+    for (name, index) in &param_consts {
+        code.push_str(&format!("/// `{name}` 在 `Netlist::elems` 里的下标\n#[allow(dead_code)]\npub const {name}: usize = {index};\n"));
+    }
+    if !param_consts.is_empty() {
+        code.push('\n');
+    }
+
+    // 节点常量
     code.push_str("/// 节点编号（0 = 地；其余按名字排序，保证 diff 稳定）\npub mod node {\n");
-    for (name, index) in &node_alias {
+    for (name, index) in &node_index {
         code.push_str(&format!(
             "    /// `{}`\n    pub const {}: usize = {};\n",
             name,
@@ -408,12 +705,16 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         ));
     }
     code.push_str("}\n\n");
-    code.push_str(&format!(
-        "/// 输入端口节点（`process(x)` 用 `net.set_fixed(FIXED_IN, x)`）\npub const IN: usize = {};\n\
-         /// 输出节点\npub const OUT: usize = {};\n",
-        input_node, output_node
-    ));
-    // 固定节点按"电源轨在前、输入端在后"的顺序装配，所以输入端口的下标 = 电源轨个数
+
+    if has_input {
+        code.push_str(&format!(
+            "/// 输入端口节点（`process(x)` 用 `net.set_fixed(FIXED_IN, x)`）\npub const IN: usize = {};\n",
+            input_node.as_ref().unwrap().0
+        ));
+    } else {
+        code.push_str("/// 无输入端口（纯直流电路）\npub const IN: usize = 0;\n");
+    }
+    code.push_str(&format!("/// 输出节点\npub const OUT: usize = {};\n", output_node));
     let mut rails = fixed_nodes.clone();
     rails.sort_by(|a, b| a.0.cmp(&b.0));
     rails.dedup_by_key(|(n, _, _)| *n);
@@ -421,36 +722,80 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         "/// 输入端口在 `Netlist::fixed` 里的下标（电源轨排在它前面）\npub const FIXED_IN: usize = {};\n\n",
         rails.len()
     ));
-    code.push_str("/// 按网表搭出电路（`fs` 是**内层**采样率，含过采样倍率）。\npub fn build(fs: f64) -> Netlist<N> {\n");
+
+    // build()
+    code.push_str("/// 按网表搭出电路（`fs` 是**内层**采样率，含过采样倍率）。\npub fn build(fs: f64, p: &Params) -> Netlist<N> {\n");
     code.push_str("    let mut net = Netlist::<N>::new();\n");
+    code.push_str("    let _ = (fs, p);\n");
     for line in &body {
         code.push_str(line);
         code.push('\n');
     }
-    // 固定节点：大电阻轨优先，顺序固定
-    let mut fixed_sorted = fixed_nodes.clone();
-    fixed_sorted.sort_by(|a, b| a.0.cmp(&b.0));
-    for (node, dc, name) in &fixed_sorted {
+    for (node, dc, name) in &rails {
         code.push_str(&format!(
             "    net.fix_node({}, {}); // {name}\n",
-            node_expr(*node, &node_alias),
+            node_expr(*node, &node_index),
             fmt_f64(*dc)
         ));
     }
-    code.push_str("    net.fix_node(IN, 0.0); // 输入端口，值由 process() 每拍写入\n");
-    code.push_str("    net\n}\n");
+    if has_input {
+        code.push_str("    net.fix_node(IN, 0.0); // 输入端口，值由 process() 每拍写入\n");
+    }
+    code.push_str("    net\n}\n\n");
+
+    // Ckt：直接实现 Circuit
+    code.push_str("/// 生成的实时电路（直接实现 `rustomp_dsp::Circuit`）。\npub struct Ckt {\n    net: Netlist<N>,\n    params: Params,\n    fs: f64,\n}\n\n");
+    code.push_str("impl rustomp_dsp::Circuit for Ckt {\n    type Params = Params;\n\n");
+    code.push_str("    fn new(sample_rate: f64) -> Self {\n");
+    code.push_str("        let params = Params::default();\n");
+    code.push_str("        let mut net = build(sample_rate, &params);\n");
+    code.push_str("        net.solve_dc();\n");
+    code.push_str("        Self { net, params, fs: sample_rate }\n    }\n\n");
+    code.push_str("    fn set_sample_rate(&mut self, sample_rate: f64) {\n");
+    code.push_str("        if (sample_rate - self.fs).abs() > 1e-9 {\n            *self = Self::new(sample_rate);\n        }\n    }\n\n");
+    code.push_str("    fn set_params(&mut self, params: Params) {\n");
+    code.push_str("        if params == self.params {\n            return;\n        }\n");
+    for (field, const_name, expr) in &param_writes {
+        code.push_str(&format!(
+            "        if params.{field} != self.params.{field} {{\n            self.net.set_resistance({const_name}, {expr});\n        }}\n"
+        ));
+    }
+    code.push_str("        self.params = params;\n    }\n\n");
+    code.push_str("    fn reset(&mut self) {\n        self.net.reset();\n        self.net.solve_dc();\n    }\n\n");
+    code.push_str("    fn process(&mut self, x: f64) -> f64 {\n");
+    code.push_str("        let dt = 1.0 / self.fs;\n");
+    if has_input {
+        code.push_str("        self.net.set_fixed(FIXED_IN, x);\n");
+    } else {
+        code.push_str("        let _ = x;\n");
+    }
+    code.push_str("        let v = self.net.step_fixed(dt, NEWTON_ITERS);\n        v[OUT]\n    }\n}\n");
 
     Ok(Generated { code, notes, unknowns })
 }
 
-fn directive_value(directive: &str, key: &str) -> Option<String> {
-    directive
-        .split_whitespace()
-        .find_map(|kv| kv.strip_prefix(&format!("{key}=")).map(|v| v.to_string()))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParamType {
+    Pot,
+    Switch,
+}
+
+impl ParamType {
+    fn rust_ty(self) -> &'static str {
+        match self {
+            ParamType::Pot => "f64",
+            ParamType::Switch => "bool",
+        }
+    }
+    fn default_value(self) -> &'static str {
+        match self {
+            ParamType::Pot => "0.5",
+            ParamType::Switch => "false",
+        }
+    }
 }
 
 fn const_name_for(node: &str) -> String {
-    // n_t27R → N_T27R；纯数字/特殊字符前加 N_
     let mut out = String::new();
     for c in node.chars() {
         if c.is_ascii_alphanumeric() {
@@ -465,12 +810,11 @@ fn const_name_for(node: &str) -> String {
     out
 }
 
-fn node_expr(index: usize, alias: &BTreeMap<String, usize>) -> String {
+fn node_expr(index: usize, index_map: &BTreeMap<String, usize>) -> String {
     if index == 0 {
         return "GND".into();
     }
-    // 找出这个名字对应的常量名
-    for (name, i) in alias {
+    for (name, i) in index_map {
         if *i == index {
             return format!("node::{}", const_name_for(name));
         }
@@ -479,27 +823,23 @@ fn node_expr(index: usize, alias: &BTreeMap<String, usize>) -> String {
 }
 
 fn fmt_f64(v: f64) -> String {
-    // `parse("4.7n")` 会得到 4.700000000000001e-9；先归一到 12 位有效数字去掉浮点噪声，
-    // 再交给 `{:?}`（对 f64 往返精确，输出确定）。
+    // `parse("4.7n")` 会得到 4.700000000000001e-9；先归一到 12 位有效数字去掉浮点噪声。
     let rounded: f64 = format!("{v:.12e}").parse().unwrap_or(v);
     format!("{rounded:?}")
 }
 
 fn unknown_model_error(circuit: &ImportedCircuit, model: &str, kind: &str) -> String {
-    let known: Vec<&str> = [
-        "1N4148", "1N34A", "1N4007", "1N5817", "LedRed", "LedGreen", "LedBLUE", "OP07A",
-    ]
-    .to_vec();
-    let mut msg = format!(
-        "{kind}模型 `{model}` 不在闭集表里（已知：{}）",
-        known.join(" / ")
-    );
-    let models: BTreeSet<&str> = circuit
-        .elements
-        .iter()
-        .filter_map(|e| e.model.as_deref())
-        .collect();
-    msg.push_str(&format!("\n网表里出现的模型：{}", models.into_iter().collect::<Vec<_>>().join(", ")));
+    let known = [
+        "1N4148", "1N34A", "1N4007", "1N5817", "LedRed", "LedGreen", "LedBLUE", "OP07A", //
+        "BC549C", "BC559C", "AC127", "AC128", "J201", "2N7000",
+    ];
+    let mut msg = format!("{kind}模型 `{model}` 不在闭集表里（已知：{}）", known.join(" / "));
+    let models: BTreeSet<&str> =
+        circuit.elements.iter().filter_map(|e| e.model.as_deref()).collect();
+    msg.push_str(&format!(
+        "\n网表里出现的模型：{}",
+        models.into_iter().collect::<Vec<_>>().join(", ")
+    ));
     msg.push_str("\n→ 要么换成库里的型号，要么先在 devices/ 里标定后加进 model_const()");
     msg
 }
@@ -519,7 +859,6 @@ mod tests {
         assert!(close(parse_value("0.001"), 0.001));
         assert!(close(parse_value("1.5e3"), 1500.0));
         assert!(close(parse_value("100m"), 0.1));
-        // 浮点噪声要在格式化时被消掉
         assert_eq!(fmt_f64(parse_value("4.7n").unwrap()), "4.7e-9");
         assert_eq!(fmt_f64(47000.0), "47000.0");
     }
@@ -529,5 +868,31 @@ mod tests {
         assert_eq!(const_name_for("n_t27R"), "N_T27R");
         assert_eq!(const_name_for("in+"), "IN_");
         assert_eq!(const_name_for("1"), "N_1");
+    }
+
+    #[test]
+    fn parses_param_directives() {
+        let notes = vec![
+            "@rustomp in=V1 out=out".to_string(),
+            "@rustomp param RP1A gain pot max=500k".to_string(),
+            "@rustomp param RP2B level pot max=500k invert".to_string(),
+            "@rustomp switch symmetric a b closed=0.001 open=1e12".to_string(),
+        ];
+        let d = parse_directives(&notes).unwrap();
+        assert_eq!(d.input.as_deref(), Some("V1"));
+        assert_eq!(d.output.as_deref(), Some("out"));
+        assert_eq!(d.pots.len(), 2);
+        assert!(d.pots[1].invert);
+        assert_eq!(d.pots[0].max, 500_000.0);
+        assert_eq!(d.switches.len(), 1);
+        assert_eq!(d.switches[0].closed, 0.001);
+    }
+
+    #[test]
+    fn rejects_bad_param_syntax() {
+        let notes = vec!["@rustomp param RP1A gain".to_string()];
+        assert!(parse_directives(&notes).is_err());
+        let notes = vec!["@rustomp param RP1A 9bad pot max=1k".to_string()];
+        assert!(parse_directives(&notes).is_err());
     }
 }

@@ -427,7 +427,11 @@ impl Element {
     }
 
     /// 收敛后提交状态（电容 `v_prev`、运放输出）。
-    pub fn commit(&mut self, v: &[f64], _dt: f64) {
+    ///
+    /// `dc = true` 时**不应用压摆率限制** —— 直流工作点没有"每步最多变化多少"的概念。
+    /// （踩过：`solve_dc` 用 dt=1 提交，运放状态被压摆率钳到 `SR/fs`，于是第一拍带着
+    /// 错误的初始偏移，凭空多出一个瞬态。）
+    pub fn commit(&mut self, v: &[f64], _dt: f64, dc: bool) {
         match self {
             Element::Capacitor { a, b, v_prev, .. } => {
                 let va = if *a == GND { 0.0 } else { v[*a] };
@@ -436,8 +440,11 @@ impl Element {
             }
             Element::OpAmp { model, state, out, .. } => {
                 let raw = if *out == GND { 0.0 } else { v[*out] };
-                // 压摆率与输出钳位（事后处理；饱和不频繁时足够准确）
-                state.v_out = model.post(state.v_out, raw);
+                state.v_out = if dc {
+                    model.p.clamp_out(raw) // 直流：只钳摆幅，不限摆率
+                } else {
+                    model.post(state.v_out, raw) // 瞬态：压摆率 + 摆幅
+                };
             }
             _ => {}
         }
@@ -605,7 +612,7 @@ impl<const N: usize> Netlist<N> {
             if !changed {
                 self.v = v;
                 for e in &mut self.elems {
-                    e.commit(&self.v, 1.0);
+                    e.commit(&self.v, 1.0, true);
                 }
                 return self.v;
             }
@@ -613,7 +620,7 @@ impl<const N: usize> Netlist<N> {
         let v = self.solve_dc_once();
         self.v = v;
         for e in &mut self.elems {
-            e.commit(&self.v, 1.0);
+            e.commit(&self.v, 1.0, true);
         }
         self.v
     }
@@ -673,7 +680,7 @@ impl<const N: usize> Netlist<N> {
         });
         self.v = v;
         for e in &mut self.elems {
-            e.commit(&self.v, dt);
+            e.commit(&self.v, dt, false);
         }
         self.v
     }
@@ -708,7 +715,7 @@ impl<const N: usize> Netlist<N> {
         self.has_prev2 = true;
         self.v = v;
         for e in &mut self.elems {
-            e.commit(&self.v, dt);
+            e.commit(&self.v, dt, false);
         }
         self.v
     }

@@ -2687,6 +2687,105 @@ pub fn build(fs: f64) -> Netlist<N> {
 
 ---
 
+## E45：S1b —— 参数化（电位器/开关）+ 器件卡片映射（2026-10-23）
+
+S1a 生成的只是"定值电路"；这一步让它变成**能用的实时电路**。
+
+### 45.1 网表里多出的指令
+
+```text
+* @rustomp in=VS1 out=n_t27R
+* @rustomp param RP1A gain pot max=500k              # R = max·gain
+* @rustomp param RP2B level pot max=500k invert      # R = max·(1−level)
+* @rustomp param RP2A level pot max=500k             # R = max·level
+* @rustomp switch symmetric n_t10L n_t5L closed=0.001 open=1e12
+```
+
+生成的代码从"一堆常量"升级成：
+
+```rust
+pub struct Params { pub gain: f64, pub level: f64, pub symmetric: bool }
+
+pub struct Ckt { net: Netlist<N>, params: Params, fs: f64 }
+impl rustomp_dsp::Circuit for Ckt { /* new / set_params / reset / process */ }
+```
+
+→ **生成的电路直接能塞进 `Engine<Ckt>`**，参数变更只改几个电阻值（`set_resistance`），
+不重建网表。同一个 `Params` 既被 `build()` 用（初始值）也被 `set_params()` 用（更新）。
+
+### 45.2 器件卡片
+
+`Q/J/M` 卡片现在能映射：
+
+| 卡片 | 生成 | 说明 |
+|---|---|---|
+| `Q1 c b 0 BC549C` | `net.bjt(BC549C, true, c, b, GND)` | 极性由型号常量决定（`BC559C`/`AC128` → PNP） |
+| `J1 d g 0 J201` | `net.jfet(J201, d, g, s)` | |
+| `M1 d g s 0 2N7000` | `net.mosfet(NMOS_2N7000, d, g, s)` | |
+
+### 45.3 验证结果
+
+**A. 参数化（Sparklin Drive，生成物 `Ckt`）**
+
+| 项目 | 结果 |
+|---|---|
+| 默认参数 THD @0.2 V | **27.677 %**（离线求解器 27.579%，ngspice 27.5682%） |
+| 对称开关（短接 D3） | h2 **4.002 % → 0.000 %**（legacy 实测 3.92 → 0.049） |
+| GAIN 电位器 0.15 / 0.5 / 1.0 | THD **14.20 / 25.87 / 28.62 %**（单调） |
+| 直流工作点 | 运放输出 4.499991 V、IN+ 4.500000、抽头 0.000000 |
+
+一条测试同时覆盖了三件事：开关真的接到了正确的元件、电位器真的改了阻值、
+参数更新的时序没有滞后。
+
+**B. 器件映射（共射前级，`Q` 卡片）**
+
+| 量 | 生成电路 | ngspice | 差 |
+|---|---|---|---|
+| Vb | 0.679100 V | 0.679098 V | **+2.2 µV** |
+| Ic | 2.0432 mA | 2.0379 mA | **+0.26 %**（未建模的 `Nk`，E36 已记档） |
+| 小信号增益 | 143× | — | 共射反相放大 ✓ |
+
+ngspice 直接吃**生成器用的同一个网表文件**（测试里剔除 `.end` 后接 `.op`），
+避免两边各写一份悄悄漂移。
+
+### 45.4 三个新坑
+
+**① 直流求解把「压摆率限制」也应用到了工作点上**
+
+`commit()` 里运放状态统一走 `post()`（含压摆率），于是 `solve_dc` 结束时状态只能
+从 0 跳到 `SR/fs = 1.302 V`。第一拍带着 1.302 V 的错误偏移起步，凭空多出一个瞬态：
+运放输出 4.5 V → **2.18 V**，抽头 -0.86 V。
+
+修法：`commit(v, dt, dc)` —— `dc = true` 时只钳摆幅、**不限摆率**（直流没有"每拍最多变多少"）。
+
+这条是**行为测试**抓到的：之前的离线 THD 测试只看 3 s 后的稳态，完全漏掉了开场这一下。
+教训与 E44 相同：**要在最容易被忽略的时刻取样**（第 0 拍、参数刚改完的那一拍）。
+
+**② `set_params` 写成了旧值**
+
+生成器把 `build()` 里的表达式 `max * p.gain` 机械替换成 `self.params.gain`，
+于是 `set_params` 用**旧参数**算出电阻 —— 参数永远滞后一次。
+正确是替换成函数的形参 `params.gain`。测试（GAIN 扫描单调）能抓到。
+
+**③ 参数元件的下标必须是模块级 `const`**
+
+第一版在 `build()` 里用 `let IDX_RP1A = net.push_resistor(...)`，`set_params` 看不到。
+改成生成 `pub const IDX_RP1A: usize = 5;`（下标由生成器顺序累加算出）。
+
+### 45.5 生成器现在的完整能力
+
+| 输入 | 支持 |
+|---|---|
+| 元件 | `R C L(占位) D Q J M X` + DC/SIN/AC/PULSE 电压源 |
+| 器件型号 | 二极管 4 + LED 3 + BJT 4 + JFET 1 + MOS 1 + 运放 1（闭集，未命中即报错） |
+| 参数 | 电位器（正/反向）、开关 |
+| 输出 | 节点常量 + `build()` + `Params` + `impl Circuit` |
+| 守卫 | 漂移检查（两个夹具）、未知型号报错、导线合并 |
+
+仍不做：`.asc` 原理图、多电源/浮地源、非线性电容、BJT 的 `Cje/Cjc`（属器件库的动态档）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -2955,6 +3054,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-23 | **S1b：参数化 + 器件卡片**（E45）：`param/switch` 指令生成 `Params` + `impl Circuit` 的 `Ckt`；Q/J/M 卡片映射。验证：默认参数 THD 27.677%、对称开关把 h2 从 4.00% 打到 0.00%、GAIN 扫描单调；BJT 前级 Vb 差 2.2 µV、Ic 差 0.26%（未建模 Nk）。踩坑：`solve_dc` 的提交错误地应用了压摆率限制（运放状态被钳到 SR/fs，开场凭空多出瞬态）、`set_params` 用旧值、参数下标必须是 const |
 | 2026-10-23 | **S1a：网表 → MNA 代码生成**（E44）：`rustomp-import --mna` 从 SPICE 网表生成装配代码；导线合并（0.001Ω）、闭集模型映射（未命中即报错）、DC 源→固定节点、信号源→输入端口；生成电路 THD 27.579% 与手写网表**逐位一致**。踩坑：`FIXED_IN` 写死 0 导致音频被写进 9V 轨（编译通过、不报错、THD 只有 0.237%）→ 生成常量必须由生成器算，且必须有行为级回归 |
 | 2026-10-23 | **MNA 实时化**（E43）：`step_fixed` + 固定电位节点 + 解析二极管雅可比；2 次迭代 2072 ns/样本（192 kHz 单核 39.8%），THD +0.098 pp；相对 legacy 手推实现（824 ns）慢 2.5×，换来任意拓扑能力。踩坑：放宽内层牛顿容差会让雅可比失真、单次迭代时线性外推反而有害 |
 | 2026-10-23 | **Sparklin Drive 的 MNA 重写 + 回归验证**（E42）：整机 THD 27.579% vs ngspice 27.5682%（+0.011 pp，h2–h9 ≤0.03 pp）、DC 工作点 ≤0.27 mV、频响 ≤0.5 dB、削波不对称方向一致。抓到真 bug：`solve_dc` 用 `dt=1` 装配电容，1 µF 变成 1 MΩ 漏电（DC 偏 41 mV）→ DC 必须开路。测量坑：低频预热不足导致 50 Hz 偏高 4 dB |

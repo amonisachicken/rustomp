@@ -10,37 +10,35 @@
 use rustomp_import::mna_codegen::{generate, Options};
 use std::path::Path;
 
-const FIXTURE: &str = "tests/fixtures/sparklin_drive.cir";
-const GOLDEN: &str = "../rustomp-dsp/tests/generated/sparklin_drive.rs";
+/// (夹具, 生成物, 生成物头部写的文件名)
+const CASES: [(&str, &str, &str); 2] = [
+    (
+        "tests/fixtures/sparklin_drive.cir",
+        "../rustomp-dsp/tests/generated/sparklin_drive.rs",
+        "sparklin_drive.cir",
+    ),
+    (
+        "tests/fixtures/bjt_stage.cir",
+        "../rustomp-dsp/tests/generated/bjt_stage.rs",
+        "bjt_stage.cir",
+    ),
+];
 
-fn regenerate() -> String {
-    let circuit = rustomp_import::import_file(Path::new(FIXTURE)).expect("导入夹具网表失败");
-    let opts = Options {
-        input: None,
-        output: None,
-        source: "sparklin_drive.cir".into(),
-    };
+fn regenerate(fixture: &str, source: &str) -> String {
+    let circuit = rustomp_import::import_file(Path::new(fixture)).expect("导入夹具网表失败");
+    let opts = Options { input: None, output: None, source: source.into() };
     generate(&circuit, &opts).expect("生成失败").code
 }
 
 #[test]
-fn generated_file_is_up_to_date() {
-    let fresh = regenerate();
-    let golden = std::fs::read_to_string(GOLDEN).unwrap_or_default();
-    if fresh != golden {
-        // 给出第一处差异，方便定位
-        let diff_line = fresh
-            .lines()
-            .zip(golden.lines())
-            .position(|(a, b)| a != b)
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        panic!(
-            "{GOLDEN} 与重新生成的结果不一致（第一处差异在第 {diff_line} 行）。\n\
-             请重新生成：\n  cargo run -q -p rustomp-import -- {FIXTURE} --mna {GOLDEN}\n\
-             --- 新生成 ---\n{}\n--- 仓库里 ---\n{}",
-            fresh.lines().nth(diff_line.saturating_sub(1)).unwrap_or(""),
-            golden.lines().nth(diff_line.saturating_sub(1)).unwrap_or("")
+fn all_generated_files_are_up_to_date() {
+    for (fixture, golden, source) in CASES {
+        let fresh = regenerate(fixture, source);
+        let repo = std::fs::read_to_string(golden).unwrap_or_default();
+        assert_eq!(
+            fresh, repo,
+            "{golden} 与重新生成的结果不一致。请重新生成：\n  \
+             cargo run -q -p rustomp-import -- {fixture} --mna {golden}"
         );
     }
 }

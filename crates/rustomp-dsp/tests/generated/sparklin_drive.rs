@@ -7,6 +7,40 @@ use rustomp_dsp::{D_1N4148, GND, Netlist, OP07};
 /// 未知量个数（`Netlist<N>` 的 N）
 pub const N: usize = 12;
 
+/// 实时路径的牛顿迭代次数（2 次已验证：THD 与离线求解相差 < 0.1 pp）
+pub const NEWTON_ITERS: usize = 2;
+
+/// 可调参数（电位器位置 0..1 / 开关布尔）。
+#[derive(Clone, Copy, PartialEq)]
+pub struct Params {
+    pub gain: f64,
+    pub level: f64,
+    pub symmetric: bool,
+}
+
+impl Default for Params {
+    fn default() -> Self {
+        Self {
+            gain: 0.5,
+            level: 0.5,
+            symmetric: false,
+        }
+    }
+}
+
+/// `IDX_RP1A` 在 `Netlist::elems` 里的下标
+#[allow(dead_code)]
+pub const IDX_RP1A: usize = 5;
+/// `IDX_RP2A` 在 `Netlist::elems` 里的下标
+#[allow(dead_code)]
+pub const IDX_RP2A: usize = 12;
+/// `IDX_RP2B` 在 `Netlist::elems` 里的下标
+#[allow(dead_code)]
+pub const IDX_RP2B: usize = 13;
+/// `IDX_SW_SYMMETRIC` 在 `Netlist::elems` 里的下标
+#[allow(dead_code)]
+pub const IDX_SW_SYMMETRIC: usize = 14;
+
 /// 节点编号（0 = 地；其余按名字排序，保证 diff 稳定）
 pub mod node {
     /// `n_rail_Lp`
@@ -39,25 +73,26 @@ pub const OUT: usize = 9;
 pub const FIXED_IN: usize = 1;
 
 /// 按网表搭出电路（`fs` 是**内层**采样率，含过采样倍率）。
-pub fn build(fs: f64) -> Netlist<N> {
+pub fn build(fs: f64, p: &Params) -> Netlist<N> {
     let mut net = Netlist::<N>::new();
+    let _ = (fs, p);
     // XU1 OP07A（in+ in- v+ v- out）
     net.opamp(OP07.model(1.0 / fs), node::N_T11L, node::N_T10L, node::N_T11R, 11);
     // CC1 (4.7n F)
     net.capacitor(node::N_T11L, node::N_T21L, 4.7e-9);
     // RR2 (47k Ω) n_rail_Lp—n_t19R
     net.resistor(node::N_RAIL_LP, node::N_T19R, 47000.0);
-    // RR3 (47k Ω) n_t19R—*0
+    // RR3 (47k Ω) n_t19R—0
     net.resistor(node::N_T19R, GND, 47000.0);
     // RR4 (470k Ω) n_t11L—n_t19R
     net.resistor(node::N_T11L, node::N_T19R, 470000.0);
-    // RP1A (250k Ω) n_t10L—n_t11R
-    net.resistor(node::N_T10L, node::N_T11R, 250000.0);
-    // DD1 1N4148 (阳极 n_t1L)
+    // RP1A = 电位器「gain」：R = max·gain（max = 500000.0 Ω）
+    net.push_resistor(node::N_T10L, node::N_T11R, 500000.0 * p.gain);
+    // DD1 1N4148（阳极 n_t1L）
     net.diode(D_1N4148, node::N_T11R, node::N_T10L);
-    // DD2 1N4148 (阳极 n_t5L)
+    // DD2 1N4148（阳极 n_t5L）
     net.diode(D_1N4148, node::N_T5L, node::N_T11R);
-    // DD3 1N4148 (阳极 n_t10L)
+    // DD3 1N4148（阳极 n_t10L）
     net.diode(D_1N4148, node::N_T10L, node::N_T5L);
     // RR5 (4.7k Ω) n_t1R—n_t10L
     net.resistor(node::N_T1R, node::N_T10L, 4700.0);
@@ -65,11 +100,68 @@ pub fn build(fs: f64) -> Netlist<N> {
     net.capacitor(node::N_T1R, GND, 4.7e-8);
     // CC3 (1u F)
     net.capacitor(node::N_T11R, node::N_T24R, 1e-6);
-    // RP2A (250k Ω) *0—n_t27R
-    net.resistor(GND, node::N_T27R, 250000.0);
-    // RP2B (250k Ω) n_t27R—n_t24R
-    net.resistor(node::N_T27R, node::N_T24R, 250000.0);
+    // RP2A = 电位器「level」：R = max·level（max = 500000.0 Ω）
+    net.push_resistor(GND, node::N_T27R, 500000.0 * p.level);
+    // RP2B = 电位器「level」：R = max·(1−level)（max = 500000.0 Ω）
+    net.push_resistor(node::N_T27R, node::N_T24R, 500000.0 * (1.0 - p.level));
+    // 开关「symmetric」：n_t10L — n_t5L（闭合 0.001 Ω / 断开 1000000000000.0 Ω）
+    net.push_resistor(node::N_T10L, node::N_T5L, if p.symmetric { 0.001 } else { 1000000000000.0 });
     net.fix_node(node::N_RAIL_LP, 9.0); // VB1
     net.fix_node(IN, 0.0); // 输入端口，值由 process() 每拍写入
     net
+}
+
+/// 生成的实时电路（直接实现 `rustomp_dsp::Circuit`）。
+pub struct Ckt {
+    net: Netlist<N>,
+    params: Params,
+    fs: f64,
+}
+
+impl rustomp_dsp::Circuit for Ckt {
+    type Params = Params;
+
+    fn new(sample_rate: f64) -> Self {
+        let params = Params::default();
+        let mut net = build(sample_rate, &params);
+        net.solve_dc();
+        Self { net, params, fs: sample_rate }
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: f64) {
+        if (sample_rate - self.fs).abs() > 1e-9 {
+            *self = Self::new(sample_rate);
+        }
+    }
+
+    fn set_params(&mut self, params: Params) {
+        if params == self.params {
+            return;
+        }
+        if params.gain != self.params.gain {
+            self.net.set_resistance(IDX_RP1A, 500000.0 * params.gain);
+        }
+        if params.level != self.params.level {
+            self.net.set_resistance(IDX_RP2A, 500000.0 * params.level);
+        }
+        if params.level != self.params.level {
+            self.net.set_resistance(IDX_RP2B, 500000.0 * (1.0 - params.level));
+        }
+        if params.symmetric != self.params.symmetric {
+            self.net.set_resistance(IDX_SW_SYMMETRIC, if params.symmetric { 0.001 } else { 1000000000000.0 });
+        }
+        self.params = params;
+    }
+
+    fn reset(&mut self) {
+        self.net.reset();
+        self.net.solve_dc();
+    }
+
+    fn process(&mut self, x: f64) -> f64 {
+        let dt = 1.0 / self.fs;
+        self.net.set_fixed(FIXED_IN, x);
+        let v = self.net.step_fixed(dt, NEWTON_ITERS);
+        v[OUT]
+    }
 }
