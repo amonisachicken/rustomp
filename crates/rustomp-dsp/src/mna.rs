@@ -310,7 +310,13 @@ impl Element {
             }
             Element::Resistor { a, b, r } => sys.resistor(a, b, r),
             Element::Capacitor { a, b, c, v_prev } => {
-                // 后向欧拉：i = (C/dt)·(v − v_prev) → 导纳 g + 电流源 −g·v_prev
+                // **直流时电容开路**（不装配）。
+                // 若按 `g = C/dt` 把 dt 当 1 s 处理，1 µF 就变成 1 MΩ 的对地电阻，
+                // 输出会经隔直电容漏到音量电位器上（实测让工作点偏 41 mV）。
+                if dc || dt <= 0.0 {
+                    return;
+                }
+                // 瞬态：后向欧拉 i = (C/dt)·(v − v_prev) → 导纳 g + 电流源 −g·v_prev
                 let g = c / dt;
                 sys.conductance(a, b, g);
                 sys.current_source(a, b, -g * v_prev);

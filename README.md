@@ -206,9 +206,17 @@ cargo test -p my-drive-circuit --release --test oracle
 | RC + 削波瞬态（48 kHz，240 点） | 波形 | **≤17 mV**（后向欧拉 vs 梯形积分） |
 | 运放非反相 10× | DC 增益 / 饱和 / -3 dB | 10.998 / 钉在 7.8 V / 40.5 kHz |
 
-### 3) 整机：`Sparklin Drive`（fakedist v1，已交付）
+### 3) 整机：`Sparklin Drive`
 
-实测（电位器 50%）：
+同一电路有**两条独立实现**，都与 ngspice 基线对拍：
+
+| 实现 | THD @0.2 V | 说明 |
+|---|---|---|
+| ngspice（完整 OP07A 子电路） | 27.5682 % | 基线 |
+| **MNA 装配器**（本仓库，E42） | **27.579 %** | +0.011 pp |
+| legacy WDF（一维牛顿，已归档） | 27.650 % | +0.034 pp |
+
+legacy 实现的其余实测（电位器 50%）：
 
 | 项目 | WDF 实现 | ngspice | 误差 |
 |---|---|---|---|
@@ -293,7 +301,9 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 
 **路线图**
 
-- [ ] **用 MNA 装配器重写 Sparklin Drive**（同一电路、两条独立实现，比失真谱与输出电平）
+- [x] **用 MNA 装配器重写 Sparklin Drive** ✅ 整机 THD 27.579% vs ngspice 27.5682%（+0.011 pp）、
+      DC ≤0.27 mV、频响 ≤0.5 dB（`crates/rustomp-dsp/tests/sparklin_mna.rs`）
+- [ ] 把 MNA 包成 `Circuit` 供实时使用（解析雅可比 + 固定迭代次数）
 - [ ] S1：声明式代码生成（网表 → `Element` 列表）；之后再把 oracle 对拍铺进 CI 矩阵
 - [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
 - [ ] 电位器 A/C taper；预设与状态管理；安装包（pkg）+ 签名公证

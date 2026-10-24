@@ -87,6 +87,7 @@ sys.multiport(&[c, b, e], v, |vv| {
 | JFET 共源 | **34 µV** |
 | RC + 削波瞬态（48 kHz，240 点） | **≤17 mV**（BE vs 梯形） |
 | 运放非反相 10× | DC 增益 10.998；饱和正确钉在 7.8 V |
+| **Sparklin Drive 整机**（10 节点 + 3 支路） | DC 0.056 mV / **THD 27.579% vs 27.5682%** / 频响 ≤0.5 dB |
 
 ### 三个坑
 
@@ -135,7 +136,8 @@ sys.multiport(&[c, b, e], v, |vv| {
 
 ## 5. 待办
 
-- [ ] 用 MNA 重写 Sparklin Drive（同一电路、两条独立实现，对拍失真谱）
+- [x] 用 MNA 重写 Sparklin Drive（`tests/sparklin_mna.rs`，THD +0.011 pp）
+- [ ] 把 MNA 包成 `Circuit` 供实时使用（需解析雅可比 + 固定迭代次数）
 - [ ] 动态档：BJT `Cje/Cjc/Tf/Tr`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
 - [ ] 运放：失调 / 输入偏置电流 / 共模范围；192 kHz 下 GBW 偏差的修正
 - [ ] 解析雅可比（BJT/二极管的数值差分换掉，热点路径提速）
