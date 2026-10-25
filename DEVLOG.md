@@ -3018,6 +3018,62 @@ rustomp.toml ──► rustomp-gen ──► plugin/src/generated/{identity,para
 
 ---
 
+## E49：生成第一个产物 —— Sparklin Drive v2（无 GUI）（2026-10-25）
+
+S1a/S1b/S1c 之后第一次用**全生成链路**产出一个能听的插件：没有手写电路、没有手写外壳。
+
+### 49.1 链路
+
+```text
+legacy 网表快照 ──(加 4 行 @rustomp 指令)──► circuit/netlist/sparklin_drive.cir
+   └─ rustomp-import --mna ──► circuit/src/generated/sparklin_drive.rs（12 未知量）
+                                  └─ circuit/src/lib.rs：`include!` + `pub type SparklinDrive = Ckt;`
+
+rustomp.toml（2 个参数：gain / level）──► rustomp-gen ──► plugin/src/generated/{identity,params,plugin_impl}
+                                  └─ plugin/src/lib.rs：`mod generated;`（10 行）
+
+scripts/build-all.sh ──► Sparklin Drive Mono / Stereo（AU + VST3 + CLAP）
+```
+
+### 49.2 实测
+
+| 项 | 结果 |
+|---|---|
+| 引擎级 THD @0.2 V（48 kHz + 4× 过采样） | **27.65 %**（离线 MNA 27.579 %、ngspice 27.5682 %、legacy WDF 27.650 %） |
+| 引擎级 THD @1 mV | 0.277 %（基线 0.283 %） |
+| 处理速度 | 3 s 音频 / 0.59 s ≈ **5× 实时**（单声道） |
+| AU 自检（au-smoke，绕过系统注册表） | Mono：1 声道 ✅；Stereo：2 声道 ✅；RMS 0.356、无非有限值 |
+| 安装 | `Sparklin Drive Mono` (aufx/**Sp02**/HpEf)、`Sparklin Drive Stereo` (**Sp03**) 均已装好 |
+
+生成过程中 `new-plugin.sh` → `rustomp-gen` → `rustomp-import` → `build-all.sh` 全程无手写代码。
+
+### 49.3 三个踩坑
+
+**① `plugin_meta.py` 在无 GUI 阶段直接崩**
+`[assets] switch_up` 缺 KeyError、`[ui]` 缺失导致 `--shell` 不可用。
+改成 `.get()` + 空字典，`_asset()` 未声明时返回空串（构建脚本自己判断）。
+
+**② `nih_export_vst3!` 末尾的分号不能删**
+编译器会报 `semicolon_in_expressions_from_non_local_macros` 警告，看起来像我们的问题；
+删掉分号反而直接编译失败（宏展开成 item）。**警告来自 nih-plug 自己的宏卫生**，保留分号、忽略警告。
+
+**③ 生成的常量会告 dead_code**
+`identity.rs` 里按 `cfg` 分叉的常量在特定 feature 组合下用不到 → 文件顶部加 `#![allow(dead_code)]`。
+
+### 49.4 一个仓库约定上的注意点
+
+`plugins/` 是 gitignored，但 workspace 注册写在受控的 `Cargo.toml` 里 ——
+所以**插件项目的 workspace 注册是本地改动，不要提交**（否则 CI 会找不到目录而失败）。
+下游插件的正式归宿是独立仓库（同 `sparklin-drive-legacy`）。
+
+### 49.5 界面与开关（按既定决策）
+
+- **无 GUI**：`editor()` 返回 `None`，宿主显示通用参数界面；界面属 S1d。
+- **无开关**：按 D-005，开关是"插件内的电路分支"。本次只做**非对称分支**（原机接法）；
+  对称模式需要"2 份电路 + 插件层切换"，属后续工作。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -3286,6 +3342,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-25 | **第一个全生成产物：Sparklin Drive v2（无 GUI）**（E49）：网表 → 电路、toml → 外壳、build-all 出 AU/VST3/CLAP；引擎级 THD **27.65%**（基线 27.568%）、5× 实时、AU 单/立体声自检通过并已安装。踩坑：plugin_meta 在无 GUI 阶段崩（assets/ui 需可选）、`nih_export_vst3!` 分号不能删、生成常量需 allow(dead_code) |
 | 2026-10-25 | **S1c：插件侧代码生成**（E48）：新增 `crates/rustomp-gen`（`rustomp.toml` → identity/params/plugin_impl + `--check`）；模板改为无 GUI 外壳（删 build.rs、lib.rs 只剩 `mod generated;`）；`new-plugin.sh` 自动生成。实测：生成的项目 `cargo build` 通过、cdylib 导出 `clap_entry` + `GetPluginFactory`。踩坑：结构体叫 `Params` 与 nih-plug trait 撞名（改 `PluginParams`）、heredoc 反引号被执行 |
 | 2026-10-25 | **把对拍铺进 CI**（E47）：新增 `scripts/verify.sh`（本地/CI 同一入口，分层 + markdown 报告）、`Oracle::discover_or_skip()` + `RUSTOMP_REQUIRE_NGSPICE`（缺 ngspice 在 CI 里是**失败**而不是静默跳过）、CI 拆 fast/oracle/fmt 三个 job 并把对拍数字写进 job summary。全量约 50 s |
 | 2026-10-23 | **阶段收尾：文档对齐 + 外部设计器契约**（E46）：README 状态/质量把关/路线图重写并新增「与外部设计器的接口」；`circuit-import.md` 状态改为已实现、明确映射分层只做了 1+6 级、新增指令与产物章节、新增设计器接口；`declarative-build.md` 拆 S1a/S1b/S1c 并新增 §3.6；新建 `crates/rustomp-import/README.md`。三条硬要求（端口显式、参数显式、型号闭集）落盘 |

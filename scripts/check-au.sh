@@ -3,7 +3,9 @@
 #
 # 一条命令自检已安装的 AU：安装时间、通道能力、单/立体声渲染、Logic 缓存记录。
 #
-#   ./scripts/check-au.sh
+#   ./scripts/check-au.sh            # 默认检查 Mono 变体
+#   ./scripts/check-au.sh stereo     # 检查 Stereo 变体
+#   ./scripts/check-au.sh dual       # 检查双布局变体
 #
 # 用途：区分「插件本身不对」和「Logic 缓存没刷新」。
 set -euo pipefail
@@ -12,8 +14,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 source "$ROOT/scripts/plugin-env.sh"
-NAME="${PLUGIN_NAME} Mono"
-SUBTYPE="${AU_SUBTYPE_MONO}"
+case "${1:-mono}" in
+    mono)   NAME="${PLUGIN_NAME} Mono";   SUBTYPE="${AU_SUBTYPE_MONO}";   CHANS="1" ;;
+    stereo) NAME="${PLUGIN_NAME} Stereo"; SUBTYPE="${AU_SUBTYPE_STEREO}"; CHANS="2" ;;
+    dual)   NAME="${PLUGIN_NAME}";        SUBTYPE="${AU_SUBTYPE_DUAL}";   CHANS="1 2" ;;
+    *) echo "用法: $0 [mono|stereo|dual]"; exit 2 ;;
+esac
 MANU="${AU_MANUFACTURER}"
 COMP="$HOME/Library/Audio/Plug-Ins/Components/$NAME.component"
 
@@ -28,10 +34,10 @@ echo "  时间: $(date -r "$COMP" '+%Y-%m-%d %H:%M:%S')"
 printf "  签名: "; codesign -dv "$COMP" 2>&1 | grep -E "^Signature" | sed 's/Signature=//' || echo "?"
 
 echo
-echo "== 通道能力 / 渲染（单声道 + 立体声）=="
+echo "== 通道能力 / 渲染（变体 ${1:-mono}，测 ${CHANS} 声道）=="
 [ -x build/au_smoke ] || cc -O2 -o build/au_smoke tools/au-smoke/au_smoke.c \
     -framework AudioToolbox -framework CoreFoundation
-for ch in 1 2; do
+for ch in $CHANS; do
     echo "  --- ${ch} 声道 ---"
     ./build/au_smoke "$COMP/Contents/MacOS/$NAME" wrapAsAUV2_inst0Factory \
         aufx "$SUBTYPE" "$MANU" 512 "$ch" 2>&1 \

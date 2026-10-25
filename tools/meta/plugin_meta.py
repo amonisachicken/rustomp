@@ -32,6 +32,13 @@ def load(path: str) -> dict:
         return tomllib.load(f)
 
 
+def _asset(manifest_path, rel):
+    """素材路径 → 绝对路径；未声明时返回空串（构建脚本自己判断）。"""
+    if not rel:
+        return ""
+    return str(Path(manifest_path).resolve().parent / rel)
+
+
 def get(data: dict, dotted: str):
     cur = data
     for part in dotted.split("."):
@@ -61,7 +68,10 @@ def main() -> None:
         print(json.dumps(data, ensure_ascii=False, indent=2))
         return
 
-    p, au, b, a, ui = data["plugin"], data["au"], data["build"], data["assets"], data["ui"]
+    # 无 GUI 阶段可以没有 [assets] / [ui]；缺失时给空字典，避免构建脚本直接崩
+    p, au, b = data["plugin"], data["au"], data["build"]
+    a = data.get("assets", {})
+    ui = data.get("ui", {})
 
     if mode == "--shell":
         pairs = {
@@ -82,16 +92,16 @@ def main() -> None:
             "AU_SUBTYPE_DUAL": au["subtype_dual"],
             "BUILD_VARIANTS": " ".join(b["variants"]),
             "BUILD_DUAL": "1" if b.get("dual_variant") else "0",
-            # 素材
-            "ASSET_PANEL": str(Path(path).resolve().parent / a["panel"]),
-            "ASSET_SWITCH_UP": str(Path(path).resolve().parent / a["switch_up"]),
-            "ASSET_SWITCH_DOWN": str(Path(path).resolve().parent / a["switch_down"]),
-            # 界面
-            "UI_SVG_WIDTH": ui["svg_width"],
-            "UI_SVG_HEIGHT": ui["svg_height"],
-            "UI_WINDOW_WIDTH": ui["window_width"],
-            "UI_WINDOW_HEIGHT": ui["window_height"],
-            "UI_BACKGROUND": ui["background"],
+            # 素材（可能没有：无 GUI 阶段的插件不声明 [assets]）
+            "ASSET_PANEL": _asset(path, a.get("panel")),
+            "ASSET_SWITCH_UP": _asset(path, a.get("switch_up")),
+            "ASSET_SWITCH_DOWN": _asset(path, a.get("switch_down")),
+            # 界面（同上，缺省 0）
+            "UI_SVG_WIDTH": ui.get("svg_width", 0),
+            "UI_SVG_HEIGHT": ui.get("svg_height", 0),
+            "UI_WINDOW_WIDTH": ui.get("window_width", 0),
+            "UI_WINDOW_HEIGHT": ui.get("window_height", 0),
+            "UI_BACKGROUND": ui.get("background", "#000000"),
         }
         for k, v in pairs.items():
             print(f"{k}={shlex.quote(str(v))}")

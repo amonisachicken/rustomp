@@ -34,7 +34,9 @@ fn fmt_f64(v: f64) -> String {
 /// 不再需要 build.rs 按 feature 重新生成。
 pub fn identity_rs(m: &Manifest) -> String {
     let mut out = String::from(HEADER);
-    out.push_str("// 身份与元数据。变体差异用 cfg 选择。\n\n");
+    out.push_str("// 身份与元数据。变体差异用 cfg 选择。\n");
+    // 按变体分叉的常量在某些 feature 组合下不会被用到，属正常
+    out.push_str("#![allow(dead_code)]\n\n");
 
     let variants = m.variants();
     let mut emit_variant = |suffix: &dyn Fn(&str) -> String| {
@@ -402,6 +404,9 @@ pub fn plugin_impl_rs(m: &Manifest) -> String {
              const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =\n\
                  &[Vst3SubCategory::Fx, Vst3SubCategory::Distortion];\n\
          }}\n\n\
+         // 注意：末尾分号必须保留（宏展开成 item）。保留后编译器会报一条
+         // `semicolon_in_expressions_from_non_local_macros` 警告 —— 那来自
+         // nih-plug 自己的宏卫生问题，不是生成代码的错，忽略即可。
          nih_export_clap!({s});\n\
          nih_export_vst3!({s});\n"
     ));
