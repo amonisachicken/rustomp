@@ -409,6 +409,7 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 | `docs/component-library.md` | **元件库精度规范**：档位定义、逐器件推荐、验收实验模板 |
 | `docs/circuit-import.md` | **电路导入与元件映射规范**：可插拔导入、映射流水线、引脚绑定、mapping.toml |
 | `docs/declarative-build.md` | **声明式构建规范**：代码生成 vs 打包两个平面、后端契约、多平台矩阵、S1–S5 路线 |
+| `docs/ab-test-sparklin-v2.md` | **AB 测试复盘**：v2 生成路径 vs legacy 手推实现；两个 bug 的定位过程、9 条经验、发布前验收清单 |
 | `crates/rustomp-dsp/README.md` | DSP 核心：器件库、MNA 装配器、实时路径、对拍结果 |
 | `crates/rustomp-import/README.md` | 导入器 + 网表 → 装配代码生成（指令、产物、漂移守卫、更新流程） |
 | `devices/REPORT.md` | 器件模型的清洗报告（保留/丢弃了哪些参数、为什么） |
