@@ -180,7 +180,11 @@ cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check] [--ou
 * @rustomp param RP1A gain pot max=500k              # R = max·gain
 * @rustomp param RP2B level pot max=500k invert      # R = max·(1−level)
 * @rustomp switch symmetric n_t10L n_t5L closed=0.001 open=1e12
+* @rustomp newton=4                                 # 每样本牛顿迭代次数（默认 3）
 ```
+
+> **`newton=` 不是性能旋钮，是正确性旋钮**（DEVLOG E50）：次数不够时求解器会进入
+> 次谐波极限环 —— 正弦输入完全看不出来，方波/快速边沿才会暴露（低频"噗噗"、高频发毛）。
 
 产出（入库，`// @generated` 头）：
 

@@ -34,6 +34,13 @@ pub const WIRE_OHMS: f64 = 0.01;
 /// 未知量上限（`Netlist<N>` 的 `N` 是编译期常量）。
 const MAX_UNKNOWNS: usize = 64;
 
+/// 实时路径默认的牛顿迭代次数。
+///
+/// **不能用 2**：方波/快速边沿下 2 次迭代会欠收敛，解进入次谐波极限环
+/// （实测 880 Hz 方波时 f/8、f/16 分量高达 −0 dB，比基频只低 10 dB 出头）。
+/// 3 次已足够（次谐波降到 −80 dB），这里取 3 作默认，需要余量可用 `newton=4`。
+pub const DEFAULT_NEWTON_ITERS: usize = 3;
+
 #[derive(Debug, Clone)]
 pub struct Options {
     /// 输入端口对应的电压源名（默认：带 `SIN`/`AC`/`PULSE` 的那个源）
@@ -164,6 +171,9 @@ struct SwitchSpec {
 struct Directives {
     input: Option<String>,
     output: Option<String>,
+    /// 每样本的牛顿迭代次数（实时路径用）。**默认 3**：
+    /// 2 次在方波/快速边沿下会欠收敛、进入次谐波极限环（DEVLOG E50）。
+    newton: Option<usize>,
     pots: Vec<PotParam>,
     switches: Vec<SwitchSpec>,
 }
@@ -183,6 +193,14 @@ fn parse_directives(notes: &[String]) -> Result<Directives, String> {
                     d.input = Some(v.to_string());
                 } else if let Some(v) = t.strip_prefix("out=") {
                     d.output = Some(v.to_string());
+                } else if let Some(v) = t.strip_prefix("newton=") {
+                    let n: usize = v
+                        .parse()
+                        .map_err(|_| format!("`newton={v}` 不是整数"))?;
+                    if !(2..=64).contains(&n) {
+                        return Err(format!("newton={n} 不合理（允许 2..=64）"));
+                    }
+                    d.newton = Some(n);
                 }
             }
             continue;
@@ -668,8 +686,13 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     code.push_str(&format!(
         "/// 未知量个数（`Netlist<N>` 的 N）\npub const N: usize = {unknowns};\n\n"
     ));
-    code.push_str("/// 实时路径的牛顿迭代次数（2 次已验证：THD 与离线求解相差 < 0.1 pp）\n");
-    code.push_str("pub const NEWTON_ITERS: usize = 2;\n\n");
+    let iters = dirs.newton.unwrap_or(DEFAULT_NEWTON_ITERS);
+    // 注意：字符串里不要用「缩进续行」——续行后的空格会原样进入生成物
+    code.push_str(&format!(
+        "/// 实时路径的牛顿迭代次数（`* @rustomp newton=` 指定；默认 {DEFAULT_NEWTON_ITERS}）\n\n\
+         /// 2 次不够：方波/快速边沿下会欠收敛 → 次谐波极限环（DEVLOG E50）。\n\
+         pub const NEWTON_ITERS: usize = {iters};\n\n"
+    ));
 
     // 参数结构体
     if !param_fields.is_empty() {

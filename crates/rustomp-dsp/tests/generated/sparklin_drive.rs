@@ -7,8 +7,10 @@ use rustomp_dsp::{D_1N4148, GND, Netlist, OP07};
 /// 未知量个数（`Netlist<N>` 的 N）
 pub const N: usize = 12;
 
-/// 实时路径的牛顿迭代次数（2 次已验证：THD 与离线求解相差 < 0.1 pp）
-pub const NEWTON_ITERS: usize = 2;
+/// 实时路径的牛顿迭代次数（`* @rustomp newton=` 指定；默认 3）
+
+/// 2 次不够：方波/快速边沿下会欠收敛 → 次谐波极限环（DEVLOG E50）。
+pub const NEWTON_ITERS: usize = 4;
 
 /// 可调参数（电位器位置 0..1 / 开关布尔）。
 #[derive(Clone, Copy, PartialEq)]

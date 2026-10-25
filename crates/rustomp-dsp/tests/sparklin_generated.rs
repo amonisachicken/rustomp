@@ -112,3 +112,42 @@ fn gain_pot_changes_clipping() {
     assert!(thds[0] < thds[1] && thds[1] < thds[2], "GAIN 越大失真应越大：{thds:?}");
     assert!(thds[2] > 10.0, "GAIN 拧满时应明显削波（实测 {:.1}%）", thds[2]);
 }
+
+/// **欠收敛回归**（DEVLOG E50）：方波是最容易暴露"牛顿迭代不够"的输入。
+///
+/// 2 次迭代时实测 880 Hz 方波会在 f/8、f/16 出现 −0…+19 dB 的**次谐波**
+/// （比基频只低十几 dB），听感就是"低频噗噗声 + 发浑"。
+/// 这里要求次谐波低于基频 60 dB —— 正常电路应当在 −80 dB 以下。
+#[test]
+fn no_subharmonics_under_square_input() {
+    const F0: f64 = 880.0;
+    let mut c = Ckt::new(FS);
+    c.set_params(at(0.5, 0.5, false));
+
+    let warm = (2.0 * FS) as usize; // 等直流恢复稳定
+    let n = (0.2 * FS) as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..(warm + n) {
+        let t = i as f64 / FS;
+        let x = if (t * F0).fract() < 0.5 { 0.5 } else { -0.5 };
+        let y = c.process(x);
+        if i >= warm {
+            out.push(y);
+        }
+    }
+
+    let fund = harmonics(&out, FS, F0, 1)[0];
+    let subs: Vec<f64> = [2.0, 4.0, 8.0, 16.0]
+        .iter()
+        .map(|d| harmonics(&out, FS, F0 / d, 1)[0])
+        .collect();
+    let worst = subs.iter().cloned().fold(0.0f64, f64::max);
+    let db = 20.0 * (worst / fund).log10();
+    println!(
+        "\n=== 方波次谐波（f/2,f/4,f/8,f/16）===\n  最大 {db:.1} dB（要求 < -60 dB）  实测 {:?}",
+        subs.iter()
+            .map(|v| format!("{:.0}", 20.0 * (v / fund).log10()))
+            .collect::<Vec<_>>()
+    );
+    assert!(db < -60.0, "出现次谐波（{db:.1} dB）：牛顿迭代次数不够，求解器进入了极限环");
+}

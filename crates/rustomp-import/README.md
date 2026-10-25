@@ -46,11 +46,15 @@ cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check] [--ou
 * @rustomp param RP1A gain pot max=500k              # R = max·gain
 * @rustomp param RP2B level pot max=500k invert      # R = max·(1−level)
 * @rustomp switch symmetric n_t10L n_t5L closed=0.001 open=1e12
+* @rustomp newton=4                                  # 每样本牛顿迭代次数（默认 3）
 ```
 
 - `in=` / `out=`：**必须显式给**，我们不猜哪个节点是输出；
 - `param`：电位器 → 生成 `Params.gain: f64`（默认 0.5）；
 - `switch`：开关 → 生成 `Params.symmetric: bool`（默认 `false`），实现方式是"新建一只可切换电阻"。
+- `newton=`：实时路径每样本的牛顿迭代次数。**这是正确性参数，不是性能参数** ——
+  2 次在方波/快速边沿下会欠收敛、产生次谐波极限环（DEVLOG E50）。默认 3，有振荡器类
+  方波输入的电路建议 4。
 
 ### 2.2 生成的产物
 

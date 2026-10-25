@@ -3074,6 +3074,61 @@ scripts/build-all.sh ──► Sparklin Drive Mono / Stereo（AU + VST3 + CLAP�
 
 ---
 
+## E50：AB 对比暴露的真 bug —— 2 次牛顿迭代导致"次谐波极限环"（2026-10-25）
+
+用户把新版（MNA 生成）与 legacy（WDF）装进 Logic 做 A/B，反馈：
+**音色取向相同，但新版高频更毛更亮，且混入了难以察觉却让整体劣化的浑浊刺耳成分，"有数字味"**。
+接入信号源看 FFT：**正弦一切正常，一换方波新版就露馅**（基频以下出现大片隆起 + 谐波间锯齿杂散）。
+
+### 50.1 根因：`NEWTON_ITERS = 2` 欠收敛 → 次谐波极限环
+
+离线台架复现（880 Hz、Gain 50%、2 s 预热后取 0.2 s，dB 相对基频）：
+
+| 实现 | f/2 | f/4 | f/8 | f/16 | 谐波阶梯 |
+|---|---|---|---|---|---|
+| legacy（WDF，收敛） | −80 | −86 | −70 | −83 | 平滑 |
+| **MNA @2 次迭代** | **+1** | −2 | **+12** | **+19** | 锯齿（h6=+7、h10=+7、h16=+14…） |
+| MNA @3 次 | −82 | −86 | −71 | −83 | 平滑（但仍不平整） |
+| **MNA @4 次** | −80 | −86 | −70 | −83 | 平滑 |
+
+正弦输入时 2 次迭代的次谐波是 −109 dB（干净），**方波/快速边沿才会触发** ——
+这解释了"为什么正弦看不出来、一上方波就露馅"。
+
+### 50.2 修复
+
+1. `mna_codegen` 新增网表指令 **`* @rustomp newton=<n>`**，默认值从 2 改成 **3**；
+   Sparklin Drive 用 **4**（3 次虽然次谐波已降到 −82 dB，但方波的高次谐波仍不平整）。
+2. **回归测试**（`tests/sparklin_generated.rs::no_subharmonics_under_square_input`）：
+   880 Hz 方波下 f/2、f/4、f/8、f/16 必须都低于基频 60 dB。实测 −70 dB（f/8）。
+3. `Netlist::step_fixed` 的文档写明：**固定迭代次数是"用精度换确定性"的交易，
+   次数不够会产生极限环；必须用方波验证**。
+
+### 50.3 效果
+
+| 指标 | 2 次迭代（旧） | 4 次迭代（新） |
+|---|---|---|
+| 方波次谐波 | **+19 dB** | **−70 dB** |
+| THD @0.2 V | 27.65 % | **27.58 %**（离线 27.579 / ngspice 27.5682） |
+| 正弦谐波 h1–h21 | 高次抬高 2–4 dB | 与 legacy 逐次差 ≤1 dB |
+| 每内层样本耗时 | ~1.0 µs | **~1.87 µs** |
+| 48 kHz 单声道 | ~20 % 单核 | **~36 %** |
+| 48 kHz 立体声（4×） | ~40 % | **~72 %** |
+
+**用 2 倍 CPU 换回正确性，值得。**
+
+### 50.4 教训（写下来给以后的自己）
+
+1. **正弦测试不足以验证非线性求解器**：这个 bug 在 27.6% 的 THD、h2–h9 全部对上 0.1 pp 的情况下依然存在。
+   非线性求解器的验收必须包含**最"难算"的输入**：方波、突变的阶跃、最大摆幅。
+2. **"固定迭代次数"必须配"结果形态"的检查**：固定次数是为了实时确定性，
+   但没有任何收敛判据时，只能靠**行为级回归**（次谐波电平）兜底。
+3. **THD 对不上 0.1 pp 并不代表没问题**：2 次迭代的 THD 27.65% 看起来"很好"，
+   但它同时藏着一个 −0 dB 的次谐波。
+4. 用户的主观描述（"更毛更亮 + 浑浊刺耳 + 数字味"）精确对应量化结果
+   （高次谐波 +2–4 dB、次谐波 +19 dB）—— **听感和指标是对得上的**。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -3342,6 +3397,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-25 | **修 AB 对比暴露的次谐波 bug**（E50）：`NEWTON_ITERS=2` 在方波/快速边沿下欠收敛 → 次谐波极限环（f/8 +12 dB、f/16 +19 dB，正弦完全看不出来）。改成网表指令 `newton=`（默认 3，Sparklin Drive 用 4），THD 27.65→27.58%，方波次谐波 +19→−70 dB，代价是 CPU 2 倍（单声道 36%/立体声 72%）。新增回归测试：方波次谐波必须 < −60 dB |
 | 2026-10-25 | **第一个全生成产物：Sparklin Drive v2（无 GUI）**（E49）：网表 → 电路、toml → 外壳、build-all 出 AU/VST3/CLAP；引擎级 THD **27.65%**（基线 27.568%）、5× 实时、AU 单/立体声自检通过并已安装。踩坑：plugin_meta 在无 GUI 阶段崩（assets/ui 需可选）、`nih_export_vst3!` 分号不能删、生成常量需 allow(dead_code) |
 | 2026-10-25 | **S1c：插件侧代码生成**（E48）：新增 `crates/rustomp-gen`（`rustomp.toml` → identity/params/plugin_impl + `--check`）；模板改为无 GUI 外壳（删 build.rs、lib.rs 只剩 `mod generated;`）；`new-plugin.sh` 自动生成。实测：生成的项目 `cargo build` 通过、cdylib 导出 `clap_entry` + `GetPluginFactory`。踩坑：结构体叫 `Params` 与 nih-plug trait 撞名（改 `PluginParams`）、heredoc 反引号被执行 |
 | 2026-10-25 | **把对拍铺进 CI**（E47）：新增 `scripts/verify.sh`（本地/CI 同一入口，分层 + markdown 报告）、`Oracle::discover_or_skip()` + `RUSTOMP_REQUIRE_NGSPICE`（缺 ngspice 在 CI 里是**失败**而不是静默跳过）、CI 拆 fast/oracle/fmt 三个 job 并把对拍数字写进 job summary。全量约 50 s |

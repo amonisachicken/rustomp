@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "plugins/sparklin-drive/plugin",
+    "plugins/sparklin-drive/circuit",
     "crates/rustomp-gen",
     "crates/rustomp-dsp",
     "crates/rustomp-gui",
