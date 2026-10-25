@@ -3129,6 +3129,75 @@ scripts/build-all.sh ──► Sparklin Drive Mono / Stereo（AU + VST3 + CLAP�
 
 ---
 
+## E51：电位器拧到端点 → 整块静音（0 Ω 电阻）= 框架 bug（2026-10-25）
+
+用户实测：**新版音量拉到 100% 就没声，拉回 99% 又有声**。
+
+### 51.1 根因：`R = 0` 让导纳变成 ∞
+
+电位器在这个电路里是**两个电阻**：
+
+```text
+level = t:  R_bottom = 500k·t        （地 → 抽头）
+            R_top    = 500k·(1−t)    （抽头 → C3）
+```
+
+`t = 1` 时 `R_top = 0 Ω`；MNA 用**导纳**表示电阻 → `g = 1/0 = ∞` → 矩阵全 NaN →
+引擎的数值熔断器判定"出事了" → 复位并输出静音。**所以是"静音"，不是"没声但有输出"。**
+
+同一个坑还有一处：**`gain = 0`**（反馈电阻 = 0 Ω）→ 同样整块静音。
+复现记录：
+
+```
+gain=0.50 level=1.00 → 峰值 0.0000，非有限值 20000   ← 全 NaN
+gain=0.00 level=0.50 → 峰值 0.0000，非有限值 20000   ← 全 NaN
+```
+
+### 51.2 修复：电阻夹到 1 mΩ（单一入口）
+
+```rust
+pub const MIN_RESISTANCE: f64 = 1e-3;   // 1 mΩ ≈ 数值上的"短路"
+
+impl Mna<N> {
+    pub fn resistor(&mut self, a: usize, b: usize, r: f64) {
+        self.conductance(a, b, 1.0 / floor_resistance(r));   // ← 唯一装配入口
+    }
+}
+```
+
+同时 `Netlist::resistor` / `push_resistor` / `set_resistance` 存值时也夹紧，
+保证"读回来的值"与"装配时用的值"一致。
+
+1 mΩ 与生成器里"开关闭合 = 1 mΩ"是同一个约定 —— **框架里只保留一种"短路"的定义**。
+
+### 51.3 回归测试
+
+`tests/sparklin_generated.rs::pot_extremes_stay_finite_and_monotonic`：
+
+| gain | level | 峰值 |
+|---|---|---|
+| 0.0 | 0.0 | 0.0000（静音，正确） |
+| 0.0 | 0.5 | 0.1046（退化成单位增益缓冲，不再有增益） |
+| 0.0 | 1.0 | 0.2093 |
+| 0.5 | 0.0 | 0.0000（静音，正确） |
+| **0.5** | **0.5** | 0.5258 |
+| **0.5** | **1.0** | **1.0516**（满音量，比 0.99 的 1.0410 略大 ✓ 单调） |
+| 1.0 | 0.5 | 0.5283 |
+| 1.0 | 1.0 | 1.0567 |
+
+测试断言：**每个端点都必须输出有限值** + 音量随 level 单调 + `gain=0` 不得比 50% 更响。
+
+### 51.4 教训
+
+1. **"参数端点是 bug 的温床"**：中间值一切正常，端点才会触发（0 Ω、0 长度、满量程）。
+   凡是生成"由参数算出来的元件值"的地方，都要问一句：**t=0 和 t=1 时这个表达式等于几？**
+2. **框架必须比使用者更保守**：生成器可以算错（毕竟是我们写的模板代码），
+   但 MNA 装配器不该允许 `1/0` 这种值进矩阵。**在最底层的单一入口夹紧，比在每个生成表达式里加 `max()` 更可靠。**
+3. 引擎的 NaN 熔断在这里帮了大忙：它把"NaN 扩散成整首歌都毁了"变成了"这块没声"。
+   但**熔断只是止损，不是修复** —— 用户听到的"没声"正是熔断在工作。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -3397,6 +3466,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-25 | **修电位器端点静音**（E51）：`level=1` 时下臂 0 Ω、`gain=0` 时反馈电阻 0 Ω → `1/0=∞` → NaN → 引擎熔断静音。框架在唯一装配入口把电阻夹到 `MIN_RESISTANCE`(1 mΩ)；新增回归测试（8 个端点全部有限 + 音量单调）。教训：参数端点是 bug 温床，框架必须比使用者更保守 |
 | 2026-10-25 | **修 AB 对比暴露的次谐波 bug**（E50）：`NEWTON_ITERS=2` 在方波/快速边沿下欠收敛 → 次谐波极限环（f/8 +12 dB、f/16 +19 dB，正弦完全看不出来）。改成网表指令 `newton=`（默认 3，Sparklin Drive 用 4），THD 27.65→27.58%，方波次谐波 +19→−70 dB，代价是 CPU 2 倍（单声道 36%/立体声 72%）。新增回归测试：方波次谐波必须 < −60 dB |
 | 2026-10-25 | **第一个全生成产物：Sparklin Drive v2（无 GUI）**（E49）：网表 → 电路、toml → 外壳、build-all 出 AU/VST3/CLAP；引擎级 THD **27.65%**（基线 27.568%）、5× 实时、AU 单/立体声自检通过并已安装。踩坑：plugin_meta 在无 GUI 阶段崩（assets/ui 需可选）、`nih_export_vst3!` 分号不能删、生成常量需 allow(dead_code) |
 | 2026-10-25 | **S1c：插件侧代码生成**（E48）：新增 `crates/rustomp-gen`（`rustomp.toml` → identity/params/plugin_impl + `--check`）；模板改为无 GUI 外壳（删 build.rs、lib.rs 只剩 `mod generated;`）；`new-plugin.sh` 自动生成。实测：生成的项目 `cargo build` 通过、cdylib 导出 `clap_entry` + `GetPluginFactory`。踩坑：结构体叫 `Params` 与 nih-plug trait 撞名（改 `PluginParams`）、heredoc 反引号被执行 |

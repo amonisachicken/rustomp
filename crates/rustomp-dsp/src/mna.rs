@@ -29,6 +29,26 @@ use crate::devices::{Bjt, Diode, Jfet, Nmos, OpAmpModel, OpAmpState};
 /// 地节点编号（电压恒为 0，不进入矩阵）
 pub const GND: usize = 0;
 
+/// 电阻的数值下限（1 mΩ）。
+///
+/// MNA 用"导纳"表示电阻，`R = 0` 会算出 `g = ∞`，矩阵立刻出 NaN，
+/// 再被引擎的熔断器判定为异常 → **整块静音**。
+/// 电位器拧到端点（`level = 1` 时下臂 = 0 Ω、`gain = 0` 时反馈电阻 = 0 Ω）
+/// 正好会踩到这一点（DEVLOG E51）。
+///
+/// 1 mΩ 在数值上等效"短路"，与生成器里"开关闭合 = 1 mΩ"是同一个约定。
+pub const MIN_RESISTANCE: f64 = 1e-3;
+
+/// 把电阻值夹到安全范围（非有限值/0/负数都变成 `MIN_RESISTANCE`）。
+#[inline]
+pub fn floor_resistance(r: f64) -> f64 {
+    if r.is_finite() {
+        r.abs().max(MIN_RESISTANCE)
+    } else {
+        MIN_RESISTANCE
+    }
+}
+
 /// 稀疏度不重要（N ≤ 16），用稠密矩阵 + 部分主元 LU。
 ///
 /// 未知量排布：前若干个是**节点电压**，其后是**电压源支路电流**。
@@ -125,9 +145,9 @@ impl<const N: usize> Mna<N> {
         }
     }
 
-    /// 电阻
+    /// 电阻。**低于 [`MIN_RESISTANCE`] 会被夹到下限**（0 Ω 会算出 ∞ 导纳 → NaN）。
     pub fn resistor(&mut self, a: usize, b: usize, r: f64) {
-        self.conductance(a, b, 1.0 / r);
+        self.conductance(a, b, 1.0 / floor_resistance(r));
     }
 
     /// 独立电流源：电流 `i` **从 a 经元件流向 b**（外部注入 a、流出 b）。
@@ -501,7 +521,7 @@ impl<const N: usize> Netlist<N> {
         self
     }
     pub fn resistor(&mut self, a: usize, b: usize, r: f64) -> &mut Self {
-        self.push(Element::Resistor { a, b, r })
+        self.push(Element::Resistor { a, b, r: floor_resistance(r) })
     }
     pub fn capacitor(&mut self, a: usize, b: usize, c: f64) -> &mut Self {
         self.push(Element::Capacitor { a, b, c, v_prev: 0.0 })
@@ -726,6 +746,7 @@ impl<const N: usize> Netlist<N> {
 
     /// 按索引改一个电阻的值（电位器/开关用；值没变就不动，保证 `set_params` 便宜）。
     pub fn set_resistance(&mut self, idx: usize, r: f64) -> bool {
+        let r = floor_resistance(r);
         if let Some(Element::Resistor { r: cur, .. }) = self.elems.get_mut(idx) {
             if *cur != r {
                 *cur = r;
@@ -738,7 +759,7 @@ impl<const N: usize> Netlist<N> {
     /// 加一个电阻并返回它的索引（便于之后用 [`Self::set_resistance`] 调参）。
     pub fn push_resistor(&mut self, a: usize, b: usize, r: f64) -> usize {
         let idx = self.elems.len();
-        self.elems.push(Element::Resistor { a, b, r });
+        self.elems.push(Element::Resistor { a, b, r: floor_resistance(r) });
         idx
     }
 

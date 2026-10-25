@@ -151,3 +151,58 @@ fn no_subharmonics_under_square_input() {
     );
     assert!(db < -60.0, "出现次谐波（{db:.1} dB）：牛顿迭代次数不够，求解器进入了极限环");
 }
+
+/// **电位器端点回归**（DEVLOG E51）。
+///
+/// `level = 1` 时下臂电阻 = 0 Ω、`gain = 0` 时反馈电阻 = 0 Ω；
+/// MNA 用导纳表示电阻，`1/0 = ∞` → 矩阵 NaN → 引擎熔断 → **整块静音**（用户实测：
+/// 音量拉到 100% 就没声，99% 正常）。框架现在把电阻夹到 `MIN_RESISTANCE`（1 mΩ）。
+#[test]
+fn pot_extremes_stay_finite_and_monotonic() {
+    let peak_at = |gain: f64, level: f64| -> f64 {
+        let mut c = Ckt::new(FS);
+        c.set_params(at(gain, level, false));
+        let mut peak = 0.0f64;
+        let mut nonfinite = 0;
+        for i in 0..(0.05 * FS) as usize {
+            let t = i as f64 / FS;
+            let y = c.process(0.2 * (std::f64::consts::TAU * 1_000.0 * t).sin());
+            if y.is_finite() {
+                peak = peak.max(y.abs());
+            } else {
+                nonfinite += 1;
+            }
+        }
+        assert_eq!(nonfinite, 0, "gain={gain} level={level} 出现 {nonfinite} 个非有限值");
+        peak
+    };
+
+    // 所有端点都必须有限（0/0 组合曾直接全 NaN）
+    let mut p = Vec::new();
+    for &(g, l) in &[
+        (0.0, 0.0),
+        (0.0, 0.5),
+        (0.0, 1.0),
+        (0.5, 0.0),
+        (0.5, 0.5),
+        (0.5, 1.0),
+        (1.0, 0.5),
+        (1.0, 1.0),
+    ] {
+        p.push((g, l, peak_at(g, l)));
+    }
+    println!("\n=== 电位器端点 ===");
+    for (g, l, pk) in &p {
+        println!("  gain={g:.1} level={l:.1} → 峰值 {pk:.4}");
+    }
+
+    // 音量单调：level=1 应该比 0.5 响，level=0 应该几乎没声
+    let half = p.iter().find(|(g, l, _)| *g == 0.5 && *l == 0.5).unwrap().2;
+    let full = p.iter().find(|(g, l, _)| *g == 0.5 && *l == 1.0).unwrap().2;
+    let mute = p.iter().find(|(g, l, _)| *g == 0.5 && *l == 0.0).unwrap().2;
+    assert!(full > half * 1.5, "level=1 应明显大于 level=0.5：{full:.3} vs {half:.3}");
+    assert!(mute < 1e-3, "level=0 应接近静音：{mute:.6}");
+    // GAIN=0 → 反馈电阻(以及削波环)被短接 → 退化成单位增益缓冲，不应有增益
+    let g0 = p.iter().find(|(g, l, _)| *g == 0.0 && *l == 0.5).unwrap().2;
+    assert!(g0 < half, "GAIN=0 不应比 50% 更响：{g0:.3} vs {half:.3}");
+}
