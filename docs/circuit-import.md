@@ -1,8 +1,9 @@
 # 电路导入与元件映射规范
 
-> 状态：**原则已定，待实现**（2026-10-23）
-> 相关：`DEVLOG.md` E32 / ADR-013；`docs/component-library.md`
-> 上游：用户提供的 LTspice 风格器件模型；`plugins/` 下的下游插件项目
+> 状态：**S1a/S1b 已实现**（2026-10-23）—— `SpiceNetlist` 导入器 + 闭集映射 + 网表→装配代码生成。
+> 映射分层里目前只落地了「精确命中 / 报错」两级，别名、项目映射、类别兜底、参数直通仍是待做项（§3）。
+> 相关：`DEVLOG.md` E32 / ADR-013、E44 / E45；`docs/component-library.md`、`docs/declarative-build.md`
+> 上游：用户提供的 LTspice 风格器件模型；原理图设计器（规划中，见 §10）；`plugins/` 下的下游插件项目
 
 ---
 
@@ -17,10 +18,19 @@ pub trait Importer {
     fn import(&self, path: &Path, content: &str) -> Result<ImportedCircuit, ImportError>;
 }
 
-pub fn registry() -> &'static [&'static dyn Importer] { &[&BreadSpice] }
+pub fn registry() -> Vec<Box<dyn Importer>> {   // 顺序即优先级
+    vec![Box::new(BreadSpice), Box::new(SpiceNetlist)]
+}
 ```
 
 新增一种格式 = **实现一个结构体 + 在 `registry()` 加一行**。框架其余部分不需要改动。
+
+现成的两个实现：
+
+| 导入器 | 处理 | 状态 |
+|---|---|---|
+| `BreadSpice` | `.bread`（面包板） | ✅ |
+| `SpiceNetlist` | `.cir` / `.net` / `.sp` / `.spice`（含内容嗅探） | ✅（E44） |
 
 ### 1.1 每种导入器必须产出什么
 
@@ -37,7 +47,7 @@ pub fn registry() -> &'static [&'static dyn Importer] { &[&BreadSpice] }
 
 | 格式 | 本质 | 工作量 | 说明 |
 |---|---|---|---|
-| **`SpiceNetlist`**（`.net` / `.cir` / `.sp`） | 网表：一行一个器件 + 节点 | 小 | **优先实现**。覆盖 LTspice（*View → SPICE Netlist*）、KiCad、ngspice、Qucs 等导出 |
+| **`SpiceNetlist`**（`.net` / `.cir` / `.sp`） | 网表：一行一个器件 + 节点 | 小 | ✅ **已实现**（E44）。覆盖 LTspice（*View → SPICE Netlist*）、KiCad、ngspice、Qucs 等导出 |
 | `LtspiceAsc`（`.asc`） | 原理图：SYMBOL / WIRE / FLAG + 坐标 | 大 | 连通性要靠**导线坐标重合**推断，还要处理旋转/镜像与 `.lib` 引用；作为后续便利格式 |
 | `BreadSpice`（`.bread`） | 面包板：元件 + 插孔 id | 已完成 | 几何规则归并 net |
 | 其它（EasyEDA / KiCad .kicad_sch / …） | — | 各自 | 按同一 trait 接入 |
@@ -59,6 +69,11 @@ pub fn registry() -> &'static [&'static dyn Importer] { &[&BreadSpice] }
 | **4** | **类别默认（防呆兜底）** | `ClassDefault` | 只知道类别时用该类默认型号，**必须写进 notes** |
 | **5** | 参数直通（**power user 档**） | `Params` | 用外部 `.model` 参数构造器件实例，**仅限实验，不进发布路径** |
 | **6** | 仍失败 | `Unresolved` | 按 `[strict]` 决定：`error` / 仅警告 / 用默认 |
+
+> **当前实现**：只落地了 **1（精确命中）** 与 **6（报错）**。
+> 未命中时会打印"不在闭集表里"+ 列出网表里出现的所有型号 + 已有型号清单（`mna_codegen::unknown_model_error`）。
+> 2/3/4/5 级（别名、项目 `mapping.toml`、类别兜底、参数直通）**尚未实现** ——
+> 在实现之前，未命中一律**硬失败**，不会静默替换（这比"防呆兜底做错"安全）。
 
 对应的策略选择（用户已确认）：
 
@@ -150,6 +165,53 @@ params_passthrough = false   # power user 档，默认关闭
 
 ---
 
+## 6.5 网表 → 装配代码（S1a/S1b，已实现）
+
+导入的终点不是"生成一份 SPICE"，而是**生成能跑的 Rust 电路**：
+
+```bash
+cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check] [--output-node N]
+```
+
+网表里用注释写指令（导入器把 `* @rustomp …` 收进 `notes`，由 codegen 解析）：
+
+```text
+* @rustomp in=VS1 out=n_t27R
+* @rustomp param RP1A gain pot max=500k              # R = max·gain
+* @rustomp param RP2B level pot max=500k invert      # R = max·(1−level)
+* @rustomp switch symmetric n_t10L n_t5L closed=0.001 open=1e12
+```
+
+产出（入库，`// @generated` 头）：
+
+| 内容 | 说明 |
+|---|---|
+| `pub const N` / `pub mod node` | 未知量个数、节点编号（地 = 0，其余按名字排序 → diff 稳定） |
+| `pub fn build(fs, &Params) -> Netlist<N>` | 装配函数 |
+| `pub struct Params` + `Default` | 电位器（`f64`，默认 0.5）、开关（`bool`，默认 `false`） |
+| `pub struct Ckt` + `impl rustomp_dsp::Circuit` | **直接能塞进 `Engine`**；`set_params` 只改电阻值 |
+| `pub const IDX_*` / `FIXED_IN` / `IN` / `OUT` | 参数元件下标与端口 |
+
+codegen 顺手做的拓扑处理（都在 `mna_codegen.rs` 里，**有测试**）：
+
+1. **导线合并**：`≤ 0.01 Ω` 视为理想导线（breadspice 的连线是 `0.001 Ω`），并查集并节点；
+2. **自环跳过**：电位器"短接的那一半"（`RP1B a a 250k`）对电路无影响；
+3. **激励分类**：纯 DC 源 → 固定电位节点（不占未知量）；`SIN/AC/PULSE` 源 → 输入端口；
+4. **闭集型号映射**：`1N4148/1N34A/1N4007/1N5817/LedRed/LedGreen/LedBLUE/BC549C/BC559C/AC127/AC128/J201/2N7000/OP07A`。
+
+### 6.5.1 漂移守卫
+
+生成物必须与"现在重新生成"逐字节一致，否则测试失败并打印重生成命令：
+
+```
+crates/rustomp-import/tests/codegen.rs::all_generated_files_are_up_to_date
+```
+
+配套 `--check`（只比对不写），可直接进 CI。
+
+> 生成物**必须做行为级验证**（DC 工作点 + THD），光比文本不够 ——
+> E44/E45 里各有一个"编译通过、不报错、结果却是错的"的例子。
+
 ## 7. IR 需要的扩展
 
 ```rust
@@ -186,8 +248,27 @@ pub enum Resolved {
 
 ---
 
+## 10. 与外部设计器的接口（规划中）
+
+用户将分别开发 **原理图设计器**（画图 → 出网表）与 **插件 GUI 设计器**。
+本项目不实现这两者，只保证**契约稳定**：
+
+| 设计器 | 契约（本项目负责） | 方向 |
+|---|---|---|
+| **原理图设计器** | 输出 **SPICE 网表** + `* @rustomp` 指令（端口/电位器/开关） | 设计器 → `.cir` → `rustomp-import --mna` |
+| 插件 GUI 设计器 | 输出 `rustomp.toml` 的 `[ui]` 段（`rustomp_gui::PanelSpec`）+ 素材 PNG | 设计器 → `rustomp.toml` → `build.rs` 生成面板 |
+
+约束（对设计器的要求）：
+
+- **端口必须显式标注**（`in=` / `out=`）：我们不猜"哪个节点是输出"；
+- **可调元件必须显式声明**（`param` / `switch`）：我们不从"250k+250k"里反推电位器；
+- 型号落在**闭集表**里；不在表里会在导入时就报错，不会悄悄替换。
+
+这三条是刻意的：**生成的电路会直接进插件发布路径**，任何靠猜的默认值都可能变成噪音。
+
 ## 9. 变更记录
 
 | 日期 | 内容 |
 |---|---|
 | 2026-10-23 | 建立本文档：确认可插拔导入器、格式优先级（先网表后 `.asc`）、映射分层流水线（B+E 常规、C 防呆、D 为 power user）、引脚按名绑定 |
+| 2026-10-23 | **S1a/S1b 落地**：`SpiceNetlist` 导入器、闭集型号映射（未命中硬失败）、`* @rustomp` 指令（端口/电位器/开关）、网表 → `Netlist`+`Params`+`impl Circuit` 的代码生成、漂移守卫；映射分层只做 1+6 级；新增 §10 外部设计器接口 |

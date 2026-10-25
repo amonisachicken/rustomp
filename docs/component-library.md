@@ -281,6 +281,9 @@ could not find a valid modelname
 
 ### 10.1b 已实现进 Rust 库的部分
 
+> 这张表也是**代码生成器的闭集映射表**（`rustomp-import/src/mna_codegen.rs` 的 `model_const()`）：
+> 网表里出现表外的型号，导入阶段就报错，不会静默替换（见 `docs/circuit-import.md` §3）。
+
 | 器件 | Rust 模型 | 对拍结果（`crates/rustomp-dsp/tests/devices.rs`） |
 |---|---|---|
 | `D_1N4148` / `D_1N34A` / `D_1N4007` | `devices::Diode`（静态 **D2**：`Is / N / Rs`） | **V-I 与 ngspice 完全一致（0.00%）**，覆盖 1 µA~10 mA 五个数量级 |

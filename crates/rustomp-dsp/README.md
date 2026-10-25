@@ -89,6 +89,20 @@ sys.multiport(&[c, b, e], v, |vv| {
 | 运放非反相 10× | DC 增益 10.998；饱和正确钉在 7.8 V |
 | **Sparklin Drive 整机**（10 节点 + 3 支路） | DC 0.056 mV / **THD 27.579% vs 27.5682%** / 频响 ≤0.5 dB |
 
+### 参数化与代码生成（S1b）
+
+电位器/开关不需要手写：网表里写指令，生成的代码会给出 `Params` + `impl Circuit`。
+
+```rust
+// 由 rustomp-import 生成（tests/generated/sparklin_drive.rs）
+let mut c = Ckt::new(192_000.0);
+c.set_params(Params { gain: 0.8, level: 0.5, symmetric: true });
+let y = c.process(x);
+```
+
+`set_params` 只改几个电阻值（`Netlist::set_resistance`），不重建网表；
+参数没变时直接 `return`。
+
 ### 三个坑
 
 1. **gmin 步进必须降到 0**：第一版一收敛就 `break`，漏电导留在结果里 → 0.2 V 被分压成 0.1 V。
@@ -155,5 +169,7 @@ MNA 用 2.5 倍时间换"任意拓扑"，这是保留两套求解器的理由（
 
 - [x] 用 MNA 重写 Sparklin Drive（`tests/sparklin_mna.rs`，THD +0.011 pp）
 - [x] MNA 包成 `Circuit`（`step_fixed` + 固定电位节点 + 解析雅可比）
+- [x] 网表 → 电路代码生成（`rustomp-import --mna`，见该 crate 的 README）
 - [ ] 预计算稀疏 LU（拓扑固定，消除顺序离线算一次）
 - [ ] 二极管用上一拍结电压热启动
+- [ ] 器件动态档：BJT `Cje/Cjc/Tf/Tr`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`

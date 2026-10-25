@@ -84,7 +84,7 @@ impl rustomp_gui::ParamAccess for Access<'_> { /* get/set 的 match 由参数表
 `type = "float" | "bool"`，`format = "percent" | "db" | "plain" | "enum"`。
 **参数值一律是"电位器位置 0..1"**，taper（A/B/C）在电路里换算 —— UI、自动化、DSP 语义一致。
 
-### 3.4 电路侧：网表 → MNA 装配代码（S1a，已实现）
+### 3.4 电路侧：网表 → MNA 装配代码（S1a/S1b，已实现）
 
 与上面的"身份/参数"生成并列，另有一条**电路侧**生成：
 
@@ -100,6 +100,8 @@ cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check]
 | 模型映射 | **闭集**：命中库内型号才生成；未命中报错并列出现有型号（ADR-013） |
 | 激励 | 纯 DC 源 → `fix_node`（不占未知量）；`SIN/AC/PULSE` 源 → **输入端口** |
 | 输出端口 | `* @rustomp in=<源名> out=<节点名>` 指令 |
+| **参数化（S1b）** | `param <元素> <字段> pot max=<r> [invert]`、`switch <字段> <a> <b> closed=/open=` |
+| 产物 | 节点常量 + `build(fs, &Params)` + `Params` + **`impl rustomp_dsp::Circuit`**（`set_params` 只改电阻值） |
 
 产物入库（`<project>/.../generated/*.rs`），并配**漂移守卫**测试：重新生成与仓库内容逐行比较。
 `--check` 只比对不写入，可直接进 CI。
@@ -132,6 +134,29 @@ E45 里还有一条"直流工作点被压摆率限制污染、开场凭空多出
 片段只允许**追加少量 cfg 守卫的代码**，不允许改变核心 impl 的形态 —— 否则跨平台行为会分叉。
 
 ---
+
+### 3.6 与外部设计器的接口（规划中）
+
+用户将分别开发**原理图设计器**与**插件 GUI 设计器**；本项目只保证两侧的契约稳定，
+不实现设计器本身。
+
+```text
+ 原理图设计器 ──(.cir 网表 + @rustomp 指令)──► rustomp-import --mna ──► <project>/src/generated/circuit.rs
+                                                                              │
+ 插件 GUI 设计器 ──(rustomp.toml [ui] + PNG 素材)──► build.rs ──► PanelSpec ───┴──► 插件 crate
+```
+
+对两侧的要求：
+
+| 契约 | 原因 |
+|---|---|
+| 端口显式标注（`in=` / `out=`） | 绝不猜"哪个节点是输出" |
+| 可调元件显式声明（`param` / `switch`） | 不从 `250k + 250k` 反推电位器 |
+| 型号必须落在闭集表 | 未命中在导入阶段就报错，而不是上线后才发现替换了器件 |
+| 生成物入库 + 漂移检查 | 设计器改动必须走"重新生成 → 代码评审"这条路 |
+
+**为什么设计器不直接生成 Rust**：网表是**可被 ngspice 验证**的中间格式（对拍全靠它）；
+设计器一旦直接产出代码，对拍链就断了。所以设计器只负责"画图 → 网表 + 指令"。
 
 ## 4. 打包后端（可插拔的平台侧）
 
@@ -272,7 +297,9 @@ steps:
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **S1** | `rustomp gen`：`[[params]]` → `params.rs` / `plugin_impl.rs`；身份/面板迁到 `src/generated/` | 用 Sparklin Drive legacy 的代码对照：生成物 + 手写 `Circuit` 后 `cargo test` 与 `check-au` 结果一致 |
+| **S1a** ✅ | **电路侧**：网表 → `Netlist` 装配代码（`rustomp-import --mna`） | 生成电路与手写网表/ngspice 逐位一致（THD 27.579% vs 27.5682%） |
+| **S1b** ✅ | **电路侧**：参数化（电位器/开关）+ `Q/J/M` 卡片 → 直接生成 `impl Circuit` | 开关把 h2 从 4.00% 打到 0.00%；GAIN 扫描单调；BJT 前级 Vb 差 2.2 µV |
+| **S1c** | **插件侧**：`rustomp gen` 把 `[[params]]` → `params.rs` / `plugin_impl.rs`；身份/面板迁到 `src/generated/` | 用 Sparklin Drive legacy 的代码对照：生成物 + 生成电路后 `cargo test` 与 `check-au` 结果一致 |
 | **S2** | `rustomp pack` 驱动 + `scripts/pack/macos/{au,vst3,clap}.sh`（把现有脚本收敛进去） | 本机一条命令产出 AU/VST3/CLAP |
 | **S3** | Windows / Linux 后端 + CI 矩阵 | CI 三平台都能产出 `ARTIFACT:` |
 | **S4** | `standalone`（三平台） | 双击/命令行能出声 |
@@ -296,3 +323,4 @@ steps:
 | 日期 | 内容 |
 |---|---|
 | 2026-10-23 | 建立本文档：确认生成物入 `src/generated/`、参数四类格式；确立「代码生成（host）与打包（各平台）两个平面」、后端契约与能力声明、CI 矩阵验收；Windows/Linux/standalone 排入路线，AAX 排除 |
+| 2026-10-23 | **S1a/S1b 完成**（§3.4）：电路侧代码生成（网表 → 装配代码 + 参数化 + `impl Circuit`）、漂移守卫、行为级验收；路线表拆成 S1a/S1b/S1c；新增 §3.6「与外部设计器的接口」（原理图设计器 → 网表、GUI 设计器 → `rustomp.toml`） |

@@ -11,8 +11,13 @@
 |---|---|
 | **元件库** | ✅ 二极管×4 + LED×3 / BJT×4 / JFET / MOSFET / 通用运放 —— 全部与 ngspice 逐点对拍 |
 | **MNA 装配器** | ✅ 任意拓扑 + 5 类器件 + 牛顿求解（DC 对拍 µV 级、瞬态 mV 级） |
+| **实时路径** | ✅ `step_fixed` + 固定电位节点 + 解析雅可比（2 次迭代 2.07 µs/样本） |
+| **代码生成** | ✅ **网表 → 可运行电路**（含电位器/开关参数、`impl Circuit`） |
 | 示例插件 | ✅ `Sparklin Drive` 已完整交付并拆为独立仓库（`sparklin-drive-legacy`） |
-| 下一步 | 用 MNA 路径重写 Sparklin Drive 做回归验证 → 声明式代码生成（S1） |
+| 下一步 | 把 oracle 对拍铺进 CI 矩阵；补器件动态档（`Cje/Cjc`、`Cjo/tt`） |
+
+> **闭环已打通**：面包板/原理图 → SPICE 网表 → 与 ngspice 对拍的 DSP → 插件。
+> 其中「原理图设计器」与「插件 GUI 设计器」将作为独立项目开发，本项目只保证契约（[接口说明](#与外部设计器的接口)）。
 
 ---
 
@@ -25,6 +30,7 @@
 - [新建一个插件](#新建一个插件)
 - [电路建模的工作流](#电路建模的工作流)
 - [质量把关：与 ngspice 对拍](#质量把关与-ngspice-对拍)
+- [与外部设计器的接口](#与外部设计器的接口)
 - [持续集成](#持续集成)
 - [宿主兼容性（Logic）](#宿主兼容性logic)
 - [示例插件 Sparklin Drive](#示例插件-sparklin-drive)
@@ -58,6 +64,8 @@
 - **元件库是闭集、且每个型号都对拍过**：`1N4148` `1N34A` `1N4007` `1N5817`(肖特基)
   红/绿/蓝 LED、`BC549C` `BC559C`(PNP) `AC127` `AC128`(锗)、`J201` `2N7000` + 通用运放 `OP07`。
   参数名与 SPICE 一致（`Is/Bf/Vaf/Ikf/Ise/Ne/Rb/Re/Rc/...`），LTspice 模型可直接映射。
+- **网表即源码**：写几行 `* @rustomp param/switch` 指令，
+  `rustomp-import --mna` 就能把网表变成 **能实时跑的 `Circuit`**（电位器/开关直接映射成 `Params`）。
 - **两套求解器共用器件模型**：
   - **MNA 装配器**（`mna.rs`）—— 任意拓扑、任意多管电路。器件只写"端电压 → 流入器件的电流"，
     雅可比由装配器数值差分得到：加新器件不会写错矩阵。
@@ -87,10 +95,14 @@ devices/                器件库（SPICE 侧）：models.add 清洗→ devices.
 crates/
   rustomp-dsp/          框架：器件库（devices/）、MNA 装配器（mna.rs）、Engine、过采样
     src/devices/        Diode / Bjt / Jfet / Nmos / OpAmp（型号是闭集 const）
-    src/mna.rs          Element 枚举 + Netlist<N> + 牛顿求解
+    src/mna.rs          Element 枚举 + Netlist<N> + 牛顿求解（含实时档 step_fixed）
+    tests/sparklin_*    手写网表 / 生成电路 / 实时路径的整机回归
+    tests/generated/    由网表自动生成的电路（入库，有漂移守卫）
   rustomp-gui/          框架：声明式面板 + 交互 + 纹理生命周期（不含素材）
   rustomp-oracle/       框架：ngspice 对拍（跑网表 / 解析 rawfile / 统一测量函数）
-  rustomp-import/       框架：外部电路导入（IR + 可插拔 Importer，内置 breadspice）
+  rustomp-import/       框架：外部电路导入（IR + 可插拔 Importer）+ **网表 → 装配代码生成**
+    src/spice.rs        SPICE 网表导入器（.cir/.net/.sp）
+    src/mna_codegen.rs  网表 → Netlist/Params/impl Circuit（参数化、器件卡片、导线合并）
 plugins/                下游插件项目的输出目录（new-plugin.sh 生成，不入库）
                         ↑ 参考实现见独立仓库 sparklin-drive-legacy
 template/               脚手架模板（new-plugin.sh 用；与下游插件结构同构）
@@ -169,6 +181,9 @@ cargo test -p my-drive-circuit --release --test oracle
 3. 在 `<项目>/circuit/src/` 里实现 `rustomp_dsp::Circuit`
    （线性用梯形伴随模型 / 非线性用一维牛顿；参考
    `sparklin-drive-legacy` 仓库的 `circuit/src/fakedist.rs`）；
+   也可以**完全不手写**：网表加几行 `* @rustomp in=/out=/param/switch` 指令，
+   `cargo run -p rustomp-import -- <网表.cir> --mna <项目>/src/generated/circuit.rs`
+   就直接得到 `Netlist` + `Params` + `impl Circuit`（见 `crates/rustomp-import/README.md`）；
 4. 写对拍测试把 h2–h9 锁住（参考示例的 `baseline.rs` 与 `oracle.rs`）；
 5. 在 `<项目>/plugin/src/lib.rs` 里挂参数，在 `rustomp.toml` 的 `[ui]` 里挂控件。
 
@@ -206,6 +221,20 @@ cargo test -p my-drive-circuit --release --test oracle
 | RC + 削波瞬态（48 kHz，240 点） | 波形 | **≤17 mV**（后向欧拉 vs 梯形积分） |
 | 运放非反相 10× | DC 增益 / 饱和 / -3 dB | 10.998 / 钉在 7.8 V / 40.5 kHz |
 
+### 2.5) 生成电路：`tests/sparklin_generated.rs` / `tests/generated_bjt.rs`
+
+由**网表自动生成**的电路（不是手写装配）也要过同样的尺子：
+
+| 项目 | 生成电路 | 手写/ngspice | 差 |
+|---|---|---|---|
+| Sparklin Drive THD @0.2 V | **27.677 %** | 27.579 % / 27.5682 % | +0.10 pp |
+| 对称开关（短接 D3） | h2 **0.000 %** | 非对称 4.002 % | ✓ 开关真的接对了 |
+| GAIN 0.15 / 0.5 / 1.0 | THD 14.20 / 25.87 / 28.62 % | — | 单调 ✓ |
+| BJT 前级 Vb / Ic | 0.679100 V / 2.0432 mA | 0.679098 V / 2.0379 mA | 2.2 µV / 0.26 %（未建模 `Nk`） |
+| BJT 前级小信号增益 | 143× | — | 共射反相 ✓ |
+
+生成物还有**漂移守卫**（重新生成必须逐字节一致），配套 `--check` 可进 CI。
+
 ### 3) 整机：`Sparklin Drive`
 
 同一电路有**两条独立实现**，都与 ngspice 基线对拍：
@@ -239,6 +268,27 @@ legacy 实现的其余实测（电位器 50%）：
 > 另外 ngspice 的 `.tran` 是**变步长**，对拍前必须先重采样（见 `RawFile::resample`）。
 
 ---
+
+## 与外部设计器的接口
+
+用户会分别开发两个**独立**的设计器；本项目刻意只给契约，不内置它们：
+
+```text
+ 原理图设计器 ──(网表 .cir + @rustomp 指令)──► rustomp-import --mna ──► src/generated/circuit.rs
+                                                                              │
+ 插件 GUI 设计器 ──(rustomp.toml [ui] + PNG)──► build.rs ──► PanelSpec ────────┴──► 插件 crate
+```
+
+对设计器的三条硬要求（`docs/circuit-import.md` §10）：
+
+| 要求 | 原因 |
+|---|---|
+| 端口**显式标注**（`in=` / `out=`） | 绝不猜"哪个节点是输出" |
+| 可调元件**显式声明**（`param` / `switch`） | 不从 `250k + 250k` 反推电位器 |
+| 型号落在**闭集表**里 | 未命中在导入阶段就报错，而不是上线后才发现换了器件 |
+
+> 为什么设计器不直接生成 Rust：**网表是可被 ngspice 验证的中间格式**，
+> 对拍全靠它。设计器直接出代码，对拍链就断了。
 
 ## 持续集成
 
@@ -296,6 +346,10 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 - 运放在 192 kHz 下 -3 dB 偏低约 26%（54.5 → 40.5 kHz）：`vd` 无延迟进代数环的代价，
   近 Nyquist 存在增益地板（该频段会被抽取滤波器滤掉）。4× 以上过采样可改善。
 - 运放只到单极点 + 压摆率 + 输出钳位；未建模失调、输入偏置电流、共模范围、噪声。
+- **代码生成器的边界**：型号映射只做了「精确命中 / 报错」两级（别名、项目 `mapping.toml`、
+  类别兜底尚未实现）；不支持 `.asc` 原理图、多电源/浮地源、非线性电容。
+- 实时 MNA 路径 2.07 µs/样本（192 kHz 单核 40%），比手推实现慢 2.5×；
+  下一步是预计算稀疏 LU。
 - 单线程；多线程原型实测立体声 1.97x，但因单声道变体零收益 + 实时调度风险暂未启用（ADR-010）。
 - 界面是按像素贴图 + 程序化指针，未做矢量/多主题。
 
@@ -306,9 +360,11 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 - [x] 把 MNA 包成 `Circuit` 供实时使用 ✅ 2 次迭代 2072 ns/样本（192 kHz 单核 39.8%），THD +0.098 pp
 - [ ] 预计算稀疏 LU（预计把实时路径压到 ~1.3 µs/sample）
 - [x] **S1a：网表 → MNA 装配代码** ✅ `rustomp-import --mna`（生成电路 THD 与手写版逐位一致）
-- [x] **S1b：参数化 + 器件卡片** ✅ 网表里写 `param`/`switch` 指令 → 生成 `Params` + `Ckt`（`impl Circuit`）；
+- [x] **S1b：参数化 + 器件卡片** ✅ `param`/`switch` 指令 → 生成 `Params` + `Ckt`（`impl Circuit`）；
       `Q/J/M` 卡片映射；BJT 前级 Vb 差 2.2 µV
+- [ ] S1c：`rustomp gen`（`[[params]]` → 插件侧 `params.rs` / `plugin_impl.rs`）
 - [ ] 把 oracle 对拍铺进 CI 矩阵（各平台 + 可选 ngspice）
+- [ ] 原理图设计器 / GUI 设计器（**独立项目**，本仓库只维护契约）
 - [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
 - [ ] 电位器 A/C taper；预设与状态管理；安装包（pkg）+ 签名公证
 - [ ] 更多示例电路（BJT 前级 / 光电压缩 / BBD）
@@ -324,7 +380,8 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 | `docs/component-library.md` | **元件库精度规范**：档位定义、逐器件推荐、验收实验模板 |
 | `docs/circuit-import.md` | **电路导入与元件映射规范**：可插拔导入、映射流水线、引脚绑定、mapping.toml |
 | `docs/declarative-build.md` | **声明式构建规范**：代码生成 vs 打包两个平面、后端契约、多平台矩阵、S1–S5 路线 |
-| `crates/rustomp-dsp/README.md` | DSP 核心：器件库、MNA 装配器、Engine、对拍结果 |
+| `crates/rustomp-dsp/README.md` | DSP 核心：器件库、MNA 装配器、实时路径、对拍结果 |
+| `crates/rustomp-import/README.md` | 导入器 + 网表 → 装配代码生成（指令、产物、漂移守卫、更新流程） |
 | `devices/REPORT.md` | 器件模型的清洗报告（保留/丢弃了哪些参数、为什么） |
 | `patches/README.md` | 三个宿主兼容补丁的原因与验证方法 |
 | `tools/oracle/smoke/README.md` | ngspice 冒烟测试的用法与基线数字 |
