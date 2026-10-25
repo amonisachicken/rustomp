@@ -201,6 +201,7 @@ cargo test -p my-drive-circuit --release --test oracle
 ./scripts/verify.sh --only fast     # 不需要 ngspice 的部分（改代码时用这个）
 ./scripts/verify.sh --only oracle   # 只跑对拍（缺 ngspice 直接失败，不静默跳过）
 ./scripts/verify.sh --report out.md # 额外产出 markdown 报告（CI 写进 job summary）
+./scripts/verify.sh --logs vlogs    # 保留每层日志（排查失败用）
 ```
 
 对拍分三层，越往下越接近"整机"。
@@ -315,7 +316,9 @@ legacy 实现的其余实测（电位器 50%）：
    （没装就打印跳过原因，方便开发）；CI 里设 `RUSTOMP_REQUIRE_NGSPICE=1`，
    同一函数变成 `panic!` —— 避免"忘了装 ngspice、测试静默跳过、CI 却是绿的"这种
    最坏的假阳性。
-2. **对拍数字沉淀在 job summary 里。** `--report "$GITHUB_STEP_SUMMARY"` 会把每层状态
+2. **失败时日志自动上传。** `--logs ./verify-logs` 保留每层日志，失败时作为 artifact 上传，
+   不用靠猜"哪一层挂了"。
+3. **对拍数字沉淀在 job summary 里。** `--report "$GITHUB_STEP_SUMMARY"` 会把每层状态
    与关键数字（V-I 误差、THD、频响偏差）渲染成 markdown 表格，翻历史构建就能看到
    "这次的精度是多少"，而不是只有一句“passed”。
 

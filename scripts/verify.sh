@@ -7,6 +7,7 @@
 #   ./scripts/verify.sh --only fast         # 只跑不需要 ngspice 的部分
 #   ./scripts/verify.sh --only oracle       # 只跑对拍（缺 ngspice 直接失败）
 #   ./scripts/verify.sh --report out.md     # 额外产出 markdown 报告（CI 用）
+#   ./scripts/verify.sh --logs ./vlogs      # 保留每层日志（排查 CI 失败用）
 #   ./scripts/verify.sh --no-fmt            # 跳过格式检查
 #
 # 退出码：0 全过；非 0 = 有层失败。
@@ -18,11 +19,13 @@ cd "$(dirname "$0")/.." || exit 2
 
 ONLY="all"
 REPORT=""
+LOGS=""
 RUN_FMT=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY="${2:-all}"; shift 2 ;;
     --report) REPORT="${2:-}"; shift 2 ;;
+    --logs) LOGS="${2:-}"; shift 2 ;;
     --no-fmt) RUN_FMT=0; shift ;;
     -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
@@ -130,6 +133,13 @@ while IFS="$(printf '\t')" read -r slug label status; do
     *)    printf '   \033[31m✗\033[0m %s\n' "$label" ;;
   esac
 done <"$RESULTS"
+
+if [ -n "$LOGS" ]; then
+  mkdir -p "$LOGS"
+  cp "$TMP"/*.log "$LOGS"/ 2>/dev/null || true
+  cp "$RESULTS" "$LOGS/results.tsv" 2>/dev/null || true
+  printf '   日志已保留到 %s\n' "$LOGS"
+fi
 
 if [ -n "$REPORT" ]; then
   {

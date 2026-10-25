@@ -40,7 +40,17 @@ jobs:
           shared-key: fast
 
       - name: 工作区测试 + 生成物漂移
-        run: ./scripts/verify.sh --only fast --report "$GITHUB_STEP_SUMMARY"
+        # fmt 有独立 job，这里不重复跑
+        run: ./scripts/verify.sh --only fast --no-fmt --report "$GITHUB_STEP_SUMMARY" --logs ./verify-logs
+
+      - name: 保留失败日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-logs
+          path: ./verify-logs
+          retention-days: 3
+          if-no-files-found: ignore
 
   oracle:
     name: 对拍层（ngspice）
@@ -65,15 +75,14 @@ jobs:
       - name: 对拍（器件级 / 装配器级 / 整机级 / 生成电路）
         env:
           RUSTOMP_REQUIRE_NGSPICE: "1"
-        run: ./scripts/verify.sh --only oracle --report "$GITHUB_STEP_SUMMARY"
+        run: ./scripts/verify.sh --only oracle --report "$GITHUB_STEP_SUMMARY" --logs ./verify-logs
 
       - name: 保留失败日志
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: oracle-logs
-          path: |
-            target/release/deps/*.d
+          path: ./verify-logs
           retention-days: 3
           if-no-files-found: ignore
 
