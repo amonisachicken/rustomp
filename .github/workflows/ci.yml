@@ -1,14 +1,32 @@
 name: CI
 
+# 两层：
+#   fast   —— 不需要 ngspice：单元/集成测试 + 生成物漂移守卫
+#   oracle —— 需要 ngspice：器件级 / 装配器级 / 整机级 活体对拍（缺 ngspice 直接算失败）
+#
+# 「对拍」是这个项目的核心承诺：任何一层没跑，都不能算"验证过"。
+# 所以 oracle job 里的 ngspice 是**硬依赖**，不做自动跳过（本地开发仍可跳过，
+# 见 scripts/verify.sh 与 RUSTOMP_REQUIRE_NGSPICE）。
+
 on:
   push:
     branches: [master]
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # 减少 brew 的副作用（对拍作业只装一个 ngspice）
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
 jobs:
-  test:
-    name: 构建与测试
+  fast:
+    name: 快速层（无 ngspice）
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -18,22 +36,46 @@ jobs:
 
       - name: 缓存 cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fast
 
-      # ngspice 只用于"活体对拍"测试；装不上时那些测试会自动跳过
-      - name: 安装 ngspice（可选）
-        continue-on-error: true
-        run: brew install ngspice
+      - name: 工作区测试 + 生成物漂移
+        run: ./scripts/verify.sh --only fast --report "$GITHUB_STEP_SUMMARY"
 
-      - name: 单元 / 集成测试
-        run: cargo test --workspace --release
+  oracle:
+    name: 对拍层（ngspice）
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: 对拍环境确认
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: oracle
+
+      # 刻意**不加** continue-on-error：装不上就让 CI 红，而不是静默跳过对拍
+      - name: 安装 ngspice
         run: |
-          if command -v ngspice >/dev/null; then
-            ngspice --version | head -2
-          else
-            echo "没有 ngspice —— oracle 活体对拍测试会被跳过（不算失败）"
-          fi
+          brew install ngspice
+          ngspice --version | head -3
+
+      - name: 对拍（器件级 / 装配器级 / 整机级 / 生成电路）
+        env:
+          RUSTOMP_REQUIRE_NGSPICE: "1"
+        run: ./scripts/verify.sh --only oracle --report "$GITHUB_STEP_SUMMARY"
+
+      - name: 保留失败日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-logs
+          path: |
+            target/release/deps/*.d
+          retention-days: 3
+          if-no-files-found: ignore
 
   fmt:
     name: 格式检查（暂不阻塞）

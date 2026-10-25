@@ -33,8 +33,7 @@ fn generated_bjt_stage_matches_ngspice() {
     let v = net.solve_dc();
     let (vb, vc) = (v[node::B], v[node::C]);
 
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过 ngspice 对比：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         // 仍要防止生成器退化成"什么都不接"
         assert!(vb > 0.6 && vb < 0.8, "Vb={vb} 不像一个导通的 NPN 基极");
         return;

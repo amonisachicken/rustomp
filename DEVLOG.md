@@ -2842,6 +2842,78 @@ rustomp-dsp（MNA 装配器 / 器件库 / 实时路径）
 
 ---
 
+## E47：把对拍铺进 CI（阶段 A）（2026-10-25）
+
+目标：**"验证过"必须是可自动复核的事实，而不是跑过一次的记忆。**
+
+### 47.1 做了什么
+
+| 项 | 内容 |
+|---|---|
+| `scripts/verify.sh` | 一键验证入口，本地与 CI 共用；`--only fast\|oracle\|all`、`--report <md>`、`--no-fmt` |
+| `Oracle::discover_or_skip()` | 统一"跳过还是失败"的判定：本地跳过并打印原因；设 `RUSTOMP_REQUIRE_NGSPICE=1` 时 `panic!` |
+| `.github/workflows/ci.yml` | 拆成 `fast` / `oracle` / `fmt` 三个 job；对拍结果写进 job summary |
+| 9 处测试 | 从各自的 `Oracle::discover() else { eprintln!(跳过) ; return }` 收敛到同一个 helper |
+
+### 47.2 为什么"缺 ngspice 必须失败"
+
+原来的写法是每个测试自己判断：
+
+```rust
+let Some(oracle) = Oracle::discover() else { eprintln!("跳过"); return; };
+```
+
+这在本地很友好，在 CI 里却是**最坏的假阳性**：runner 上 `brew install` 一旦失败，
+四层对拍全部静默跳过，CI 依旧绿灯 —— 而"对拍过"正是这个项目唯一的质量承诺。
+
+现在：CI 的 oracle job 里 `RUSTOMP_REQUIRE_NGSPICE=1`，同一个 helper 变成 `panic!`，
+而且 workflow 里 `brew install ngspice` **刻意不加 `continue-on-error`**。
+本地开发仍可跳过（不装 ngspice 也能跑 `--only fast`）。
+
+### 47.3 分层与耗时（本机实测）
+
+| 层 | 内容 | 耗时 |
+|---|---|---|
+| fmt | `cargo fmt --all --check`（不阻塞） | 1 s |
+| workspace | 全部单元/集成测试（无 ngspice 也能跑） | ~25 s |
+| drift | 两份生成物 `--check` | ~2 s |
+| devices | 二极管 ×4 + LED ×3 + BJT ×4 + JFET + MOS 的 V-I | ~1 s |
+| mna | 削波 / BJT / JFET / RC 瞬态 / 运放 | ~1 s |
+| sparklin | 整机（手写网表）DC + THD + 频响 | ~15 s |
+| generated | 生成电路（S1a/S1b）DC + THD + 开关分支 | ~5 s |
+
+合计约 **50 s**（release，缓存已热）。CI 上两个 job 并行，各自 ~3 分钟（含编译）。
+
+### 47.4 对拍数字进 job summary
+
+`./scripts/verify.sh --only oracle --report "$GITHUB_STEP_SUMMARY"` 会输出：
+
+```markdown
+| 层 | 状态 |
+|---|---|
+| 器件级 V-I（二极管 / LED / BJT / JFET / MOS） | ✅ |
+| 装配器级（削波 / BJT / JFET / RC 瞬态 / 运放） | ✅ |
+| 整机级（Sparklin Drive，手写网表） | ✅ |
+| 生成电路（S1a / S1b） | ✅ |
+```
+
+外加一个折叠块，里面是**实际误差数字**（每点的 V-I 偏差、THD、频响 dB 差）。
+翻历史构建就知道"这次精度是多少"，而不是只看一句 passed。
+
+### 47.5 两个脚本 bug（都是自己踩的）
+
+1. **用中文名字当日志文件名**：tier 名里有 `/` 和空格 → 路径不存在、报告表格被拆成单词。
+   改成 `run_tier <slug> <显示名> <命令>`，slug 只进文件名，显示名只进报告。
+2. **`set -u` 下残留变量**：删掉 `RAN` 后忘了 fmt 分支还在用它 → `unbound variable`。
+   顺带把 fmt 的"不阻塞"从"不算层"改成"算一层但状态是 `warn`"，报告里显示 ⚠️。
+
+### 47.6 下一步（阶段 D）
+
+`rustomp gen`：`[[params]]` → 插件侧 `params.rs` / `plugin_impl.rs`，
+让"生成电路 → 生成插件"这条链真正闭环。GUI 之前的部分到那时就齐了。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -3110,6 +3182,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-25 | **把对拍铺进 CI**（E47）：新增 `scripts/verify.sh`（本地/CI 同一入口，分层 + markdown 报告）、`Oracle::discover_or_skip()` + `RUSTOMP_REQUIRE_NGSPICE`（缺 ngspice 在 CI 里是**失败**而不是静默跳过）、CI 拆 fast/oracle/fmt 三个 job 并把对拍数字写进 job summary。全量约 50 s |
 | 2026-10-23 | **阶段收尾：文档对齐 + 外部设计器契约**（E46）：README 状态/质量把关/路线图重写并新增「与外部设计器的接口」；`circuit-import.md` 状态改为已实现、明确映射分层只做了 1+6 级、新增指令与产物章节、新增设计器接口；`declarative-build.md` 拆 S1a/S1b/S1c 并新增 §3.6；新建 `crates/rustomp-import/README.md`。三条硬要求（端口显式、参数显式、型号闭集）落盘 |
 | 2026-10-23 | **S1b：参数化 + 器件卡片**（E45）：`param/switch` 指令生成 `Params` + `impl Circuit` 的 `Ckt`；Q/J/M 卡片映射。验证：默认参数 THD 27.677%、对称开关把 h2 从 4.00% 打到 0.00%、GAIN 扫描单调；BJT 前级 Vb 差 2.2 µV、Ic 差 0.26%（未建模 Nk）。踩坑：`solve_dc` 的提交错误地应用了压摆率限制（运放状态被钳到 SR/fs，开场凭空多出瞬态）、`set_params` 用旧值、参数下标必须是 const |
 | 2026-10-23 | **S1a：网表 → MNA 代码生成**（E44）：`rustomp-import --mna` 从 SPICE 网表生成装配代码；导线合并（0.001Ω）、闭集模型映射（未命中即报错）、DC 源→固定节点、信号源→输入端口；生成电路 THD 27.579% 与手写网表**逐位一致**。踩坑：`FIXED_IN` 写死 0 导致音频被写进 9V 轨（编译通过、不报错、THD 只有 0.237%）→ 生成常量必须由生成器算，且必须有行为级回归 |

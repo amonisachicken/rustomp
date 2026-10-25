@@ -182,6 +182,30 @@ pub struct Oracle {
 }
 
 impl Oracle {
+    /// **测试用**：找到 ngspice 就用它；没有时按环境变量决定"跳过"还是"失败"。
+    ///
+    /// - 未设置 `RUSTOMP_REQUIRE_NGSPICE`：打印跳过原因并返回 `None`（本地开发友好）
+    /// - 设为 `1`/`true`/`yes`：**直接 panic** —— CI 用这个，避免"忘了装 ngspice，
+    ///   测试静默跳过，CI 却是绿的"这种最坏的假阳性。
+    pub fn discover_or_skip() -> Option<Oracle> {
+        match Self::discover() {
+            Some(o) => Some(o),
+            None => {
+                let required = std::env::var("RUSTOMP_REQUIRE_NGSPICE")
+                    .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+                    .unwrap_or(false);
+                if required {
+                    panic!(
+                        "RUSTOMP_REQUIRE_NGSPICE 已设置，但找不到 ngspice。\n\
+                         请安装（macOS: `brew install ngspice`），或用 `NGSPICE=/path/to/ngspice` 指定。"
+                    );
+                }
+                eprintln!("跳过：本机没有 ngspice（设 RUSTOMP_REQUIRE_NGSPICE=1 可强制要求）");
+                None
+            }
+        }
+    }
+
     /// 找 ngspice：`NGSPICE` 环境变量 → `PATH`。
     pub fn discover() -> Option<Oracle> {
         if let Ok(p) = std::env::var("NGSPICE") {

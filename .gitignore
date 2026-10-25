@@ -26,5 +26,8 @@ target/
 # pi harness 的会话脚本（环境产物，非项目代码）
 /pi.sh
 
+# 符号资产归档：已导入 rustomp-circuit-designer 仓库，框架仓库不留副本
+/gb4728-symbols-kit.7z
+
 # 由 scripts/gen-bundler-toml.sh 从插件 rustomp.toml 生成
 /bundler.toml

@@ -41,8 +41,7 @@ fn compare(oracle: &Oracle, d: Diode, model: &str) {
 
 #[test]
 fn diodes_match_ngspice_dc() {
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         return;
     };
     println!("\n=== 二极管 V-I 对拍 ===");
@@ -59,8 +58,7 @@ fn diodes_match_ngspice_dc() {
 /// 转移特性单调，且 Vgs=5V 时 Id 落在 0.15~0.30 A。
 #[test]
 fn handwritten_2n7000_subckt_is_calibrated() {
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         return;
     };
     let points = [3.0f64, 4.0, 5.0, 6.0];
@@ -136,8 +134,7 @@ fn compare_bjt(oracle: &Oracle, b: rustomp_dsp::Bjt, model: &str, npn: bool, swe
 
 #[test]
 fn bjts_match_ngspice_dc() {
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         return;
     };
     println!("\n=== BJT V-I 对拍（Vce=5V, Vbc 随动）===");
@@ -151,8 +148,7 @@ fn bjts_match_ngspice_dc() {
 
 #[test]
 fn jfet_matches_ngspice_dc() {
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         return;
     };
     println!("\n=== J201：转移特性（Vds=5V，扫 Vgs）===");
@@ -189,8 +185,7 @@ fn jfet_matches_ngspice_dc() {
 /// 子电路结构：沟道（level-1）+ 体二极管 + Rd/Rs，与 Rust 侧 `Nmos` + `NMOS_2N7000_BODY` 对应。
 #[test]
 fn mosfet_2n7000_matches_ngspice_dc() {
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         return;
     };
     let sim = |vgs: f64, vds: f64| -> f64 {

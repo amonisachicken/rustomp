@@ -25,8 +25,7 @@ fn spice_op(oracle: &Oracle, body: &str, var: &str) -> f64 {
 /// 二极管削波：`Vin → R → out`，两只 1N4148 反并联到地。
 #[test]
 fn diode_clipper_dc_matches_ngspice() {
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         return;
     };
     let mut worst = 0.0f64;
@@ -52,8 +51,7 @@ fn diode_clipper_dc_matches_ngspice() {
 /// BJT 共射偏置：`VCC=9V, Rc=4.7k, Rb=470k`，比较基极/集电极电压。
 #[test]
 fn bjt_common_emitter_dc_matches_ngspice() {
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         return;
     };
     let body = "VCC vcc 0 9\nRC vcc c 4.7k\nRB vcc b 470k\nQ1 c b 0 BC549C";
@@ -80,8 +78,7 @@ fn bjt_common_emitter_dc_matches_ngspice() {
 /// JFET 共源：`VDD=9V, Rd=2.2k, Rg=1M`，比较漏极电压。
 #[test]
 fn jfet_common_source_dc_matches_ngspice() {
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         return;
     };
     let body = "VDD vdd 0 9\nRD vdd d 2.2k\nRG g 0 1meg\nJ1 d g 0 J201";
@@ -105,8 +102,7 @@ fn jfet_common_source_dc_matches_ngspice() {
 /// 所以不追求逐位相等，只要求波形偏差 < 3%。
 #[test]
 fn rc_with_diode_transient_matches_ngspice() {
-    let Some(oracle) = Oracle::discover() else {
-        eprintln!("跳过：本机没有 ngspice");
+    let Some(oracle) = Oracle::discover_or_skip() else {
         return;
     };
     const FS: f64 = 48_000.0;

@@ -194,6 +194,15 @@ cargo test -p my-drive-circuit --release --test oracle
 
 ## 质量把关：与 ngspice 对拍
 
+**一条命令判断"能不能发"：**
+
+```bash
+./scripts/verify.sh                 # 全部：测试 + 漂移守卫 + 四层对拍
+./scripts/verify.sh --only fast     # 不需要 ngspice 的部分（改代码时用这个）
+./scripts/verify.sh --only oracle   # 只跑对拍（缺 ngspice 直接失败，不静默跳过）
+./scripts/verify.sh --report out.md # 额外产出 markdown 报告（CI 写进 job summary）
+```
+
 对拍分三层，越往下越接近"整机"。
 
 ### 1) 器件级：`tests/devices.rs`
@@ -292,9 +301,23 @@ legacy 实现的其余实测（电位器 50%）：
 
 ## 持续集成
 
-`.github/workflows/ci.yml`：macOS runner 上跑 `cargo test --workspace --release`，
-并尝试 `brew install ngspice` 让活体对拍生效（装不上时自动跳过，不算失败）。
-格式检查先设为"不阻塞"（仓库还没统一跑过一次 `cargo fmt`）。
+`.github/workflows/ci.yml` 分两层 job，都用 `scripts/verify.sh`（本地与 CI 同一入口）：
+
+| job | 内容 | ngspice |
+|---|---|---|
+| **快速层** `fast` | `cargo test --workspace --release` + 两份生成物的漂移守卫 | 不需要（对拍测试自动跳过） |
+| **对拍层** `oracle` | 器件级 / 装配器级 / 整机级 / 生成电路 四层活体对拍；结果写进 job summary | **硬依赖**（装不上就让 CI 红） |
+| 格式检查 `fmt` | `cargo fmt --all --check` | 不阻塞（仓库还没统一跑过一次 fmt） |
+
+两个关键设计：
+
+1. **缺 ngspice 必须是失败，不能是跳过。** 本地用 `Oracle::discover_or_skip()`
+   （没装就打印跳过原因，方便开发）；CI 里设 `RUSTOMP_REQUIRE_NGSPICE=1`，
+   同一函数变成 `panic!` —— 避免"忘了装 ngspice、测试静默跳过、CI 却是绿的"这种
+   最坏的假阳性。
+2. **对拍数字沉淀在 job summary 里。** `--report "$GITHUB_STEP_SUMMARY"` 会把每层状态
+   与关键数字（V-I 误差、THD、频响偏差）渲染成 markdown 表格，翻历史构建就能看到
+   "这次的精度是多少"，而不是只有一句“passed”。
 
 ## 宿主兼容性（Logic）
 
