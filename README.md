@@ -12,7 +12,7 @@
 | **元件库** | ✅ 二极管×4 + LED×3 / BJT×4 / JFET / MOSFET / 通用运放 —— 全部与 ngspice 逐点对拍 |
 | **MNA 装配器** | ✅ 任意拓扑 + 5 类器件 + 牛顿求解（DC 对拍 µV 级、瞬态 mV 级） |
 | **实时路径** | ✅ `step_fixed` + 固定电位节点 + 解析雅可比（2 次迭代 2.07 µs/样本） |
-| **代码生成** | ✅ **网表 → 可运行电路**（含电位器/开关参数、`impl Circuit`） |
+| **代码生成** | ✅ **网表 → 可运行电路**（S1a/S1b）+ **`rustomp.toml` → 插件外壳**（S1c，含参数表/身份/导出宏） |
 | 示例插件 | ✅ `Sparklin Drive` 已完整交付并拆为独立仓库（`sparklin-drive-legacy`） |
 | 下一步 | 把 oracle 对拍铺进 CI 矩阵；补器件动态档（`Cje/Cjc`、`Cjo/tt`） |
 
@@ -100,6 +100,7 @@ crates/
     tests/generated/    由网表自动生成的电路（入库，有漂移守卫）
   rustomp-gui/          框架：声明式面板 + 交互 + 纹理生命周期（不含素材）
   rustomp-oracle/       框架：ngspice 对拍（跑网表 / 解析 rawfile / 统一测量函数）
+  rustomp-gen/          框架：插件侧代码生成（rustomp.toml → identity/params/plugin_impl）
   rustomp-import/       框架：外部电路导入（IR + 可插拔 Importer）+ **网表 → 装配代码生成**
     src/spice.rs        SPICE 网表导入器（.cir/.net/.sp）
     src/mna_codegen.rs  网表 → Netlist/Params/impl Circuit（参数化、器件卡片、导线合并）
@@ -388,7 +389,9 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 - [x] **S1a：网表 → MNA 装配代码** ✅ `rustomp-import --mna`（生成电路 THD 与手写版逐位一致）
 - [x] **S1b：参数化 + 器件卡片** ✅ `param`/`switch` 指令 → 生成 `Params` + `Ckt`（`impl Circuit`）；
       `Q/J/M` 卡片映射；BJT 前级 Vb 差 2.2 µV
-- [ ] S1c：`rustomp gen`（`[[params]]` → 插件侧 `params.rs` / `plugin_impl.rs`）
+- [x] **S1c：插件侧代码生成** ✅ `rustomp-gen`（参数表 / 身份 / `Plugin` 实现 + 导出宏），
+      生成的项目能 `cargo build` 并导出 CLAP/VST3 入口；模板改为无 GUI 外壳
+- [ ] S1d：界面（`[ui]` → `PanelSpec` + `gui` feature + 手写 `editor.rs`）
 - [ ] 把 oracle 对拍铺进 CI 矩阵（各平台 + 可选 ngspice）
 - [ ] 原理图设计器 / GUI 设计器（**独立项目**，本仓库只维护契约）
 - [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`

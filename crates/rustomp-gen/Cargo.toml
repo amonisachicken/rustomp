@@ -1,0 +1,13 @@
+[package]
+name = "rustomp-gen"
+description = "rustomp 插件侧代码生成：rustomp.toml → params.rs / plugin_impl.rs / identity.rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.7"

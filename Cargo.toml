@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/rustomp-gen",
     "crates/rustomp-dsp",
     "crates/rustomp-gui",
     "crates/rustomp-oracle",

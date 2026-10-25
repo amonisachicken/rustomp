@@ -40,20 +40,29 @@ rustomp.toml ──┬─► rustomp gen ──► <project>/plugin/src/generate
 
 ### 3.1 形态与位置
 
-生成到 **`<project>/plugin/src/generated/`**（**入库**），由 `rustomp gen` 写出：
+生成到 **`<project>/plugin/src/generated/`**（**入库**），由 `rustomp-gen` 写出：
 
 ```
 src/generated/
-  mod.rs            // 汇总：include! 或 pub use
-  identity.rs       // 名字 / CLAP id / 三套 VST3 id / 窗口与画布尺寸
-  params.rs         // Params 结构体 + Default + GuiAccess
-  panel.rs          // rustomp_gui::PanelSpec 字面量
-  plugin_impl.rs    // Plugin / ClapPlugin / Vst3Plugin impl + 导出宏
-  platform/
-    macos.rs        // 可选片段（可空）
-    windows.rs
-    linux.rs
+  mod.rs            // 模块汇总
+  identity.rs       // 名字 / CLAP id / 三套 VST3 id（变体用 cfg 选择，文件静态）
+  params.rs         // PluginParams 结构体 + Default + to_dsp()
+  plugin_impl.rs    // Plugin / ClapPlugin / Vst3Plugin impl + 导出宏 + 界面钩子
 ```
+
+命令：
+
+```bash
+cargo run -q -p rustomp-gen -- <项目目录>            # 生成
+cargo run -q -p rustomp-gen -- <项目目录> --check    # 只比对（CI 防漂移）
+```
+
+> **`identity.rs` 不再由 build.rs 生成**（S1c）：变体差异改成 `#[cfg(feature = "mono"/"stereo")]`，
+> 于是文件是静态的、可入库、可 diff、可 `--check`。`build.rs` 在无 GUI 阶段已移除。
+>
+> **界面（S1d）**：`panel.rs` 与 egui 依赖在 `gui` feature 之后。
+> `plugin_impl.rs` 里已经留好钩子 —— `gui` 关闭时 `editor()` 返回 `None`；
+> 开启时调用手写的 `src/editor.rs::make(params, activity)`。生成器不掺和 GUI。
 
 规则：
 
@@ -299,7 +308,8 @@ steps:
 |---|---|---|
 | **S1a** ✅ | **电路侧**：网表 → `Netlist` 装配代码（`rustomp-import --mna`） | 生成电路与手写网表/ngspice 逐位一致（THD 27.579% vs 27.5682%） |
 | **S1b** ✅ | **电路侧**：参数化（电位器/开关）+ `Q/J/M` 卡片 → 直接生成 `impl Circuit` | 开关把 h2 从 4.00% 打到 0.00%；GAIN 扫描单调；BJT 前级 Vb 差 2.2 µV |
-| **S1c** | **插件侧**：`rustomp gen` 把 `[[params]]` → `params.rs` / `plugin_impl.rs`；身份/面板迁到 `src/generated/` | 用 Sparklin Drive legacy 的代码对照：生成物 + 生成电路后 `cargo test` 与 `check-au` 结果一致 |
+| **S1c** ✅ | **插件侧**：`rustomp-gen` 把 `rustomp.toml` → `identity.rs` / `params.rs`（`PluginParams` + `to_dsp()`）/ `plugin_impl.rs`；`--check` 防漂移 | 生成的项目 `cargo build` 成功，cdylib 导出 `clap_entry` + `GetPluginFactory` |
+| **S1d** | **界面**：`[ui]` → `panel.rs`（`PanelSpec`），`gui` feature + 手写 `editor.rs` | 与 legacy 的界面像素一致 |
 | **S2** | `rustomp pack` 驱动 + `scripts/pack/macos/{au,vst3,clap}.sh`（把现有脚本收敛进去） | 本机一条命令产出 AU/VST3/CLAP |
 | **S3** | Windows / Linux 后端 + CI 矩阵 | CI 三平台都能产出 `ARTIFACT:` |
 | **S4** | `standalone`（三平台） | 双击/命令行能出声 |
@@ -323,4 +333,5 @@ steps:
 | 日期 | 内容 |
 |---|---|
 | 2026-10-23 | 建立本文档：确认生成物入 `src/generated/`、参数四类格式；确立「代码生成（host）与打包（各平台）两个平面」、后端契约与能力声明、CI 矩阵验收；Windows/Linux/standalone 排入路线，AAX 排除 |
+| 2026-10-25 | **S1c 完成**：`crates/rustomp-gen`（manifest 校验 + 三份代码 + `--check`）、模板改为无 GUI 外壳、`new-plugin.sh` 自动生成；生成项目可 `cargo build` 并导出 CLAP/VST3 入口。路线表新增 S1d（界面） |
 | 2026-10-23 | **S1a/S1b 完成**（§3.4）：电路侧代码生成（网表 → 装配代码 + 参数化 + `impl Circuit`）、漂移守卫、行为级验收；路线表拆成 S1a/S1b/S1c；新增 §3.6「与外部设计器的接口」（原理图设计器 → 网表、GUI 设计器 → `rustomp.toml`） |

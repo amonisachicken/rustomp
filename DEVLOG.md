@@ -2914,6 +2914,110 @@ let Some(oracle) = Oracle::discover() else { eprintln!("跳过"); return; };
 
 ---
 
+## E48：S1c —— 插件侧代码生成（阶段 D）（2026-10-25）
+
+S1a/S1b 让"网表 → 电路"闭环；这一步把**插件外壳**也变成生成物。
+做完之后，"给个 `rustomp.toml` + 一个电路"就能长出一个可编译、可加载的插件（**无 GUI**）。
+
+### 48.1 新增 `crates/rustomp-gen`
+
+```bash
+cargo run -q -p rustomp-gen -- <项目目录>            # 生成
+cargo run -q -p rustomp-gen -- <项目目录> --check    # 只比对（CI 防漂移）
+```
+
+| 生成文件 | 内容 |
+|---|---|
+| `identity.rs` | 名字 / vendor / CLAP id / 三套 VST3 id。**变体差异用 `#[cfg]` 选择**，所以文件是静态的 |
+| `params.rs` | `PluginParams` 结构体 + `Default` + `to_dsp()`（把平滑后的值拍成电路参数） |
+| `plugin_impl.rs` | `Plugin` / `ClapPlugin` / `Vst3Plugin` + `nih_export_*!` + 界面钩子 |
+| `mod.rs` | 模块汇总 |
+
+`to_dsp()` 是关键的一小段生成代码：
+
+```rust
+pub fn to_dsp(&self) -> sparklin_drive_circuit::Params {
+    sparklin_drive_circuit::Params {
+        gain: self.gain.smoothed.next() as f64,   // float：电位器位置，平滑
+        symmetric: self.mode.value(),             // bool：直接取值
+    }
+}
+```
+
+**生成器不懂 DSP**：`process()` 只是"取参数快照 → `Engine::set_params` → `process` → 写活动量"。
+
+### 48.2 一次真实编译验证（不是"看起来对"）
+
+```text
+./scripts/new-plugin.sh "Gen Demo"
+  → plugins/gen-demo/{rustomp.toml, circuit/, plugin/}
+  → rustomp-gen 写出 4 个文件
+  → cargo build -p gen-demo           ✅ 33 s
+  → nm target/debug/libgen_demo.dylib
+      _clap_entry          (CLAP)
+      _GetPluginFactory    (VST3)
+```
+
+**"能编译 + 导出两个入口"** 是这一步的验收线：只有这样才能保证后面
+"生成 Sparklin Drive 装进 Logic 听声音"不会再被外壳问题绊住。
+
+### 48.3 三处踩坑
+
+**① `Params` 名字冲突（编译不过）**
+生成的结构体叫 `Params`，与 nih-plug 的 trait `Params` 撞名：
+`#[derive(Params)]` 和 `Arc<dyn Params>` 被 glob import 互相遮蔽。改成 **`PluginParams`**。
+
+**② build.rs 不该再存在**
+原来 `build.rs` 按 feature 生成 `identity.rs` 到 `OUT_DIR`。现在变体用 `#[cfg]` 表达，
+文件是静态的 —— 于是 `build.rs` 在无 GUI 阶段被删掉，身份文件入库、可 review、可 `--check`。
+
+**③ 模板 shell 脚本里 heredoc 反引号**
+`cat <<EOT`（未加引号）会把反引号里的内容当命令执行 ——
+`已生成（\`$DEST/plugin/src/generated/\`）` 直接把路径当命令跑了一遍。
+改成 `${DEST}/...` 无引号写法。
+
+### 48.4 模板结构变化（GUI 之前）
+
+| 变化 | 原因 |
+|---|---|
+| `template/plugin/build.rs` 删除 | 身份不再需要构建期生成 |
+| `template/plugin/src/lib.rs` 变成 10 行（`mod generated;`） | 内容全部生成；手写只留壳 |
+| `template/plugin/Cargo.toml` 去掉 `nih_plug_egui` / `rustomp-gui`，加 `gui = []` feature | 这一阶段无界面；界面在 S1d 以手写 `editor.rs` 接回 |
+| `rustomp.toml` 新增 `[circuit]`（`plugin_type` / `params_type`）与 `[[params]]` | 生成器需要知道"哪个类型是电路""哪些参数进 DSP" |
+
+`plugin_impl.rs` 里预留的钩子：
+
+```rust
+#[cfg(feature = "gui")]
+fn make_editor(params: Arc<PluginParams>, activity: Arc<AtomicU32>) -> Option<Box<dyn Editor>> {
+    crate::editor::make(params, activity)   // 手写
+}
+#[cfg(not(feature = "gui"))]
+fn make_editor(..) -> Option<Box<dyn Editor>> { None }
+```
+
+生成器不掺和 GUI，界面代码永远是手写的 —— 这正好符合"进 GUI 之前先把框架梳理完"。
+
+### 48.5 校验（生成前就挡住）
+
+`package` 必须是 kebab-case、`name/vendor` 非空、**VST3 id 恰好 16 字节**（每个变体）、
+参数 id 唯一且合法、`circuit` 字段合法且**同一字段不被两个参数映射**、`gui = true` 时必须有 `[ui]`。
+一次报**全部**问题。
+
+单测覆盖：生成 → 再生成（`unchanged`）→ 手改一个文件后 `--check` 报漂移 → 非法 manifest 报错。
+
+### 48.6 现在这条链是完整的（到 GUI 之前）
+
+```text
+rustomp.toml ──► rustomp-gen ──► plugin/src/generated/{identity,params,plugin_impl}.rs
+      │
+      └─ 网表 .cir ──► rustomp-import --mna ──► circuit/src/generated/…rs（Netlist + Params + impl Circuit）
+
+两者 + Engine + scripts/build-all.sh ──► AU / VST3 / CLAP
+```
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -3182,6 +3286,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-25 | **S1c：插件侧代码生成**（E48）：新增 `crates/rustomp-gen`（`rustomp.toml` → identity/params/plugin_impl + `--check`）；模板改为无 GUI 外壳（删 build.rs、lib.rs 只剩 `mod generated;`）；`new-plugin.sh` 自动生成。实测：生成的项目 `cargo build` 通过、cdylib 导出 `clap_entry` + `GetPluginFactory`。踩坑：结构体叫 `Params` 与 nih-plug trait 撞名（改 `PluginParams`）、heredoc 反引号被执行 |
 | 2026-10-25 | **把对拍铺进 CI**（E47）：新增 `scripts/verify.sh`（本地/CI 同一入口，分层 + markdown 报告）、`Oracle::discover_or_skip()` + `RUSTOMP_REQUIRE_NGSPICE`（缺 ngspice 在 CI 里是**失败**而不是静默跳过）、CI 拆 fast/oracle/fmt 三个 job 并把对拍数字写进 job summary。全量约 50 s |
 | 2026-10-23 | **阶段收尾：文档对齐 + 外部设计器契约**（E46）：README 状态/质量把关/路线图重写并新增「与外部设计器的接口」；`circuit-import.md` 状态改为已实现、明确映射分层只做了 1+6 级、新增指令与产物章节、新增设计器接口；`declarative-build.md` 拆 S1a/S1b/S1c 并新增 §3.6；新建 `crates/rustomp-import/README.md`。三条硬要求（端口显式、参数显式、型号闭集）落盘 |
 | 2026-10-23 | **S1b：参数化 + 器件卡片**（E45）：`param/switch` 指令生成 `Params` + `impl Circuit` 的 `Ckt`；Q/J/M 卡片映射。验证：默认参数 THD 27.677%、对称开关把 h2 从 4.00% 打到 0.00%、GAIN 扫描单调；BJT 前级 Vb 差 2.2 µV、Ic 差 0.26%（未建模 Nk）。踩坑：`solve_dc` 的提交错误地应用了压摆率限制（运放状态被钳到 SR/fs，开场凭空多出瞬态）、`set_params` 用旧值、参数下标必须是 const |

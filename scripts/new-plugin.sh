@@ -98,6 +98,14 @@ for p in pathlib.Path(dest).rglob("*"):
 PY
 fi
 
+# 生成插件侧代码（身份 / 参数表 / Plugin 实现）
+echo "==> 生成插件代码（rustomp-gen）"
+if ! cargo run -q -p rustomp-gen -- "$DEST" 2>&1 | sed 's/^/    /'; then
+    echo "!! rustomp-gen 失败；修好 rustomp.toml 后重新运行：" >&2
+    echo "   cargo run -q -p rustomp-gen -- $DEST" >&2
+    exit 1
+fi
+
 # 注册进 workspace
 python3 - "$ROOT/Cargo.toml" "$SLUG" <<'PY'
 import sys, re
@@ -114,14 +122,18 @@ cat <<EOT
 
 ==> 完成：$DEST
 
+已生成（${DEST}/plugin/src/generated/，入库）：
+    identity.rs  params.rs  plugin_impl.rs  mod.rs
+
 还需人工做：
-  1. 编辑 $DEST/rustomp.toml：显示名、AU 四字符码（现为 $AU_DUAL/$AU_MONO/${AU_STEREO}）、
-     CLAP id、VST3 id、界面坐标与素材。
-  2. 把电路写进 $DEST/circuit/src/（现在是一个纯增益示例 Gain）。
+  1. 编辑 ${DEST}/rustomp.toml：显示名、AU 四字符码（现为 ${AU_DUAL}/${AU_MONO}/${AU_STEREO}）、
+     CLAP id、VST3 id；[[params]] 改成你的参数表。
+     改完重新生成：cargo run -q -p rustomp-gen -- ${DEST}
+  2. 把电路写进 ${DEST}/circuit/src/（现在是一个纯增益示例 Gain）。
   3. 电路写好后：
-       ./scripts/make-netlist.sh $DEST/circuit/netlist      # 生成 SPICE 网表
-       ./scripts/sim-baseline.sh $DEST/circuit/netlist      # ngspice 基线
-       cargo test -p $SLUG-circuit --release                # 对拍
+       ./scripts/make-netlist.sh ${DEST}/circuit/netlist      # 生成 SPICE 网表
+       ./scripts/sim-baseline.sh ${DEST}/circuit/netlist      # ngspice 基线
+       cargo test -p ${SLUG}-circuit --release                # 对拍
   4. 构建安装：
-       PLUGIN_DIR=$ROOT/$DEST ./scripts/build-all.sh
+       PLUGIN_DIR=${ROOT}/${DEST} ./scripts/build-all.sh
 EOT

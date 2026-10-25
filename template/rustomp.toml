@@ -28,6 +28,23 @@ subtype_stereo = "__AU_STEREO__"
 [build]
 variants = ["mono", "stereo"]
 dual_variant = false
+# 这一阶段生成的是**无界面**插件。做界面时：设 gui = true，
+# 并在 plugin/src/editor.rs 里实现 `make(params, activity)`（S1d）。
+gui = false
+
+[circuit]
+# 电路 crate 里实现 rustomp_dsp::Circuit 的类型 / 参数类型
+plugin_type = "Gain"
+params_type = "Params"
+
+[[params]]
+id = "gain"
+name = "Gain"
+type = "float"
+default = 1.0
+range = [0.0, 2.0]
+format = "plain"
+circuit = "gain"
 
 [assets]
 panel = "assets/panel@2x.png"

@@ -16,13 +16,14 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 rustomp-dsp = { workspace = true }
 __SLUG__-circuit = { path = "../circuit" }
-rustomp-gui = { path = "../../../crates/rustomp-gui" }
 
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101" }
+# 界面阶段（S1d）再打开：nih_plug_egui + rustomp-gui
 
 [features]
 default = []
 mono = []
 stereo = []
+# 有界面时打开（手写的 src/editor.rs 会被 plugin_impl.rs 的钩子调用）
+gui = []
 assert_process_allocs = ["nih_plug/assert_process_allocs"]
