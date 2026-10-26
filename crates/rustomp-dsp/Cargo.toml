@@ -10,3 +10,5 @@ repository.workspace = true
 
 [dev-dependencies]
 rustomp-oracle = { path = "../rustomp-oracle" }
+# 只给 `examples/abfft.rs`（AB 谱台架）用
+rustfft = "6"
