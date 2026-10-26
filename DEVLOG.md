@@ -3557,6 +3557,69 @@ CPU 必须配对测量、冷状态要预热……）。
 
 ---
 
+## E60：GUI 契约升级 —— 控件数组化 + 旋钮整图旋转（2026-10-25）
+
+GUI 设计器开工前，先把运行时要支持的形态定下来。两条动议来自设计器评审（`rustomp-box-designer/docs/05-spec-review.md`）：
+
+1. **解除 LED / 拨杆 / 按钮的数量限制**（原来是 `Option<T>`，各至多 1 个）；
+2. **旋钮改为整图旋转**（原来是"底图上的旋钮本体 + 运行时画一根指针"）。
+
+### 60.1 改动
+
+| 项 | 之前 | 现在 |
+|---|---|---|
+| LED / 拨杆 / 按钮 | `Option<T>`，各 1 个 | **`&'static [T]`，不限** |
+| 控件 id | `ui.id().with(param)` | **`with((kind, index))`** —— 两个控件绑同一参数也不会被 egui 合并 |
+| 旋钮渲染 | 只有指针线 | `KnobRender::{Rotate, Pointer}`，**默认 Rotate** |
+| 旋钮素材 | 压平进底图 | **独立贴图**（`KnobSpec.image` + `image_size`） |
+| 跨类型叠放 | 固定类型顺序 | **固定且不可重排**，新增 `DRAW_ORDER` 常量：`panel → leds → knobs → toggles → buttons` |
+| 校验 | 无 | **`validate_panel(spec, assets)`**：返回全部问题 |
+
+### 60.2 两条新约定（写进契约）
+
+**① 素材指针朝上 ⇔ 参数 0.5**
+整图旋转时，"0° 指向哪"由素材决定。钉死这条约定后：
+
+- 运行时**不需要** `pointer_angle_deg` 字段；
+- 但反过来要求 `angle_min + angle_max == 0`（对称范围），否则指针会整体偏转；
+- 设计器只暴露"总转角"（默认 270°），导出时写 `−travel/2 .. +travel/2`。
+
+**② 锚点默认中心；开关锚点 = 六边形中心**
+两态素材都按"六边形中心重合"归一化后，`y_up == y_down`
+—— legacy 那个"基线差 1.53、切换时跳一下"的坑从机制上消失。
+
+### 60.3 校验器拦住的四类错误
+
+`validate_panel` 在构建/导出时就会报：
+
+- `Rotate` 旋钮的角度范围不对称（指针会偏）；
+- `Rotate` 旋钮缺贴图 / `image_size` 非法（旋转中心错）；
+- 拨杆引用了不存在的贴图名（运行时那块是空白）；
+- `press_scale` 不在 (0, 1]、`radius` 为 0（点不到）。
+
+### 60.4 生成器与示例
+
+- `plugin_meta.py --panel-rust` 改出数组 + `render` + `image`/`image_size`；
+  支持 `travel_deg`（设计器友好）自动展开成对称的 `angle_min/max`；
+- `plugin_meta.py --shell` 现在把 `[assets]` 的**所有键**导出成 `ASSET_<UPPER>`
+  （旋钮贴图也走这张表）；
+- 新增 `crates/rustomp-gui/examples/panel_check.rs`：把生成的 `PanelSpec` 字面量放进去，
+  ① 编译期验证字面量写法 ② 运行 `validate_panel`。
+
+```
+✓ 面板声明通过校验：1 个旋钮 / 1 个 LED / 1 个拨杆 / 0 个按钮（画布 104×54 mm）
+  固定绘制顺序：panel → leds → knobs → toggles → buttons
+```
+
+### 60.5 对旧代码的影响
+
+- legacy 插件（`sparklin-drive-legacy`）用它自己快照里的 `rustomp-gui` 与 `plugin_meta.py`，
+  **不受影响**（归档仓库不动）；
+- 主仓库的 v2 插件当前是**无 GUI**，所以这次改动只是"把能力提前备好"；
+- 真正的编译验证要等 S1d（把 `gui` feature 打开 + 手写 `editor.rs`）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -3825,6 +3888,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-25 | **GUI 契约升级**（E60）：LED/拨杆/按钮 Option<T> 改为数组（数量不限）、控件 id 改为 (kind,index)、旋钮支持**整图旋转**（素材指针朝上 ⇔ 参数 0.5，角度范围必须对称）、新增固定绘制顺序常量与 validate_panel() 校验器；plugin_meta.py 同步（travel_deg、[assets] 全键导出）；examples/panel_check.rs 编译+校验生成的 PanelSpec |
 | 2026-10-25 | **进 GUI 前的清单 + AB 复盘补全**（E59）：新增 `docs/pre-gui-checklist.md`（9 节逐项状态 + GUI 依赖的接口 + 未完成项优先级）；AB 复盘补 §10（自适应迭代）、§11（开关）、§12（最终状态与"同一台机器"的定义）、§13（13 条方法学收获）；README 路线图/状态表同步（并把"稀疏 LU"划掉——E57 证明不是瓶颈） |
 | 2026-10-25 | **双分支 + 开关切换**（E58）：框架新增 `Branch<A,B>`（两份完整电路 + 5 ms 预热 + 10 ms 淡化，空闲时只跑当前分支）；生成器新增 `params_builder`；插件拆成 asym/sym 两份网表。实测：非对称 THD 27.58%、对称 h2 **0.000 %**、切换跳变比值 0.99（无咔哒）；教训：切进来的分支必须先"预热"，否则冷状态瞬态会从淡入窗口漏出 |
 | 2026-10-25 | **自适应牛顿迭代**（E57）：`step_fixed` 改为「iters 为上限 + 残差提前退出」（tol=1e-6），实测平均只需 **2 次**（配对测量：比固定 8 次快 **3.0×**、输出差 −227 dB）；LU 裁剪固定节点只值 1.09×（瓶颈在每样本固定开销）。另记测量坑：本机绝对性能一小时内漂移 3–5×，CPU 数字必须配对测量 |
