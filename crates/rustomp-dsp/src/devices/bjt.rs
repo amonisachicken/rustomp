@@ -40,9 +40,22 @@ pub struct Bjt {
 impl Default for Bjt {
     fn default() -> Self {
         Self {
-            is: 1e-16, bf: 100.0, nf: 1.0, vaf: f64::INFINITY, ikf: f64::INFINITY,
-            ise: 0.0, ne: 1.5, br: 1.0, nr: 1.0, var: f64::INFINITY, ikr: f64::INFINITY,
-            isc: 0.0, nc: 2.0, rb: 0.0, re: 0.0, rc: 0.0,
+            is: 1e-16,
+            bf: 100.0,
+            nf: 1.0,
+            vaf: f64::INFINITY,
+            ikf: f64::INFINITY,
+            ise: 0.0,
+            ne: 1.5,
+            br: 1.0,
+            nr: 1.0,
+            var: f64::INFINITY,
+            ikr: f64::INFINITY,
+            isc: 0.0,
+            nc: 2.0,
+            rb: 0.0,
+            re: 0.0,
+            rc: 0.0,
         }
     }
 }
@@ -79,10 +92,10 @@ impl Bjt {
 
         // 传输电流与两个结电流
         let ict = self.is / qb * (e_be - e_bc);
-        let ibe = self.is / self.bf * (e_be - 1.0)
-            + self.ise * (exp_cap(vbe / (self.ne * VT)) - 1.0);
-        let ibc = self.is / self.br * (e_bc - 1.0)
-            + self.isc * (exp_cap(vbc / (self.nc * VT)) - 1.0);
+        let ibe =
+            self.is / self.bf * (e_be - 1.0) + self.ise * (exp_cap(vbe / (self.ne * VT)) - 1.0);
+        let ibc =
+            self.is / self.br * (e_bc - 1.0) + self.isc * (exp_cap(vbc / (self.nc * VT)) - 1.0);
 
         (ict - ibc, ibe + ibc)
     }
@@ -140,9 +153,22 @@ impl Bjt {
 
 /// BC549C（硅 NPN 低噪声）：来自 breadspice 的 `models.lib`。
 pub const BC549C: Bjt = Bjt {
-    is: 7.049e-15, bf: 493.2, nf: 1.0, vaf: 23.89, ikf: 0.1542,
-    ise: 99.2e-15, ne: 1.829, br: 2.886, nr: 1.0, var: f64::INFINITY, ikr: 5.426,
-    isc: 7.371e-12, nc: 1.508, rb: 0.0, re: 0.0, rc: 1.175,
+    is: 7.049e-15,
+    bf: 493.2,
+    nf: 1.0,
+    vaf: 23.89,
+    ikf: 0.1542,
+    ise: 99.2e-15,
+    ne: 1.829,
+    br: 2.886,
+    nr: 1.0,
+    var: f64::INFINITY,
+    ikr: 5.426,
+    isc: 7.371e-12,
+    nc: 1.508,
+    rb: 0.0,
+    re: 0.0,
+    rc: 1.175,
 };
 
 /// BC559C（硅 **PNP**，BC549C 的互补管）：`Is=1.02f Bf=401.6 Vaf=34.62 Rc=1.151`
@@ -170,17 +196,43 @@ pub const BC559C: Bjt = Bjt {
 /// AC127（锗 NPN）：大漏电（`Is=5µ`、`Isc=5µ`）+ 低 `Vf` + 大 `Rb=100Ω`。
 /// 这些正是"锗味"的来源（见 `docs/component-library.md` §3）。
 pub const AC127: Bjt = Bjt {
-    is: 5e-6, bf: 160.0, nf: 1.0, vaf: 50.0, ikf: 0.3,
-    ise: 600e-9, ne: 2.0, br: 5.0, nr: 1.0, var: 50.0, ikr: f64::INFINITY,
-    isc: 5e-6, nc: 2.0, rb: 100.0, re: 0.0, rc: 1.5,
+    is: 5e-6,
+    bf: 160.0,
+    nf: 1.0,
+    vaf: 50.0,
+    ikf: 0.3,
+    ise: 600e-9,
+    ne: 2.0,
+    br: 5.0,
+    nr: 1.0,
+    var: 50.0,
+    ikr: f64::INFINITY,
+    isc: 5e-6,
+    nc: 2.0,
+    rb: 100.0,
+    re: 0.0,
+    rc: 1.5,
 };
 
 /// AC128（锗 PNP）。PNP 在与 `AC127` 相同的公式下工作 —— 使用时把端电压取反即可
 /// （`Ic/Ib` 的方向按"流入端"约定，见模块文档）。
 pub const AC128: Bjt = Bjt {
-    is: 5e-6, bf: 90.0, nf: 1.0, vaf: 40.0, ikf: 3.0,
-    ise: 200e-9, ne: 1.5, br: 5.0, nr: 1.0, var: 40.0, ikr: f64::INFINITY,
-    isc: 1e-6, nc: 2.0, rb: 7.0, re: 0.1, rc: 0.2,
+    is: 5e-6,
+    bf: 90.0,
+    nf: 1.0,
+    vaf: 40.0,
+    ikf: 3.0,
+    ise: 200e-9,
+    ne: 1.5,
+    br: 5.0,
+    nr: 1.0,
+    var: 40.0,
+    ikr: f64::INFINITY,
+    isc: 1e-6,
+    nc: 2.0,
+    rb: 7.0,
+    re: 0.1,
+    rc: 0.2,
 };
 
 #[cfg(test)]
@@ -192,7 +244,10 @@ mod tests {
         // 同一集电极电流下，锗管所需 Vbe 明显更低
         let v_si = solve_vbe(&BC549C, 1e-3);
         let v_ge = solve_vbe(&AC127, 1e-3);
-        assert!(v_ge < v_si - 0.15, "Ge Vbe={v_ge:.3} 应显著低于 Si Vbe={v_si:.3}");
+        assert!(
+            v_ge < v_si - 0.15,
+            "Ge Vbe={v_ge:.3} 应显著低于 Si Vbe={v_si:.3}"
+        );
     }
 
     #[test]
@@ -210,7 +265,11 @@ mod tests {
         let vbe = solve_vbe(&BC549C, 1e-3);
         let (ic, ib) = BC549C.terminal(vbe, vbe - 5.0);
         let hfe = ic / ib;
-        assert!((hfe / BC549C.bf - 1.0).abs() < 0.6, "hFE={hfe:.1}, Bf={}", BC549C.bf);
+        assert!(
+            (hfe / BC549C.bf - 1.0).abs() < 0.6,
+            "hFE={hfe:.1}, Bf={}",
+            BC549C.bf
+        );
     }
 
     /// 给定 Vce=5V、集电极电流目标，二分求 Vbe（测试用）
@@ -219,7 +278,11 @@ mod tests {
         for _ in 0..80 {
             let mid = 0.5 * (lo + hi);
             let (ic, _) = b.terminal(mid, mid - 5.0);
-            if ic < target_ic { lo = mid } else { hi = mid }
+            if ic < target_ic {
+                lo = mid
+            } else {
+                hi = mid
+            }
         }
         0.5 * (lo + hi)
     }

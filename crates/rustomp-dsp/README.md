@@ -130,6 +130,17 @@ engine.set_params(BranchParams { a: asym_p, b: sym_p, select_b: true });
 - 预热是必需的：切进来的那一支状态是冷的，冷启动瞬态乘上淡化权重就是可听的咔哒
   （实测 0.099 的台阶，预热后降到与信号自身削波边沿相同）。
 
+## 2.7 Engine 的三个实时开关（2026-10-26）
+
+| 能力 | API | 行为 |
+|---|---|---|
+| **真旁通** | `set_bypass(bool)` / `is_bypassed()` | 复用 5 ms 指数淡化 + 15 样本干路对齐；到位后吸附到目标。实测：淡出后与干路偏差 **0.00e0** |
+| **削波指示** | `activity_indicator()` | 快起（~1 ms）慢落（~150 ms）包络，供 GUI 画 LED；**不参与音频** |
+| **自适应迭代** | 内部 | 上限 8、残差 `1e-6` 提前退出；实测平均 2 次、与固定 8 次输出差 −227 dB |
+
+`Circuit::activity()` 的**量纲由电路决定**：生成代码用 `max(diode 电流) / ACTIVITY_I_REF`，
+参考电流由网表指令 `* @rustomp activity_i=` 给出（本电路 0.2 V 输入时 ~30 µA，取 50 µA）。
+
 ## 3. Engine 与过采样
 
 `Engine<C>` = `Circuit`（在 4×fs 运行）+ 多相 FIR 过采样 + 真旁通 + 活动指示 + NaN 熔断。

@@ -56,6 +56,22 @@ cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check] [--ou
   2 次在方波/快速边沿下会欠收敛、产生次谐波极限环（DEVLOG E50）。默认 3，有振荡器类
   方波输入的电路建议 4。
 
+### 2.1b 指令补充（2026-10-26）
+
+```text
+* @rustomp newton=8          # 每样本牛顿迭代**上限**（默认 3；残差够了提前退出）
+* @rustomp activity_i=50u    # LED 活动量的参考电流（默认 50µA，只驱动 GUI，不影响 DSP）
+```
+
+`switch` 指令保留但已是 **legacy**（D-005）：开关拆成多份完整网表，由 `Branch<A,B>` 选择
+（Sparklin Drive 现在就是 asym / sym 两份）。生成的 `impl Circuit` 多了 `activity()`：
+
+```rust
+pub fn activity(&self) -> f32 {
+    // 网表内所有二极管正向电流的最大值 / ACTIVITY_I_REF，clamp 到 0..1
+}
+```
+
 ### 2.2 生成的产物
 
 | 内容 | 说明 |

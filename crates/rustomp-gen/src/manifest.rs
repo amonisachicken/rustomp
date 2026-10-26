@@ -74,7 +74,11 @@ pub struct BuildMeta {
 
 impl Default for BuildMeta {
     fn default() -> Self {
-        Self { variants: default_variants(), dual_variant: false, gui: false }
+        Self {
+            variants: default_variants(),
+            dual_variant: false,
+            gui: false,
+        }
     }
 }
 
@@ -323,7 +327,10 @@ pub fn validate(m: &Manifest) -> Vec<String> {
     for p in m.dsp_params() {
         let field = p.circuit.clone().unwrap();
         if let Some(prev) = mapped.insert(field.clone(), p.id.clone()) {
-            errs.push(format!("电路字段 {field} 被多个参数映射：{prev} 与 {}", p.id));
+            errs.push(format!(
+                "电路字段 {field} 被多个参数映射：{prev} 与 {}",
+                p.id
+            ));
         }
     }
 

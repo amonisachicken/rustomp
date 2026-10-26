@@ -77,7 +77,10 @@ pub fn identity_rs(m: &Manifest) -> String {
         "pub const META_VENDOR: &str = {};\n",
         rust_str(&m.plugin.vendor)
     ));
-    out.push_str(&format!("pub const META_URL: &str = {};\n", rust_str(&m.plugin.url)));
+    out.push_str(&format!(
+        "pub const META_URL: &str = {};\n",
+        rust_str(&m.plugin.url)
+    ));
     out.push_str(&format!(
         "pub const META_EMAIL: &str = {};\n",
         rust_str(&m.plugin.email)
@@ -188,7 +191,11 @@ pub fn params_rs(m: &Manifest) -> String {
             args.join(", ")
         ));
     } else if dsp.is_empty() {
-        out.push_str(&format!("        {}::{}::default()\n", m.circuit_crate(), m.circuit.params_type));
+        out.push_str(&format!(
+            "        {}::{}::default()\n",
+            m.circuit_crate(),
+            m.circuit.params_type
+        ));
     } else {
         out.push_str(&format!(
             "        {}::{} {{\n",
@@ -213,11 +220,7 @@ pub fn params_rs(m: &Manifest) -> String {
 fn default_expr(p: &crate::manifest::ParamMeta) -> String {
     match p.kind {
         ParamKind::Float => {
-            let default = p
-                .default
-                .as_ref()
-                .and_then(|v| v.as_float())
-                .unwrap_or(0.5);
+            let default = p.default.as_ref().and_then(|v| v.as_float()).unwrap_or(0.5);
             let range = p.range.unwrap_or([0.0, 1.0]);
             let smoothing = p.smoothing_ms.unwrap_or(20.0);
             let format = p.format.unwrap_or(ParamFormat::Percent);
@@ -244,8 +247,17 @@ fn default_expr(p: &crate::manifest::ParamMeta) -> String {
             s
         }
         ParamKind::Bool => {
-            let default = p.default.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
-            format!("{}: BoolParam::new({}, {})", p.id, rust_str(&p.name), default)
+            let default = p
+                .default
+                .as_ref()
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            format!(
+                "{}: BoolParam::new({}, {})",
+                p.id,
+                rust_str(&p.name),
+                default
+            )
         }
     }
 }
@@ -263,7 +275,11 @@ pub fn plugin_impl_rs(m: &Manifest) -> String {
 \n"
     ));
     out.push_str("use nih_plug::prelude::*;\n");
-    out.push_str(&format!("use {}::{};\n", m.circuit_crate(), m.circuit.plugin_type));
+    out.push_str(&format!(
+        "use {}::{};\n",
+        m.circuit_crate(),
+        m.circuit.plugin_type
+    ));
     out.push_str("use rustomp_dsp::Engine;\n");
     out.push_str("use std::sync::{\n    atomic::{AtomicU32, Ordering},\n    Arc,\n};\n\n");
     out.push_str("use crate::generated::identity::*;\n");
@@ -538,7 +554,10 @@ circuit = "symmetric"
             s.contains("sparklin_drive_circuit::make_params(self.gain.smoothed.next() as f64, self.mode.value())"),
             "应生成构造函数调用：{s}"
         );
-        assert!(!s.contains("symmetric: self.mode.value()"), "构造函数模式不应再生成字段名");
+        assert!(
+            !s.contains("symmetric: self.mode.value()"),
+            "构造函数模式不应再生成字段名"
+        );
     }
 
     #[test]

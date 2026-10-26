@@ -73,7 +73,12 @@ impl<const N: usize> Default for Mna<N> {
 
 impl<const N: usize> Mna<N> {
     pub fn new() -> Self {
-        Self { y: [[0.0; N]; N], rhs: [0.0; N], gmin: 0.0, fixed: [None; N] }
+        Self {
+            y: [[0.0; N]; N],
+            rhs: [0.0; N],
+            gmin: 0.0,
+            fixed: [None; N],
+        }
     }
 
     /// 清空矩阵（保留 gmin 设置）。
@@ -188,7 +193,16 @@ impl<const N: usize> Mna<N> {
     /// 压控电压源（VCVS）：`v(a) − v(b) = gain·(v(c) − v(d)) + offset`。
     ///
     /// 运放的输出级就靠这个装进代数环（见 [`Netlist::opamp`]）。
-    pub fn vcvs(&mut self, k: usize, a: usize, b: usize, c: usize, d: usize, gain: f64, offset: f64) {
+    pub fn vcvs(
+        &mut self,
+        k: usize,
+        a: usize,
+        b: usize,
+        c: usize,
+        d: usize,
+        gain: f64,
+        offset: f64,
+    ) {
         if a != GND {
             self.y[k][a] += 1.0;
             self.y[a][k] += 1.0;
@@ -330,7 +344,6 @@ impl<const N: usize> Mna<N> {
                 b[j] -= factor * b[col];
             }
         }
-
     }
 
     fn back_substitute(&self, a: &[[f64; N]; N], b: &[f64; N], n: usize) -> [f64; N] {
@@ -361,15 +374,36 @@ pub enum Element {
     /// 非线性单口
     Diode { model: Diode, a: usize, k: usize },
     /// 三端 BJT（`npn = false` 时按 PNP 处理：电压取反、电流取反）
-    Bjt { model: Bjt, npn: bool, c: usize, b: usize, e: usize },
+    Bjt {
+        model: Bjt,
+        npn: bool,
+        c: usize,
+        b: usize,
+        e: usize,
+    },
     /// JFET（N 沟道）
-    Jfet { model: Jfet, d: usize, g: usize, s: usize },
+    Jfet {
+        model: Jfet,
+        d: usize,
+        g: usize,
+        s: usize,
+    },
     /// MOSFET（N 沟道；体二极管请另外用 `Diode` 接上）
-    Mosfet { model: Nmos, d: usize, g: usize, s: usize },
+    Mosfet {
+        model: Nmos,
+        d: usize,
+        g: usize,
+        s: usize,
+    },
     /// 电阻
     Resistor { a: usize, b: usize, r: f64 },
     /// 电容（后向欧拉伴随模型）
-    Capacitor { a: usize, b: usize, c: f64, v_prev: f64 },
+    Capacitor {
+        a: usize,
+        b: usize,
+        c: f64,
+        v_prev: f64,
+    },
     /// 运放（单极点宏模型；`branch` 是输出电压源支路）
     OpAmp {
         model: OpAmpModel,
@@ -399,7 +433,13 @@ impl Element {
                 let (i, g) = model.current_and_conductance(vl);
                 sys.stamp_lin(a, k, g, i - g * vl);
             }
-            Element::Bjt { model, npn, c, b, e } => {
+            Element::Bjt {
+                model,
+                npn,
+                c,
+                b,
+                e,
+            } => {
                 sys.multiport(&[c, b, e], v, |vv| {
                     let (vc, vb, ve) = (vv[0], vv[1], vv[2]);
                     // PNP：电压取反后喂 NPN 公式，电流再取反
@@ -438,7 +478,15 @@ impl Element {
                 sys.conductance(a, b, g);
                 sys.current_source(a, b, -g * v_prev);
             }
-            Element::OpAmp { model, state, p, m, out, branch, pin } => {
+            Element::OpAmp {
+                model,
+                state,
+                p,
+                m,
+                out,
+                branch,
+                pin,
+            } => {
                 // `pin` 只属于直流工作点：瞬态时一律按离散更新式走
                 if let (true, Some(v_pin)) = (dc, pin) {
                     // 已饱和：输出钉在限幅上（相当于理想电压源）
@@ -458,7 +506,10 @@ impl Element {
     pub fn is_nonlinear(&self) -> bool {
         matches!(
             self,
-            Element::Diode { .. } | Element::Bjt { .. } | Element::Jfet { .. } | Element::Mosfet { .. }
+            Element::Diode { .. }
+                | Element::Bjt { .. }
+                | Element::Jfet { .. }
+                | Element::Mosfet { .. }
         )
     }
 
@@ -474,7 +525,9 @@ impl Element {
                 let vb = if *b == GND { 0.0 } else { v[*b] };
                 *v_prev = va - vb;
             }
-            Element::OpAmp { model, state, out, .. } => {
+            Element::OpAmp {
+                model, state, out, ..
+            } => {
                 let raw = if *out == GND { 0.0 } else { v[*out] };
                 state.v_out = if dc {
                     model.p.clamp_out(raw) // 直流：只钳摆幅，不限摆率
@@ -488,7 +541,15 @@ impl Element {
 
     /// 运放实例（链式 builder 用）
     pub fn opamp(model: OpAmpModel, p: usize, m: usize, out: usize, branch: usize) -> Self {
-        Element::OpAmp { model, state: OpAmpState::at(0.0), p, m, out, branch, pin: None }
+        Element::OpAmp {
+            model,
+            state: OpAmpState::at(0.0),
+            p,
+            m,
+            out,
+            branch,
+            pin: None,
+        }
     }
 }
 
@@ -552,16 +613,31 @@ impl<const N: usize> Netlist<N> {
         self
     }
     pub fn resistor(&mut self, a: usize, b: usize, r: f64) -> &mut Self {
-        self.push(Element::Resistor { a, b, r: floor_resistance(r) })
+        self.push(Element::Resistor {
+            a,
+            b,
+            r: floor_resistance(r),
+        })
     }
     pub fn capacitor(&mut self, a: usize, b: usize, c: f64) -> &mut Self {
-        self.push(Element::Capacitor { a, b, c, v_prev: 0.0 })
+        self.push(Element::Capacitor {
+            a,
+            b,
+            c,
+            v_prev: 0.0,
+        })
     }
     pub fn diode(&mut self, model: Diode, a: usize, k: usize) -> &mut Self {
         self.push(Element::Diode { model, a, k })
     }
     pub fn bjt(&mut self, model: Bjt, npn: bool, c: usize, b: usize, e: usize) -> &mut Self {
-        self.push(Element::Bjt { model, npn, c, b, e })
+        self.push(Element::Bjt {
+            model,
+            npn,
+            c,
+            b,
+            e,
+        })
     }
     pub fn jfet(&mut self, model: Jfet, d: usize, g: usize, s: usize) -> &mut Self {
         self.push(Element::Jfet { model, d, g, s })
@@ -569,7 +645,14 @@ impl<const N: usize> Netlist<N> {
     pub fn mosfet(&mut self, model: Nmos, d: usize, g: usize, s: usize) -> &mut Self {
         self.push(Element::Mosfet { model, d, g, s })
     }
-    pub fn opamp(&mut self, model: OpAmpModel, p: usize, m: usize, out: usize, branch: usize) -> &mut Self {
+    pub fn opamp(
+        &mut self,
+        model: OpAmpModel,
+        p: usize,
+        m: usize,
+        out: usize,
+        branch: usize,
+    ) -> &mut Self {
         self.push(Element::opamp(model, p, m, out, branch))
     }
     /// 电压源（`v(a) − v(b) = value`），`branch` 必须唯一且 < N
@@ -664,7 +747,10 @@ impl<const N: usize> Netlist<N> {
             let v = self.solve_dc_once();
             let mut changed = false;
             for e in &mut self.elems {
-                if let Element::OpAmp { model, out, pin, .. } = e {
+                if let Element::OpAmp {
+                    model, out, pin, ..
+                } = e
+                {
                     if pin.is_none() {
                         let vout = if *out == GND { 0.0 } else { v[*out] };
                         let clamped = model.p.clamp_out(vout);
@@ -694,7 +780,9 @@ impl<const N: usize> Netlist<N> {
     fn solve_dc_once(&mut self) -> [f64; N] {
         let mut sys = Mna::<N>::new();
         let mut v = self.v;
-        for &gmin in &[1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 0.0] {
+        for &gmin in &[
+            1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 0.0,
+        ] {
             sys.set_gmin(gmin);
             match self.newton(&mut sys, v, 1.0, true) {
                 Some(v_new) => v = v_new,
@@ -742,7 +830,8 @@ impl<const N: usize> Netlist<N> {
         sys.set_gmin(1e-12);
         let v = self.newton(&mut sys, self.v, dt, false).unwrap_or_else(|| {
             // 未收敛：退回一次更小步长的尝试（极端情况下保底）
-            self.newton(&mut sys, self.v, dt * 0.1, false).unwrap_or(self.v)
+            self.newton(&mut sys, self.v, dt * 0.1, false)
+                .unwrap_or(self.v)
         });
         self.v = v;
         for e in &mut self.elems {
@@ -819,7 +908,11 @@ impl<const N: usize> Netlist<N> {
     /// 加一个电阻并返回它的索引（便于之后用 [`Self::set_resistance`] 调参）。
     pub fn push_resistor(&mut self, a: usize, b: usize, r: f64) -> usize {
         let idx = self.elems.len();
-        self.elems.push(Element::Resistor { a, b, r: floor_resistance(r) });
+        self.elems.push(Element::Resistor {
+            a,
+            b,
+            r: floor_resistance(r),
+        });
         idx
     }
 

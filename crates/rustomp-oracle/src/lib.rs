@@ -62,7 +62,10 @@ impl RawFile {
         };
 
         let mut vars = Vec::with_capacity(nvar);
-        for line in lines[vars_start..vals_start.saturating_sub(1)].iter().take(nvar) {
+        for line in lines[vars_start..vals_start.saturating_sub(1)]
+            .iter()
+            .take(nvar)
+        {
             let tok: Vec<&str> = line.split_whitespace().collect();
             if tok.len() >= 2 {
                 vars.push(tok[1].to_lowercase());
@@ -72,7 +75,8 @@ impl RawFile {
             return Err("rawfile 里没有变量".into());
         }
 
-        let mut data: HashMap<String, Vec<f64>> = vars.iter().map(|v| (v.clone(), Vec::new())).collect();
+        let mut data: HashMap<String, Vec<f64>> =
+            vars.iter().map(|v| (v.clone(), Vec::new())).collect();
         let mut cur: Vec<f64> = Vec::with_capacity(vars.len());
         let flush = |cur: &mut Vec<f64>, data: &mut HashMap<String, Vec<f64>>| {
             if cur.len() == vars.len() {

@@ -42,7 +42,13 @@ pub struct OpAmp {
 
 impl Default for OpAmp {
     fn default() -> Self {
-        Self { a0: 5e5, gbw: 0.6e6, sr: 0.25e6, vout_max: 7.8, vout_min: 1.2 }
+        Self {
+            a0: 5e5,
+            gbw: 0.6e6,
+            sr: 0.25e6,
+            vout_max: 7.8,
+            vout_min: 1.2,
+        }
     }
 }
 
@@ -137,7 +143,6 @@ impl OpAmpModel {
     pub fn follower(&self, st: &mut OpAmpState, vin: f64) -> f64 {
         self.solve_feedback(st, vin, 1.0)
     }
-
 }
 
 // ---------------------------------------------------------------- 库内型号（闭集）
@@ -242,13 +247,19 @@ mod tests {
         for i in 0..=20 {
             let f = 5_000.0 * (1.12_f64).powi(i);
             let h = measure(f);
-            println!("  f={f:>8.0} Hz  |H|={h:>6.2}  ({:+.1} dB)", 20.0 * (h / gain).log10());
+            println!(
+                "  f={f:>8.0} Hz  |H|={h:>6.2}  ({:+.1} dB)",
+                20.0 * (h / gain).log10()
+            );
             if f3.is_none() && h < dc / std::f64::consts::SQRT_2 {
                 f3 = Some(f);
             }
         }
         assert!((dc - gain).abs() < 0.6, "低频增益 {dc:.2} 应 ≈ 11");
         let f3 = f3.expect("-3dB 点未找到（滚降太慢）");
-        assert!((45_000.0..65_000.0).contains(&f3), "-3dB 点 {f3:.0} Hz 应 ≈ 54 kHz");
+        assert!(
+            (45_000.0..65_000.0).contains(&f3),
+            "-3dB 点 {f3:.0} Hz 应 ≈ 54 kHz"
+        );
     }
 }

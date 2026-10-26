@@ -146,12 +146,19 @@ fn main() {
     // 诊断用：差值单独归一化（专门放大才听得清"差在哪"）
     let g_boost = 0.891 / peak(&ediff).max(1e-12);
 
-    println!("  统一增益 {:+.1} dB（三段共用）；差值诊断版 {:+.1} dB", db(g_common, 1.0), db(g_boost, 1.0));
+    println!(
+        "  统一增益 {:+.1} dB（三段共用）；差值诊断版 {:+.1} dB",
+        db(g_common, 1.0),
+        db(g_boost, 1.0)
+    );
 
     write_wav(&out_dir.join("even_v2.wav"), &scale(&ev2, g_common));
     write_wav(&out_dir.join("even_legacy.wav"), &scale(&eleg, g_common));
     write_wav(&out_dir.join("even_diff.wav"), &scale(&ediff, g_common));
-    write_wav(&out_dir.join("even_diff_boost.wav"), &scale(&ediff, g_boost));
+    write_wav(
+        &out_dir.join("even_diff_boost.wav"),
+        &scale(&ediff, g_boost),
+    );
     write_wav(&out_dir.join("full_diff.wav"), &scale(&fdiff, g_boost));
 
     // 三段拼接（统一增益 → 可听出真实电平关系）

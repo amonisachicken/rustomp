@@ -20,6 +20,18 @@ cargo run -q -p rustomp-gen -- <项目目录> --check   # 只比对（CI 防漂�
 手写 `src/editor.rs` 提供 `make(params, activity)` 并开启 `gui` feature ——
 生成器不掺和 GUI。
 
+## `gui = true` 时多生成什么（S1d，2026-10-26）
+
+| 文件/字段 | 内容 |
+|---|---|
+| `generated/params.rs` | 追加 `#[persist = "editor-state"] pub editor_state: Arc<EguiState>`（窗口尺寸记忆） |
+| `generated/mod.rs` | 追加 `pub mod panel;` |
+| `generated/plugin_impl.rs` | `process()` 开头下发 `set_bypass`（**`bypass` 是保留参数 id**，不进 `make_params`） |
+
+`panel.rs` 目前仍由 `tools/meta/plugin_meta.py --panel-rust` 生成并入库；
+搬进本 crate（单一发射器）是 TODO。`params_builder` 收到的是**非保留 id** 的参数，
+顺序 = `[[params]]` 声明顺序。
+
 ## 为什么结构体叫 `PluginParams`
 
 nih-plug 的 trait 也叫 `Params`。生成物里如果把自己的结构体叫 `Params`，

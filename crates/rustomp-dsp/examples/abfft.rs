@@ -7,8 +7,8 @@
 //!
 //! 采集：3 s 预热 + 1 s（48000 点 = 1000 个整周期 → 矩形窗零泄漏，频率分辨率 1 Hz）。
 
-use rustomp_dsp::{Circuit, Engine};
 use rustfft::{num_complex::Complex, FftPlanner};
+use rustomp_dsp::{Circuit, Engine};
 
 // 用入库的 S1b 夹具（与 Sparklin Drive 插件里的电路同一份生成代码）
 include!("../tests/generated/sparklin_drive.rs");
@@ -71,7 +71,9 @@ fn analyse(plugin: &str, sig: Sig, out: &[f64]) {
     let n = out.len();
     let mut buf: Vec<Complex<f64>> = out.iter().map(|v| Complex::new(*v, 0.0)).collect();
     FftPlanner::new().plan_fft_forward(n).process(&mut buf);
-    let mag: Vec<f64> = (0..=n / 2).map(|k| 2.0 * buf[k].norm() / n as f64).collect();
+    let mag: Vec<f64> = (0..=n / 2)
+        .map(|k| 2.0 * buf[k].norm() / n as f64)
+        .collect();
     let bin_of = |f: f64| (f / (FS / n as f64)).round() as usize;
     let fund = mag[bin_of(F0)];
 

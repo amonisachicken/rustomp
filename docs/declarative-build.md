@@ -1,6 +1,6 @@
 # 声明式构建规范（插件项目 → 多平台产物）
 
-> 状态：**原则已定，待实现**（2026-10-23）
+> 状态：**代码生成已实现**（S1a–S1d，2026-10-26）；打包只做 macOS（见 §4.0 平台策略）
 > 相关：`DEVLOG.md` E33 / ADR-014；`docs/component-library.md`、`docs/circuit-import.md`
 > 已确认的取舍：生成物放 **`src/generated/`**（可读可 diff）；参数格式化只支持
 > `percent / db / plain / enum`；**Windows、Linux、standalone 排进路线**，且按平台**可插拔**。
@@ -58,9 +58,13 @@ cargo run -q -p rustomp-gen -- <项目目录> --check    # 只比对（CI 防漂
 ```
 
 > **`identity.rs` 不再由 build.rs 生成**（S1c）：变体差异改成 `#[cfg(feature = "mono"/"stereo")]`，
-> 于是文件是静态的、可入库、可 diff、可 `--check`。`build.rs` 在无 GUI 阶段已移除。
+> 于是文件是静态的、可入库、可 diff、可 `--check`。`build.rs` 已移除（GUI 阶段也不再加回来）。
 >
-> **界面（S1d）**：`panel.rs` 与 egui 依赖在 `gui` feature 之后。
+> **界面（S1d，已实现）**：`panel.rs` 目前由 `plugin_meta.py --panel-rust` 生成并入库
+> （旋钮整图旋转 / 拨杆 / LED / 脚踏数组化，毫米坐标）；`rustomp-gen` 在 `gui = true` 时
+> 额外生成 `editor_state`（窗口尺寸记忆）与 `pub mod panel;`。把 panel 生成搬进 `rustomp-gen` 是 TODO。
+>
+> 历史上的说明：`panel.rs` 与 egui 依赖在 `gui` feature 之后。
 > `plugin_impl.rs` 里已经留好钩子 —— `gui` 关闭时 `editor()` 返回 `None`；
 > 开启时调用手写的 `src/editor.rs::make(params, activity)`。生成器不掺和 GUI。
 
@@ -152,7 +156,7 @@ E45 里还有一条"直流工作点被压摆率限制污染、开场凭空多出
 ```text
  原理图设计器 ──(.cir 网表 + @rustomp 指令)──► rustomp-import --mna ──► <project>/src/generated/circuit.rs
                                                                               │
- 插件 GUI 设计器 ──(rustomp.toml [ui] + PNG 素材)──► build.rs ──► PanelSpec ───┴──► 插件 crate
+ 面板设计器 ──(rustomp.toml [ui] + PNG 素材)──► plugin_meta.py ──► panel.rs ───┴──► 插件 crate
 ```
 
 对两侧的要求：
@@ -166,6 +170,32 @@ E45 里还有一条"直流工作点被压摆率限制污染、开场凭空多出
 
 **为什么设计器不直接生成 Rust**：网表是**可被 ngspice 验证**的中间格式（对拍全靠它）；
 设计器一旦直接产出代码，对拍链就断了。所以设计器只负责"画图 → 网表 + 指令"。
+
+## 4.0 平台策略：macOS 默认 + 外部打包工具（ADR-015）
+
+**本仓库只面向 macOS。** Windows / Linux 的打包做成**独立仓库**，开发者按需拉取接进工作流：
+
+```text
+rustomp（框架 + macOS 打包 + 平台契约）
+   ├── rustomp-win-plugin     Windows：VST3/CLAP + standalone + 安装包
+   └── rustomp-linux-plugin   Linux：VST3/CLAP + standalone + 包
+```
+
+| 层 | 谁提供 | 备注 |
+|---|---|---|
+| DSP / 电路 / 器件 / 代码生成 | 本仓库 | 纯 Rust，跨平台编译不是难点 |
+| macOS 打包（AU/VST3/CLAP） | 本仓库 `scripts/` | 已在 Logic 实机验证 |
+| Windows / Linux 打包 | 外部仓库 | 各自平台原生构建与宿主验证 |
+
+**外部打包工具要满足的契约**（与 §4.2 一致）：
+
+1. 入口：`scripts/pack/<platform>/<format>.sh <plugin_dir>`，成功时在 stdout 打印一行 `ARTIFACT: <路径>`；
+2. 只消费 `<plugin_dir>/rustomp.toml` 与已生成的 `src/generated/`，**不改 DSP/电路/生成物**；
+3. 能力声明（支持哪些格式/变体）写在它自己的 README 与 `capabilities.toml` 里；
+4. 验证标准：能在目标宿主上安装、扫出预期身份、渲染正常。
+
+> 为什么不在本仓库做条件编译：难点不是编译而是**打包与宿主兼容**（clap-wrapper/CMake/签名/宿主缓存），
+> 每个平台都必须在本机验证过才算数。详见 DEVLOG ADR-015。
 
 ## 4. 打包后端（可插拔的平台侧）
 
@@ -222,8 +252,8 @@ requires  = ["cmake", "clap-wrapper", "AudioUnitSDK"]
 | 平台 | au | vst3 | clap | standalone | 安装包 |
 |---|---|---|---|---|---|
 | **macOS** | ✅（clap-wrapper） | ✅（nih-plug） | ✅（nih-plug） | ⬜ | ⬜ `pkg` |
-| **Windows** | ❌（无 AU） | ✅ | ✅ | ⬜ | ⬜ MSI/Inno |
-| **Linux** | ❌（无 AU） | ✅ | ✅ | ⬜ | ⬜ `tar.gz` / `deb` |
+| **Windows** | ❌（无 AU） | ✅（外部工具） | ✅（外部工具） | ⬜ 外部工具 | ⬜ 外部工具 |
+| **Linux** | ❌（无 AU） | ✅（外部工具） | ✅（外部工具） | ⬜ 外部工具 | ⬜ 外部工具 |
 | `au3` | ⬜ 需完整 Xcode | — | — | — | — |
 | `aax` | ❌ **GPL-3 与 Avid 协议冲突**（ADR-005 / R10） | | | | |
 
@@ -333,5 +363,6 @@ steps:
 | 日期 | 内容 |
 |---|---|
 | 2026-10-23 | 建立本文档：确认生成物入 `src/generated/`、参数四类格式；确立「代码生成（host）与打包（各平台）两个平面」、后端契约与能力声明、CI 矩阵验收；Windows/Linux/standalone 排入路线，AAX 排除 |
+| 2026-10-26 | **S1d 完成 + 平台策略（ADR-015）**：面板声明由 `[ui]` 生成并驱动真实插件（毫米坐标/12 px/mm/旋钮整图旋转/3PDT/LED 活动量/true-bypass）；新增 §4.0 平台策略：本仓库只做 macOS，Windows/Linux 走独立打包工具仓库 |
 | 2026-10-25 | **S1c 完成**：`crates/rustomp-gen`（manifest 校验 + 三份代码 + `--check`）、模板改为无 GUI 外壳、`new-plugin.sh` 自动生成；生成项目可 `cargo build` 并导出 CLAP/VST3 入口。路线表新增 S1d（界面） |
 | 2026-10-23 | **S1a/S1b 完成**（§3.4）：电路侧代码生成（网表 → 装配代码 + 参数化 + `impl Circuit`）、漂移守卫、行为级验收；路线表拆成 S1a/S1b/S1c；新增 §3.6「与外部设计器的接口」（原理图设计器 → 网表、GUI 设计器 → `rustomp.toml`） |

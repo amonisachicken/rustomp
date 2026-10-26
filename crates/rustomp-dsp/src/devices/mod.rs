@@ -24,9 +24,7 @@ pub mod mosfet;
 pub mod opamp;
 
 pub use bjt::{Bjt, AC127, AC128, BC549C, BC559C};
+pub use diode::{Diode, D_1N34A, D_1N4007, D_1N4148, D_1N5817, LED_BLUE, LED_GREEN, LED_RED};
 pub use jfet::{Jfet, J201};
 pub use mosfet::{Nmos, NMOS_2N7000, NMOS_2N7000_BODY};
 pub use opamp::{OpAmp, OpAmpModel, OpAmpState, OP07};
-pub use diode::{
-    Diode, D_1N34A, D_1N4007, D_1N4148, D_1N5817, LED_BLUE, LED_GREEN, LED_RED,
-};

@@ -41,7 +41,11 @@ pub struct BranchParams<PA, PB> {
 
 impl<PA: Default, PB: Default> Default for BranchParams<PA, PB> {
     fn default() -> Self {
-        Self { a: PA::default(), b: PB::default(), select_b: false }
+        Self {
+            a: PA::default(),
+            b: PB::default(),
+            select_b: false,
+        }
     }
 }
 
@@ -192,7 +196,11 @@ mod tests {
 
     fn make(fs: f64) -> Branch<Gain, Gain> {
         let mut br = Branch::<Gain, Gain>::new(fs);
-        br.set_params(BranchParams { a: GainParams { g: 1.0 }, b: GainParams { g: 2.0 }, select_b: false });
+        br.set_params(BranchParams {
+            a: GainParams { g: 1.0 },
+            b: GainParams { g: 2.0 },
+            select_b: false,
+        });
         br.reset();
         br
     }
@@ -201,7 +209,10 @@ mod tests {
     fn passes_only_active_branch() {
         let fs = 48_000.0;
         let mut br = make(fs);
-        assert!((br.process(1.0) - 1.0).abs() < 1e-12, "默认应走 A（增益 1）");
+        assert!(
+            (br.process(1.0) - 1.0).abs() < 1e-12,
+            "默认应走 A（增益 1）"
+        );
         assert!(!br.is_fading());
     }
 
@@ -211,11 +222,16 @@ mod tests {
         let mut br = make(fs);
         br.process(1.0);
         // 切换前先预热一遍，让 a/b 都跑过
-        br.set_params(BranchParams { a: GainParams { g: 1.0 }, b: GainParams { g: 2.0 }, select_b: true });
+        br.set_params(BranchParams {
+            a: GainParams { g: 1.0 },
+            b: GainParams { g: 2.0 },
+            select_b: true,
+        });
         assert!(br.is_fading(), "选择位变化应触发淡化");
 
         // 切换 = 预热（PRIME_MS，输出仍走旧分支）+ 淡化（FADE_MS）
-        let total = ((Branch::<Gain, Gain>::PRIME_MS + Branch::<Gain, Gain>::FADE_MS) / 1000.0 * fs) as usize;
+        let total = ((Branch::<Gain, Gain>::PRIME_MS + Branch::<Gain, Gain>::FADE_MS) / 1000.0 * fs)
+            as usize;
         let mut prev = br.process(1.0);
         let mut max_jump = 0.0f64;
         for _ in 0..total {
@@ -224,18 +240,29 @@ mod tests {
             prev = y;
         }
         // 淡化期间的相邻样本跳变必须很小（1.0 → 2.0 分摊到 480 个样本 ≈ 2.1e-3/样本）
-        assert!(max_jump < 0.01, "淡化期间跳变 {max_jump:.4} 过大（会听成咔哒）");
+        assert!(
+            max_jump < 0.01,
+            "淡化期间跳变 {max_jump:.4} 过大（会听成咔哒）"
+        );
         assert!(!br.is_fading(), "预热+淡化应当在 15 ms 内结束");
-        assert!((br.process(1.0) - 2.0).abs() < 1e-9, "切换后应走 B（增益 2）");
+        assert!(
+            (br.process(1.0) - 2.0).abs() < 1e-9,
+            "切换后应走 B（增益 2）"
+        );
     }
 
     #[test]
     fn repeated_set_params_does_not_restart_fade() {
         let fs = 48_000.0;
         let mut br = make(fs);
-        let p = BranchParams { a: GainParams { g: 1.0 }, b: GainParams { g: 2.0 }, select_b: true };
+        let p = BranchParams {
+            a: GainParams { g: 1.0 },
+            b: GainParams { g: 2.0 },
+            select_b: true,
+        };
         br.set_params(p);
-        let total = ((Branch::<Gain, Gain>::PRIME_MS + Branch::<Gain, Gain>::FADE_MS) / 1000.0 * fs) as usize;
+        let total = ((Branch::<Gain, Gain>::PRIME_MS + Branch::<Gain, Gain>::FADE_MS) / 1000.0 * fs)
+            as usize;
         // 每样本都调 set_params（插件就是这样做的）：不能重置淡化进度
         for _ in 0..total {
             br.set_params(p);

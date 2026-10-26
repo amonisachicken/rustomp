@@ -53,7 +53,11 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { input: None, output: None, source: String::new() }
+        Self {
+            input: None,
+            output: None,
+            source: String::new(),
+        }
     }
 }
 
@@ -184,7 +188,9 @@ struct Directives {
 fn parse_directives(notes: &[String]) -> Result<Directives, String> {
     let mut d = Directives::default();
     for note in notes {
-        let Some(rest) = note.strip_prefix("@rustomp") else { continue };
+        let Some(rest) = note.strip_prefix("@rustomp") else {
+            continue;
+        };
         let tokens: Vec<&str> = rest.split_whitespace().collect();
         if tokens.is_empty() {
             continue;
@@ -197,13 +203,10 @@ fn parse_directives(notes: &[String]) -> Result<Directives, String> {
                 } else if let Some(v) = t.strip_prefix("out=") {
                     d.output = Some(v.to_string());
                 } else if let Some(v) = t.strip_prefix("activity_i=") {
-                    d.activity_i = Some(
-                        parse_value(v).ok_or_else(|| format!("`activity_i={v}` 读不出数值"))?,
-                    );
+                    d.activity_i =
+                        Some(parse_value(v).ok_or_else(|| format!("`activity_i={v}` 读不出数值"))?);
                 } else if let Some(v) = t.strip_prefix("newton=") {
-                    let n: usize = v
-                        .parse()
-                        .map_err(|_| format!("`newton={v}` 不是整数"))?;
+                    let n: usize = v.parse().map_err(|_| format!("`newton={v}` 不是整数"))?;
                     if !(2..=64).contains(&n) {
                         return Err(format!("newton={n} 不合理（允许 2..=64）"));
                     }
@@ -263,7 +266,11 @@ fn parse_directives(notes: &[String]) -> Result<Directives, String> {
 
 fn check_field(name: &str) -> Result<String, String> {
     let ok = !name.is_empty()
-        && name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+        && name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_')
+            .unwrap_or(false)
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if ok {
         Ok(name.to_string())
@@ -296,7 +303,9 @@ struct Union {
 
 impl Union {
     fn new() -> Self {
-        Self { parent: BTreeMap::new() }
+        Self {
+            parent: BTreeMap::new(),
+        }
     }
     fn find(&mut self, x: &str) -> String {
         let p = self.parent.get(x).cloned().unwrap_or_else(|| x.to_string());
@@ -313,8 +322,11 @@ impl Union {
             return;
         }
         // 地优先当根，其余按字典序 —— 保证确定性
-        let (root, child) =
-            if ra == "0" || (rb != "0" && ra < rb) { (ra, rb) } else { (rb, ra) };
+        let (root, child) = if ra == "0" || (rb != "0" && ra < rb) {
+            (ra, rb)
+        } else {
+            (rb, ra)
+        };
         self.parent.insert(child, root);
     }
 }
@@ -352,8 +364,10 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         all_nodes.insert(s.node_a.clone());
         all_nodes.insert(s.node_b.clone());
     }
-    let canon_map: BTreeMap<String, String> =
-        all_nodes.iter().map(|n| (n.clone(), union.find(n))).collect();
+    let canon_map: BTreeMap<String, String> = all_nodes
+        .iter()
+        .map(|n| (n.clone(), union.find(n)))
+        .collect();
     let canon = |n: &str| canon_map.get(n).cloned().unwrap_or_else(|| n.to_string());
 
     // ---- 2) 节点编号（地=0，其余按名字排序）----
@@ -447,11 +461,9 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     let has_input = input_node.is_some();
 
     // ---- 4) 输出端口 ----
-    let output_name = opts
-        .output
-        .clone()
-        .or(dirs.output.clone())
-        .ok_or_else(|| "没指定输出节点，请用 `* @rustomp out=<节点名>` 或 --output-node".to_string())?;
+    let output_name = opts.output.clone().or(dirs.output.clone()).ok_or_else(|| {
+        "没指定输出节点，请用 `* @rustomp out=<节点名>` 或 --output-node".to_string()
+    })?;
     let output_node = idx(&output_name);
     if output_node == 0 && canon(&output_name) == "0" {
         return Err(format!("输出节点 {output_name} 被合并到地了"));
@@ -556,14 +568,20 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                 elem_count += 1;
             }
             ElementKind::Diode => {
-                let model = e.model.as_deref().ok_or_else(|| format!("{}：二极管没有模型名", e.name))?;
-                let (const_name, kind) =
-                    model_const(model).ok_or_else(|| unknown_model_error(circuit, model, "二极管"))?;
+                let model = e
+                    .model
+                    .as_deref()
+                    .ok_or_else(|| format!("{}：二极管没有模型名", e.name))?;
+                let (const_name, kind) = model_const(model)
+                    .ok_or_else(|| unknown_model_error(circuit, model, "二极管"))?;
                 if kind != ModelKind::Diode {
                     return Err(format!("{}：模型 {model} 不是二极管", e.name));
                 }
                 uses.insert(const_name.into());
-                body.push(format!("    // {} {}（阳极 {}）", e.name, model, e.nodes[0]));
+                body.push(format!(
+                    "    // {} {}（阳极 {}）",
+                    e.name, model, e.nodes[0]
+                ));
                 body.push(format!(
                     "    net.diode({}, {}, {});",
                     const_name,
@@ -573,9 +591,12 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                 elem_count += 1;
             }
             ElementKind::Npn | ElementKind::Pnp => {
-                let model = e.model.as_deref().ok_or_else(|| format!("{}：三极管没有模型名", e.name))?;
-                let (const_name, kind) =
-                    model_const(model).ok_or_else(|| unknown_model_error(circuit, model, "三极管"))?;
+                let model = e
+                    .model
+                    .as_deref()
+                    .ok_or_else(|| format!("{}：三极管没有模型名", e.name))?;
+                let (const_name, kind) = model_const(model)
+                    .ok_or_else(|| unknown_model_error(circuit, model, "三极管"))?;
                 let npn = match kind {
                     ModelKind::BjtNpn => true,
                     ModelKind::BjtPnp => false,
@@ -599,9 +620,12 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                 elem_count += 1;
             }
             ElementKind::Jfet => {
-                let model = e.model.as_deref().ok_or_else(|| format!("{}：JFET 没有模型名", e.name))?;
-                let (const_name, kind) =
-                    model_const(model).ok_or_else(|| unknown_model_error(circuit, model, "JFET"))?;
+                let model = e
+                    .model
+                    .as_deref()
+                    .ok_or_else(|| format!("{}：JFET 没有模型名", e.name))?;
+                let (const_name, kind) = model_const(model)
+                    .ok_or_else(|| unknown_model_error(circuit, model, "JFET"))?;
                 if kind != ModelKind::Jfet {
                     return Err(format!("{}：模型 {model} 不是 JFET", e.name));
                 }
@@ -617,9 +641,12 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                 elem_count += 1;
             }
             ElementKind::Nmos => {
-                let model = e.model.as_deref().ok_or_else(|| format!("{}：MOSFET 没有模型名", e.name))?;
-                let (const_name, kind) =
-                    model_const(model).ok_or_else(|| unknown_model_error(circuit, model, "MOSFET"))?;
+                let model = e
+                    .model
+                    .as_deref()
+                    .ok_or_else(|| format!("{}：MOSFET 没有模型名", e.name))?;
+                let (const_name, kind) = model_const(model)
+                    .ok_or_else(|| unknown_model_error(circuit, model, "MOSFET"))?;
                 if kind != ModelKind::Mosfet {
                     return Err(format!("{}：模型 {model} 不是 MOSFET", e.name));
                 }
@@ -636,8 +663,8 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
             }
             ElementKind::Subckt => {
                 let model = e.model.as_deref().unwrap_or("");
-                let (const_name, kind) =
-                    model_const(model).ok_or_else(|| unknown_model_error(circuit, model, "子电路"))?;
+                let (const_name, kind) = model_const(model)
+                    .ok_or_else(|| unknown_model_error(circuit, model, "子电路"))?;
                 if kind != ModelKind::OpAmp {
                     return Err(format!("{}：子电路 {model} 目前只支持运放", e.name));
                 }
@@ -729,12 +756,19 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     code.push_str("// @generated by rustomp-import (netlist → MNA elements) — do not edit\n");
     code.push_str(&format!(
         "// 由 {} 生成。改动请改网表后重新生成。\n",
-        if opts.source.is_empty() { "网表" } else { &opts.source }
+        if opts.source.is_empty() {
+            "网表"
+        } else {
+            &opts.source
+        }
     ));
     code.push_str("// 未知量 = 节点数 + 电压源支路数（地不占未知量）。\n\n");
     let mut use_list: Vec<String> = uses.iter().cloned().collect();
     use_list.sort();
-    code.push_str(&format!("use rustomp_dsp::{{{}}};\n\n", use_list.join(", ")));
+    code.push_str(&format!(
+        "use rustomp_dsp::{{{}}};\n\n",
+        use_list.join(", ")
+    ));
     code.push_str(&format!(
         "/// 总下标数（`Netlist<N>` 的 N；包含排在最后的固定电位节点）\npub const N: usize = {unknowns};\n\n"
     ));
@@ -755,13 +789,17 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         for (field, ty) in &param_fields {
             code.push_str(&format!("    pub {field}: {},\n", ty.rust_ty()));
         }
-        code.push_str("}\n\nimpl Default for Params {\n    fn default() -> Self {\n        Self {\n");
+        code.push_str(
+            "}\n\nimpl Default for Params {\n    fn default() -> Self {\n        Self {\n",
+        );
         for (field, ty) in &param_fields {
             code.push_str(&format!("            {field}: {},\n", ty.default_value()));
         }
         code.push_str("        }\n    }\n}\n\n");
     } else {
-        code.push_str("/// 无可调参数。\n#[derive(Clone, Copy, PartialEq, Default)]\npub struct Params;\n\n");
+        code.push_str(
+            "/// 无可调参数。\n#[derive(Clone, Copy, PartialEq, Default)]\npub struct Params;\n\n",
+        );
     }
 
     // 参数元件的下标（供 set_params 定位）
@@ -792,7 +830,10 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     } else {
         code.push_str("/// 无输入端口（纯直流电路）\npub const IN: usize = 0;\n");
     }
-    code.push_str(&format!("/// 输出节点\npub const OUT: usize = {};\n", output_node));
+    code.push_str(&format!(
+        "/// 输出节点\npub const OUT: usize = {};\n",
+        output_node
+    ));
     let mut rails = fixed_nodes.clone();
     rails.sort_by(|a, b| a.0.cmp(&b.0));
     rails.dedup_by_key(|(n, _, _)| *n);
@@ -860,15 +901,9 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     code.push_str("        // 削波活动量：网表里**所有二极管**正向电流的最大值（反向的不算）\n");
     code.push_str("        let mut imax = 0.0f64;\n");
     code.push_str("        for e in &self.net.elems {\n");
-    code.push_str(
-        "            if let rustomp_dsp::Element::Diode { model, a, k } = e {\n",
-    );
-    code.push_str(
-        "                let va = if *a == rustomp_dsp::GND { 0.0 } else { v[*a] };\n",
-    );
-    code.push_str(
-        "                let vk = if *k == rustomp_dsp::GND { 0.0 } else { v[*k] };\n",
-    );
+    code.push_str("            if let rustomp_dsp::Element::Diode { model, a, k } = e {\n");
+    code.push_str("                let va = if *a == rustomp_dsp::GND { 0.0 } else { v[*a] };\n");
+    code.push_str("                let vk = if *k == rustomp_dsp::GND { 0.0 } else { v[*k] };\n");
     code.push_str("                imax = imax.max(model.current(va - vk));\n");
     code.push_str("            }\n");
     code.push_str("        }\n");
@@ -877,7 +912,11 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     code.push_str("    /// 削波活动量（0..1）→ 引擎做快起慢落包络 → GUI 的 LED\n");
     code.push_str("    fn activity(&self) -> f32 {\n        self.activity\n    }\n}\n");
 
-    Ok(Generated { code, notes, unknowns })
+    Ok(Generated {
+        code,
+        notes,
+        unknowns,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -910,7 +949,13 @@ fn const_name_for(node: &str) -> String {
             out.push('_');
         }
     }
-    if out.is_empty() || out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true) {
+    if out.is_empty()
+        || out
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(true)
+    {
         out.insert_str(0, "N_");
     }
     out
@@ -939,9 +984,15 @@ fn unknown_model_error(circuit: &ImportedCircuit, model: &str, kind: &str) -> St
         "1N4148", "1N34A", "1N4007", "1N5817", "LedRed", "LedGreen", "LedBLUE", "OP07A", //
         "BC549C", "BC559C", "AC127", "AC128", "J201", "2N7000",
     ];
-    let mut msg = format!("{kind}模型 `{model}` 不在闭集表里（已知：{}）", known.join(" / "));
-    let models: BTreeSet<&str> =
-        circuit.elements.iter().filter_map(|e| e.model.as_deref()).collect();
+    let mut msg = format!(
+        "{kind}模型 `{model}` 不在闭集表里（已知：{}）",
+        known.join(" / ")
+    );
+    let models: BTreeSet<&str> = circuit
+        .elements
+        .iter()
+        .filter_map(|e| e.model.as_deref())
+        .collect();
     msg.push_str(&format!(
         "\n网表里出现的模型：{}",
         models.into_iter().collect::<Vec<_>>().join(", ")

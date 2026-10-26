@@ -3780,6 +3780,89 @@ self.activity = (imax / ACTIVITY_I_REF).clamp(0.0, 1.0) as f32;
 
 ---
 
+## E63：全项目复盘 + 平台策略（2026-10-26）
+
+从 E35（器件库第一块）到今天，项目走完了「器件 → 装配器 → 实时路径 → 代码生成 → 界面」整条链。
+这一节做两件事：**把整条链的状态钉在文档里**，以及**定下平台策略**。
+
+### 63.1 现在的链路（一条命令各段都能复核）
+
+```text
+网表 .cir ──rustomp-import --mna──► circuit/src/generated/*.rs
+                                       （Netlist + Params + impl Circuit + activity）
+rustomp.toml ──rustomp-gen──► plugin/src/generated/{identity,params,plugin_impl,mod,panel}.rs
+                                       （身份/参数表/Plugin 实现/模块汇总/面板声明）
+
+两者 + Engine + editor.rs（手写 ~100 行）+ scripts/build-all.sh ──► AU / VST3 / CLAP
+```
+
+| 块 | 状态 | 关键证据 |
+|---|---|---|
+| 器件库 14 型号 | ✅ | 二极管 0.00%、BJT ≤0.09%、JFET 0.00%、MOS ≤0.01%、运放 <2% |
+| MNA 装配器 | ✅ | 整机 DC µV 级、瞬态 17 mV、THD 27.579% vs ngspice 27.5682% |
+| 实时路径 | ✅ | 自适应牛顿（上限 8 / 残差 1e-6）、平均 2 次、方波次谐波 −70 dB |
+| 代码生成 | ✅ | S1a/S1b/S1c/S1d 全通；生成物有漂移守卫 |
+| 多分支（开关） | ✅ | `Branch<A,B>`，预热 5 ms + 淡化 10 ms，对称分支 h2 = 0.000% |
+| 界面 | ✅ | 毫米坐标 60×112 mm、12 px/mm、旋钮整图旋转、多控件、LED 活动量、true-bypass |
+| 验证 | ✅ | **91 个用例 / verify.sh 8 层**（4 层 ngspice 对拍） |
+| 规模 | — | Rust 9139 行（5 个 crate）、文档 6500+ 行、74 个提交 |
+
+### 63.2 平台策略（ADR-015）
+
+**rustomp 默认只面向 macOS。** 其他平台不走"本仓库交叉编译"，而是**独立打包工具仓库**：
+
+```text
+rustomp（框架 + 构建脚本，macOS 原生）
+   ├── rustomp-win-plugin    （Windows 打包：VST3/CLAP + standalone/安装包）
+   └── rustomp-linux-plugin  （Linux 打包：VST3/CLAP + standalone/包）
+```
+
+开发者想要哪个平台，就把对应仓库拉下来接进现有工作流（它是**打包层**，不碰 DSP/电路/代码生成）。
+
+为什么这样做：
+
+1. **DSP 与打包天然解耦**：`Circuit` / `Engine` / 代码生成都是纯 Rust，跨平台编译不是难点；
+   难点在**打包与宿主兼容**（clap-wrapper + CMake + 签名 + 各种宿主缓存），每个平台都要独立验证。
+2. **省时间**：现在只有 macOS 可验证；Windows/Linux 的打包脚本写出来也没有环境验证，等于猜。
+3. **ADR-014 已经预留了契约**：`scripts/pack/<platform>/<format>.sh` 成功打印 `ARTIFACT: <路径>`。
+   外部打包工具只要满足这个契约，就能无缝接上。
+
+所以本仓库的定位收敛为：**框架 + macOS 打包脚本 + 契约**。
+跨平台能力靠"可插拔的打包工具"扩展，而不是靠仓库内条件编译。
+
+### 63.3 复盘：这轮最值钱的七条经验
+
+| # | 经验 | 出处 |
+|---|---|---|
+| 1 | **正弦测试查不出欠收敛**，必须补方波/阶跃 | E50 |
+| 2 | 验收要包含"**不该出现的分量**"（次谐波/杂散/NaN/DC） | E50 |
+| 3 | **参数端点是 bug 温床**（`t=0 / t=1` 先算一遍） | E51 |
+| 4 | **数值实现层就是音色的一部分** | E52 |
+| 5 | 对比信号**不能各自归一化** | E55 |
+| 6 | **冷状态要先预热**再淡入；反复出现的"切换咔哒" | E58 |
+| 7 | 贴图**不要替 GPU 做 alpha 混合**；CPU 数字必须**配对测量** | E62 / E57 |
+
+### 63.4 文档盘点（这次逐一校对）
+
+| 文档 | 这次改了什么 |
+|---|---|
+| `README.md` | 状态表补 GUI/平台策略；结构补 `rustomp-gen`/`rustomp-gui`；路线图重写 |
+| `docs/component-library.md` | 状态改"已实现"；补动态档现状与已知偏差 |
+| `docs/circuit-import.md` | 指令表补 `newton=`/`activity_i=`；标注 `switch` 为 legacy；补多分支导出 |
+| `docs/declarative-build.md` | S1c/S1d 状态；新增 §4.0 **平台策略**；平台矩阵改"外部工具" |
+| `docs/pre-gui-checklist.md` | 标注"GUI 已开工"，清单转为验收基线 |
+| `crates/rustomp-dsp/README.md` | 补 `Branch`、`set_bypass`、自适应迭代、`activity()` |
+| `crates/rustomp-import/README.md` | 补新指令与"生成物含 activity" |
+| `crates/rustomp-gen/README.md` | 补 gui=true 的行为、`bypass` 保留 id、`params_builder` |
+| `crates/rustomp-gui/README.md` | **新增**：界面层契约（面板声明/绘制顺序/贴图/分辨率） |
+
+### 63.5 下一步
+
+**box-designer 开发**（GUI 设计器）：契约已由真实面板验证过（E61/E62），
+`rustomp-box-designer` 里的 `04-open-questions.md` 还差 Q4（控件能力）等几条拍板。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -3876,6 +3959,27 @@ rustomp-plugin (nih-plug)  ──►  .clap
 - 必须用完整二极管模型（Is/N/**Rs**/Cjo/M/tt，见 E2 §3.9）。
 
 ---
+
+### ADR-015 平台策略：macOS 默认 + 外部打包工具 ✅ 已定（2026-10-26）
+
+**结论**
+
+- `rustomp` 本仓库**只面向 macOS**（框架 + macOS 打包脚本 + 平台契约）；
+- Windows / Linux 的打包做成**独立仓库**：`rustomp-win-plugin` / `rustomp-linux-plugin`；
+- 开发者按需拉取对应仓库接进现有工作流（打包层，不碰 DSP/电路/代码生成）。
+
+**理由**
+
+1. DSP、代码生成都是纯 Rust，跨平台**编译**不是难点；难点在**打包与宿主兼容**
+   （clap-wrapper/CMake/签名/宿主缓存），每个平台都必须在本机验证过才算数。
+2. 只有 macOS 能验证；先写 Windows/Linux 脚本等于猜，改起来成本更高。
+3. ADR-014 已定好打包后端契约（`ARTIFACT:` 一行），外部工具可以无缝接入。
+
+**影响**
+
+- `docs/declarative-build.md` 的平台矩阵要区分"本仓库提供"与"外部工具提供"；
+- CI 只跑 macOS 矩阵；Windows/Linux 的 CI 交给对应仓库；
+- 以后要"官方支持某平台"，判定标准是：该平台的打包工具仓库能产出并验证一组 `ARTIFACT:`。
 
 ### ADR-014 声明式构建与平台可插拔 ✅ 已定（2026-10-23）
 
@@ -4048,6 +4152,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-26 | **全项目复盘 + 平台策略**（E63 + ADR-015）：链路五段全部完成（器件/MNA/实时/生成/界面），91 用例 / verify.sh 8 层；确立 **macOS 默认 + Windows/Linux 独立打包工具仓库**；逐一校对 9 份文档（新增 `crates/rustomp-gui/README.md`）；沉淀七条经验 |
 | 2026-10-26 | **S1d 联调：三个界面 bug**（E62）：① LED 不闪 = 生成的 `Ckt` 没实现 `activity()`（补二极管电流指标 + 网表指令 `activity_i=`，0.032 → 0.647）；② 踩钉无效 = 没有 bypass 参数（Engine 加 `set_bypass`、`bypass` 成为保留 id、下发 `[[ui.buttons]]`，干路偏差 0.00e0）；③ 旋钮边缘被切 = `decode_png` 提前把 alpha 与固定底色合成（改为保留 alpha 交给 GPU）。面板素材换成用户新给的 mm 制 SVG（knob 15mm / 3pdt 10.76mm / led 6.27mm） |
 | 2026-10-26 | **S1d：第一个带界面的插件**（E61）：素材坐标改毫米（60×112 mm、12 px/mm = 720×1344）；panel 由 Inkscape 渲染 legacy SVG，knob 程序生成（指针朝上=50%），拨杆复用 legacy 贴图；生成器在 gui=true 时补 `editor_state` 与 `pub mod panel`；手写只有 `editor.rs`（~100 行）。实测：validate_panel 通过、AU 报 CocoaUI、音频与无 GUI 版一致 |
 | 2026-10-25 | **GUI 契约升级**（E60）：LED/拨杆/按钮 Option<T> 改为数组（数量不限）、控件 id 改为 (kind,index)、旋钮支持**整图旋转**（素材指针朝上 ⇔ 参数 0.5，角度范围必须对称）、新增固定绘制顺序常量与 validate_panel() 校验器；plugin_meta.py 同步（travel_deg、[assets] 全键导出）；examples/panel_check.rs 编译+校验生成的 PanelSpec |

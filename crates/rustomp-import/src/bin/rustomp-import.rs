@@ -14,7 +14,10 @@ use std::path::PathBuf;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("用法: {} <input> [--spice f] [--skeleton f] [--json f]", args[0]);
+        eprintln!(
+            "用法: {} <input> [--spice f] [--skeleton f] [--json f]",
+            args[0]
+        );
         std::process::exit(1);
     }
     let input = PathBuf::from(&args[1]);
@@ -57,7 +60,11 @@ fn main() {
     };
 
     println!("已导入 {}（格式 {}）", input.display(), circuit.format);
-    println!("  元件 {} 个：{}", circuit.elements.len(), circuit.summary());
+    println!(
+        "  元件 {} 个：{}",
+        circuit.elements.len(),
+        circuit.summary()
+    );
     if !circuit.ground_nets.is_empty() {
         println!("  接地网：{}", circuit.ground_nets.join(", "));
     }

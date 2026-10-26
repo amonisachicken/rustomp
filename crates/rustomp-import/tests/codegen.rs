@@ -26,7 +26,11 @@ const CASES: [(&str, &str, &str); 2] = [
 
 fn regenerate(fixture: &str, source: &str) -> String {
     let circuit = rustomp_import::import_file(Path::new(fixture)).expect("导入夹具网表失败");
-    let opts = Options { input: None, output: None, source: source.into() };
+    let opts = Options {
+        input: None,
+        output: None,
+        source: source.into(),
+    };
     generate(&circuit, &opts).expect("生成失败").code
 }
 
@@ -56,7 +60,11 @@ D1 out 0 BS170
     let circuit = rustomp_import::import_str("t.cir", src).expect("导入失败");
     let err = match generate(
         &circuit,
-        &Options { input: None, output: None, source: "t.cir".into() },
+        &Options {
+            input: None,
+            output: None,
+            source: "t.cir".into(),
+        },
     ) {
         Ok(_) => panic!("未知型号 BS170 应该被拒绝"),
         Err(e) => e,
@@ -77,7 +85,15 @@ R2 b 0 1k
 .end
 ";
     let circuit = rustomp_import::import_str("t.cir", src).expect("导入失败");
-    let gen = generate(&circuit, &Options { input: None, output: None, source: "t.cir".into() }).unwrap();
+    let gen = generate(
+        &circuit,
+        &Options {
+            input: None,
+            output: None,
+            source: "t.cir".into(),
+        },
+    )
+    .unwrap();
     // a、b 合并成一个节点 → 只剩一个节点常量，且没有 0.001Ω 的电阻
     // N = 节点数(3: a/in/vcc) + 1（下标 0 让给地）
     assert_eq!(gen.unknowns, 4, "未知量个数不对：{gen:?}");

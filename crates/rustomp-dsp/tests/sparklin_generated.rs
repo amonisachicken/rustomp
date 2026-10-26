@@ -65,7 +65,11 @@ fn generated_dc_operating_point() {
         v[node::N_T10L],
         v[node::N_T19R]
     );
-    assert!((v[node::N_T11R] - 4.499935).abs() < 1e-3, "运放输出 {}", v[node::N_T11R]);
+    assert!(
+        (v[node::N_T11R] - 4.499935).abs() < 1e-3,
+        "运放输出 {}",
+        v[node::N_T11R]
+    );
     assert!((v[node::N_T11L] - 4.499724).abs() < 1e-3);
     assert!((v[node::N_T19R] - 4.499986).abs() < 1e-3);
 }
@@ -78,8 +82,17 @@ fn generated_thd_matches_baseline() {
     let hp = harmonics_percent(&harmonics(&out, FS, 1_000.0, 9));
     println!("\n=== 生成电路（S1b）THD @0.2 V / 1 kHz ===");
     println!("  THD = {thd:.3} %（手写网表 27.579%，ngspice 27.5682%）");
-    println!("  h2..h9 = {}", hp.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>().join(" / "));
-    assert!((thd - 27.579).abs() < 0.2, "THD {thd:.3}% 与 27.579% 相差超过 0.2 pp");
+    println!(
+        "  h2..h9 = {}",
+        hp.iter()
+            .map(|x| format!("{x:.2}"))
+            .collect::<Vec<_>>()
+            .join(" / ")
+    );
+    assert!(
+        (thd - 27.579).abs() < 0.2,
+        "THD {thd:.3}% 与 27.579% 相差超过 0.2 pp"
+    );
 }
 
 /// **参数化生效**：对称模式（生成的 switch 短接 D3）必须把偶次谐波压下去。
@@ -94,8 +107,16 @@ fn symmetric_switch_kills_even_harmonics() {
     println!("\n=== 开关参数（对称 / 非对称）===");
     println!("  非对称 h2 = {:.3} %  h3 = {:.3} %", h_asym[0], h_asym[1]);
     println!("  对称   h2 = {:.3} %  h3 = {:.3} %", h_sym[0], h_sym[1]);
-    assert!(h_asym[0] > 3.0, "非对称时 h2 应 ~3.9%，实测 {:.3}", h_asym[0]);
-    assert!(h_sym[0] < 0.2, "对称时 h2 应接近 0（实测 {:.3}%）", h_sym[0]);
+    assert!(
+        h_asym[0] > 3.0,
+        "非对称时 h2 应 ~3.9%，实测 {:.3}",
+        h_asym[0]
+    );
+    assert!(
+        h_sym[0] < 0.2,
+        "对称时 h2 应接近 0（实测 {:.3}%）",
+        h_sym[0]
+    );
 }
 
 /// **参数化生效**：GAIN 电位器改变失真量。
@@ -109,8 +130,15 @@ fn gain_pot_changes_clipping() {
         thds.push(thd);
     }
     println!("\n=== GAIN 电位器 ===");
-    assert!(thds[0] < thds[1] && thds[1] < thds[2], "GAIN 越大失真应越大：{thds:?}");
-    assert!(thds[2] > 10.0, "GAIN 拧满时应明显削波（实测 {:.1}%）", thds[2]);
+    assert!(
+        thds[0] < thds[1] && thds[1] < thds[2],
+        "GAIN 越大失真应越大：{thds:?}"
+    );
+    assert!(
+        thds[2] > 10.0,
+        "GAIN 拧满时应明显削波（实测 {:.1}%）",
+        thds[2]
+    );
 }
 
 /// **欠收敛回归**（DEVLOG E50）：方波是最容易暴露"牛顿迭代不够"的输入。
@@ -149,7 +177,10 @@ fn no_subharmonics_under_square_input() {
             .map(|v| format!("{:.0}", 20.0 * (v / fund).log10()))
             .collect::<Vec<_>>()
     );
-    assert!(db < -60.0, "出现次谐波（{db:.1} dB）：牛顿迭代次数不够，求解器进入了极限环");
+    assert!(
+        db < -60.0,
+        "出现次谐波（{db:.1} dB）：牛顿迭代次数不够，求解器进入了极限环"
+    );
 }
 
 /// **电位器端点回归**（DEVLOG E51）。
@@ -173,7 +204,10 @@ fn pot_extremes_stay_finite_and_monotonic() {
                 nonfinite += 1;
             }
         }
-        assert_eq!(nonfinite, 0, "gain={gain} level={level} 出现 {nonfinite} 个非有限值");
+        assert_eq!(
+            nonfinite, 0,
+            "gain={gain} level={level} 出现 {nonfinite} 个非有限值"
+        );
         peak
     };
 
@@ -200,7 +234,10 @@ fn pot_extremes_stay_finite_and_monotonic() {
     let half = p.iter().find(|(g, l, _)| *g == 0.5 && *l == 0.5).unwrap().2;
     let full = p.iter().find(|(g, l, _)| *g == 0.5 && *l == 1.0).unwrap().2;
     let mute = p.iter().find(|(g, l, _)| *g == 0.5 && *l == 0.0).unwrap().2;
-    assert!(full > half * 1.5, "level=1 应明显大于 level=0.5：{full:.3} vs {half:.3}");
+    assert!(
+        full > half * 1.5,
+        "level=1 应明显大于 level=0.5：{full:.3} vs {half:.3}"
+    );
     assert!(mute < 1e-3, "level=0 应接近静音：{mute:.6}");
     // GAIN=0 → 反馈电阻(以及削波环)被短接 → 退化成单位增益缓冲，不应有增益
     let g0 = p.iter().find(|(g, l, _)| *g == 0.0 && *l == 0.5).unwrap().2;

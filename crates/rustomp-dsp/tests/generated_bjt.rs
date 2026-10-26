@@ -44,16 +44,29 @@ fn generated_bjt_stage_matches_ngspice() {
     let vc_spice = raw.get("v(c)").map(|x| x[0]).unwrap_or(f64::NAN);
 
     println!("\n=== 生成电路（S1b：Q 卡片 → bjt）工作点 ===");
-    println!("  Vb: 我们={vb:.6}  ngspice={vb_spice:.6}  差={:+.1} µV", (vb - vb_spice) * 1e6);
-    println!("  Vc: 我们={vc:.6}  ngspice={vc_spice:.6}  差={:+.1} mV", (vc - vc_spice) * 1e3);
+    println!(
+        "  Vb: 我们={vb:.6}  ngspice={vb_spice:.6}  差={:+.1} µV",
+        (vb - vb_spice) * 1e6
+    );
+    println!(
+        "  Vc: 我们={vc:.6}  ngspice={vc_spice:.6}  差={:+.1} mV",
+        (vc - vc_spice) * 1e3
+    );
     // Vc 的差别来自集电极电流：bc549c 的 `Nk=0.6339` 我们没建模（DEVLOG E36 已记档），
     // 2 mA 处 Ic 偏 0.26% → 2.2k 上 11.8 mV。这是**器件模型**的已知偏差，不是生成器的问题。
     let ic_ours = (9.0 - vc) / 2200.0;
     let ic_spice = (9.0 - vc_spice) / 2200.0;
-    println!("  Ic: 我们={:.4} mA  ngspice={:.4} mA  差={:+.2}%（未建模 Nk，已知）",
-             ic_ours * 1e3, ic_spice * 1e3, (ic_ours / ic_spice - 1.0) * 100.0);
+    println!(
+        "  Ic: 我们={:.4} mA  ngspice={:.4} mA  差={:+.2}%（未建模 Nk，已知）",
+        ic_ours * 1e3,
+        ic_spice * 1e3,
+        (ic_ours / ic_spice - 1.0) * 100.0
+    );
     assert!((vb - vb_spice).abs() < 2e-4, "Vb 偏差过大");
-    assert!((ic_ours / ic_spice - 1.0).abs() < 0.01, "Ic 相对误差超过 1%");
+    assert!(
+        (ic_ours / ic_spice - 1.0).abs() < 0.01,
+        "Ic 相对误差超过 1%"
+    );
 }
 
 /// 生成的 `Ckt` 能实时跑：小信号输入下输出应该被反相放大（共射）。
@@ -73,6 +86,10 @@ fn generated_bjt_stage_amplifies_and_inverts() {
     }
     let pp = max - min;
     println!("\n=== 生成电路（S1b）共射放大 ===");
-    println!("  输入 2 mV 峰值的 1 kHz → 输出峰峰 {:.3} V（增益 ≈ {:.0}×）", pp, pp / 4e-3);
+    println!(
+        "  输入 2 mV 峰值的 1 kHz → 输出峰峰 {:.3} V（增益 ≈ {:.0}×）",
+        pp,
+        pp / 4e-3
+    );
     assert!(pp > 0.1, "共射级应该有明显增益（实测峰峰 {pp:.4} V）");
 }

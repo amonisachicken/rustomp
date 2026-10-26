@@ -65,7 +65,9 @@ fn main() {
     let ours16 = run_ours(16);
 
     // ---- ngspice：同一波形用"串联正弦源"精确合成（不依赖边沿分辨率）----
-    let Some(oracle) = Oracle::discover_or_skip() else { return };
+    let Some(oracle) = Oracle::discover_or_skip() else {
+        return;
+    };
     let fixture = include_str!("../../rustomp-import/tests/fixtures/sparklin_drive.cir");
     // 串联正弦源：0 → s1 → s3 → … → s19，最后用 0 V 源接到输入节点
     let mut sources = String::new();
@@ -95,7 +97,10 @@ fn main() {
     let f_ours = mag(&ours, F0);
     let f_spice = mag(spice, F0);
     println!("\n=== 带限方波（1 kHz，奇次 1–19）：偶次谐波（dB 相对基频）===");
-    println!("{:>4}{:>8}{:>10}{:>9}{:>9}{:>9}", "h", "f/Hz", "ngspice", "4次", "8次", "16次");
+    println!(
+        "{:>4}{:>8}{:>10}{:>9}{:>9}{:>9}",
+        "h", "f/Hz", "ngspice", "4次", "8次", "16次"
+    );
     let mut worst = 0.0f64;
     let mut worst_h = 0;
     let f8 = mag(&ours8, F0);
@@ -108,7 +113,10 @@ fn main() {
             worst = (a4 - b).abs();
             worst_h = k;
         }
-        println!("{k:>4}{:>8}{b:>10.1}{a4:>9.1}{a8:>9.1}{a16:>9.1}", (F0 * k as f64) as i32);
+        println!(
+            "{k:>4}{:>8}{b:>10.1}{a4:>9.1}{a8:>9.1}{a16:>9.1}",
+            (F0 * k as f64) as i32
+        );
     }
     println!("\n偶次最大偏差 {worst:.1} dB（h{worst_h}，>−80 dB 的分量）");
     println!(

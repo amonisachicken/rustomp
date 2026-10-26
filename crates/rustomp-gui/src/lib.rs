@@ -199,10 +199,18 @@ pub fn draw(
         (rect.width() * ppp).max(1.0) as usize,
         (rect.height() * ppp).max(1.0) as usize,
     ];
-    if state.panel.as_ref().map(|t| t.size() != want).unwrap_or(true) {
+    if state
+        .panel
+        .as_ref()
+        .map(|t| t.size() != want)
+        .unwrap_or(true)
+    {
         if let Some(img) = decode_png(assets.panel, want[0], want[1]) {
-            state.panel =
-                Some(ui.ctx().load_texture("rustomp-panel", img, egui::TextureOptions::LINEAR));
+            state.panel = Some(ui.ctx().load_texture(
+                "rustomp-panel",
+                img,
+                egui::TextureOptions::LINEAR,
+            ));
         }
     }
     let panel_tex = state.panel.clone();
@@ -281,7 +289,11 @@ pub fn draw(
         let r = knob.radius * scale;
         let hit = egui::Rect::from_center_size(c, egui::vec2(r * 2.0, r * 2.0));
         // id 用 (类型, 序号)：两个旋钮绑同一个参数时也不会被 egui 合并成一个控件
-        let resp = ui.interact(hit, ui.id().with(("knob", ki)), egui::Sense::click_and_drag());
+        let resp = ui.interact(
+            hit,
+            ui.id().with(("knob", ki)),
+            egui::Sense::click_and_drag(),
+        );
         let mut v = value;
         if resp.dragged() {
             v -= resp.drag_delta().y / (knob.drag_range * scale).max(1.0);
@@ -494,7 +506,10 @@ pub fn validate_panel(spec: &PanelSpec, assets: &Assets) -> Vec<String> {
             errs.push(format!("{tag}：尺寸非法 {} × {}", t.width, t.height));
         }
         if t.press_scale <= 0.0 || t.press_scale > 1.0 {
-            errs.push(format!("{tag}：press_scale 应在 (0, 1]，现在是 {}", t.press_scale));
+            errs.push(format!(
+                "{tag}：press_scale 应在 (0, 1]，现在是 {}",
+                t.press_scale
+            ));
         }
     }
 
@@ -562,7 +577,10 @@ mod tests {
     use super::*;
 
     static IMGS: [(&str, &[u8]); 2] = [("up", &[]), ("down", &[])];
-    static ASSETS: Assets = Assets { panel: &[], images: &IMGS };
+    static ASSETS: Assets = Assets {
+        panel: &[],
+        images: &IMGS,
+    };
 
     fn knob(render: KnobRender, min: f32, max: f32) -> KnobSpec {
         KnobSpec {
@@ -592,12 +610,10 @@ mod tests {
 
     #[test]
     fn rotate_requires_symmetric_range() {
-        let ks_good: &'static [KnobSpec] = Box::leak(
-            vec![knob(KnobRender::Rotate, -135.0, 135.0)].into_boxed_slice(),
-        );
-        let ks_bad: &'static [KnobSpec] = Box::leak(
-            vec![knob(KnobRender::Rotate, -20.0, 200.0)].into_boxed_slice(),
-        );
+        let ks_good: &'static [KnobSpec] =
+            Box::leak(vec![knob(KnobRender::Rotate, -135.0, 135.0)].into_boxed_slice());
+        let ks_bad: &'static [KnobSpec] =
+            Box::leak(vec![knob(KnobRender::Rotate, -20.0, 200.0)].into_boxed_slice());
         let good = PanelSpec {
             svg_w: 100.0,
             svg_h: 50.0,
@@ -610,9 +626,15 @@ mod tests {
         };
         assert!(validate_panel(&good, &ASSETS).is_empty());
 
-        let bad = PanelSpec { knobs: ks_bad, ..good };
+        let bad = PanelSpec {
+            knobs: ks_bad,
+            ..good
+        };
         let errs = validate_panel(&bad, &ASSETS);
-        assert!(errs.iter().any(|e| e.contains("angle_min + angle_max")), "{errs:?}");
+        assert!(
+            errs.iter().any(|e| e.contains("angle_min + angle_max")),
+            "{errs:?}"
+        );
     }
 
     #[test]

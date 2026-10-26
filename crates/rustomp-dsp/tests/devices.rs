@@ -35,8 +35,15 @@ fn compare(oracle: &Oracle, d: Diode, model: &str) {
             (v_ours - v_spice) / v_spice * 100.0
         );
     }
-    assert!(worst_rel < 0.02, "{model}: 最大相对误差 {:.2}% 超过 2%", worst_rel * 100.0);
-    assert!(worst_abs < 0.005, "{model}: 最大绝对误差 {worst_abs:.4} V 超过 5 mV");
+    assert!(
+        worst_rel < 0.02,
+        "{model}: 最大相对误差 {:.2}% 超过 2%",
+        worst_rel * 100.0
+    );
+    assert!(
+        worst_abs < 0.005,
+        "{model}: 最大绝对误差 {worst_abs:.4} V 超过 5 mV"
+    );
 }
 
 #[test]
@@ -66,7 +73,10 @@ fn handwritten_2n7000_subckt_is_calibrated() {
     for vgs in points {
         let netlist = format!("{LIB}\nVDS d 0 5\nVGS g 0 {vgs}\nX1 d g 0 N2N7000\n.op\n.end\n");
         let raw = oracle.run_netlist(&netlist).expect("ngspice 运行失败");
-        let i = raw.get("i(vds)").map(|v| v.last().unwrap().abs()).unwrap_or(0.0);
+        let i = raw
+            .get("i(vds)")
+            .map(|v| v.last().unwrap().abs())
+            .unwrap_or(0.0);
         ids.push(i);
     }
     println!("\n=== 2N7000 手写子电路 ===");
@@ -74,7 +84,11 @@ fn handwritten_2n7000_subckt_is_calibrated() {
         println!("  Vgs={vgs:.0}V  Id={id:.4} A");
     }
     assert!(ids.windows(2).all(|w| w[1] > w[0]), "转移特性不单调");
-    assert!((0.15..0.30).contains(&ids[2]), "Vgs=5V 时 Id={} 不在 0.15~0.30 A", ids[2]);
+    assert!(
+        (0.15..0.30).contains(&ids[2]),
+        "Vgs=5V 时 Id={} 不在 0.15~0.30 A",
+        ids[2]
+    );
 }
 
 // ---------------------------------------------------------------- BJT
@@ -129,7 +143,11 @@ fn compare_bjt(oracle: &Oracle, b: rustomp_dsp::Bjt, model: &str, npn: bool, swe
             (ib - ib_spice) / ib_spice.max(1e-15) * 100.0
         );
     }
-    assert!(worst < 0.05, "{model}: Ic/Ib 最大相对误差 {:.2}% 超过 5%", worst * 100.0);
+    assert!(
+        worst < 0.05,
+        "{model}: Ic/Ib 最大相对误差 {:.2}% 超过 5%",
+        worst * 100.0
+    );
 }
 
 #[test]
@@ -138,10 +156,34 @@ fn bjts_match_ngspice_dc() {
         return;
     };
     println!("\n=== BJT V-I 对拍（Vce=5V, Vbc 随动）===");
-    compare_bjt(&oracle, rustomp_dsp::BC549C, "BC549C", true, &[0.55, 0.60, 0.65, 0.70]);
-    compare_bjt(&oracle, rustomp_dsp::AC127, "AC127", true, &[0.05, 0.10, 0.15, 0.20]);
-    compare_bjt(&oracle, rustomp_dsp::AC128, "AC128", false, &[0.05, 0.10, 0.15, 0.20]);
-    compare_bjt(&oracle, rustomp_dsp::BC559C, "BC559C", false, &[0.55, 0.60, 0.65, 0.70]);
+    compare_bjt(
+        &oracle,
+        rustomp_dsp::BC549C,
+        "BC549C",
+        true,
+        &[0.55, 0.60, 0.65, 0.70],
+    );
+    compare_bjt(
+        &oracle,
+        rustomp_dsp::AC127,
+        "AC127",
+        true,
+        &[0.05, 0.10, 0.15, 0.20],
+    );
+    compare_bjt(
+        &oracle,
+        rustomp_dsp::AC128,
+        "AC128",
+        false,
+        &[0.05, 0.10, 0.15, 0.20],
+    );
+    compare_bjt(
+        &oracle,
+        rustomp_dsp::BC559C,
+        "BC559C",
+        false,
+        &[0.55, 0.60, 0.65, 0.70],
+    );
 }
 
 // ---------------------------------------------------------------- JFET
@@ -156,26 +198,42 @@ fn jfet_matches_ngspice_dc() {
     for &vg in &[-0.55, -0.45, -0.30, -0.15, 0.0] {
         let netlist = format!("{LIB}\nVG g 0 {vg}\nVD d 0 5\nJ1 d g 0 J201\n.op\n.end\n");
         let raw = oracle.run_netlist(&netlist).expect("ngspice 运行失败");
-        let i_spice = raw.get("i(vd)").map(|v| v.last().unwrap().abs()).unwrap_or(0.0);
+        let i_spice = raw
+            .get("i(vd)")
+            .map(|v| v.last().unwrap().abs())
+            .unwrap_or(0.0);
         let i_ours = rustomp_dsp::J201.drain_current(vg, 5.0);
         if i_spice < 1e-9 {
             continue;
         }
         let rel = (i_ours - i_spice).abs() / i_spice;
         worst = worst.max(rel);
-        println!("  Vgs={vg:+.2}  ngspice Id={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+        println!(
+            "  Vgs={vg:+.2}  ngspice Id={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%",
+            rel * 100.0
+        );
     }
     println!("=== J201：输出特性（Vgs=0，扫 Vds）===");
     for &vd in &[0.2, 0.5, 1.0, 3.0] {
         let netlist = format!("{LIB}\nVG g 0 0\nVD d 0 {vd}\nJ1 d g 0 J201\n.op\n.end\n");
         let raw = oracle.run_netlist(&netlist).expect("ngspice 运行失败");
-        let i_spice = raw.get("i(vd)").map(|v| v.last().unwrap().abs()).unwrap_or(0.0);
+        let i_spice = raw
+            .get("i(vd)")
+            .map(|v| v.last().unwrap().abs())
+            .unwrap_or(0.0);
         let i_ours = rustomp_dsp::J201.drain_current(0.0, vd);
         let rel = (i_ours - i_spice).abs() / i_spice;
         worst = worst.max(rel);
-        println!("  Vds={vd:.1}  ngspice Id={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+        println!(
+            "  Vds={vd:.1}  ngspice Id={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%",
+            rel * 100.0
+        );
     }
-    assert!(worst < 0.05, "J201 最大相对误差 {:.2}% 超过 5%", worst * 100.0);
+    assert!(
+        worst < 0.05,
+        "J201 最大相对误差 {:.2}% 超过 5%",
+        worst * 100.0
+    );
 }
 
 // ---------------------------------------------------------------- MOSFET
@@ -189,10 +247,11 @@ fn mosfet_2n7000_matches_ngspice_dc() {
         return;
     };
     let sim = |vgs: f64, vds: f64| -> f64 {
-        let netlist =
-            format!("{LIB}\nVD d 0 {vds}\nVG g 0 {vgs}\nX1 d g 0 N2N7000\n.op\n.end\n");
+        let netlist = format!("{LIB}\nVD d 0 {vds}\nVG g 0 {vgs}\nX1 d g 0 N2N7000\n.op\n.end\n");
         let raw = oracle.run_netlist(&netlist).expect("ngspice 运行失败");
-        raw.get("i(vd)").map(|v| v.last().unwrap().abs()).unwrap_or(0.0)
+        raw.get("i(vd)")
+            .map(|v| v.last().unwrap().abs())
+            .unwrap_or(0.0)
     };
 
     let mut worst = 0.0f64;
@@ -205,7 +264,10 @@ fn mosfet_2n7000_matches_ngspice_dc() {
         }
         let rel = (i_ours - i_spice).abs() / i_spice;
         worst = worst.max(rel);
-        println!("  Vgs={vgs:.0}V  ngspice={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+        println!(
+            "  Vgs={vgs:.0}V  ngspice={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%",
+            rel * 100.0
+        );
     }
     println!("=== 2N7000：三极管区（Vgs=5V）===");
     for &vds in &[0.2f64, 0.5, 1.0] {
@@ -213,7 +275,10 @@ fn mosfet_2n7000_matches_ngspice_dc() {
         let i_ours = NMOS_2N7000.drain_current(5.0, vds);
         let rel = (i_ours - i_spice).abs() / i_spice;
         worst = worst.max(rel);
-        println!("  Vds={vds:.1}V  ngspice={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+        println!(
+            "  Vds={vds:.1}V  ngspice={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%",
+            rel * 100.0
+        );
     }
 
     // 体二极管：Vgs=0、Vds=-1V 时电流全部走体二极管（源→漏）
@@ -223,8 +288,15 @@ fn mosfet_2n7000_matches_ngspice_dc() {
         let i_ours = NMOS_2N7000_BODY.current(-vds); // 二极管正向电压 = −vds
         let rel = (i_ours - i_spice).abs() / i_spice.max(1e-15);
         worst = worst.max(rel);
-        println!("  Vds={vds:.1}V  ngspice={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%", rel * 100.0);
+        println!(
+            "  Vds={vds:.1}V  ngspice={i_spice:.5e}  我们={i_ours:.5e}  差={:+.2}%",
+            rel * 100.0
+        );
     }
 
-    assert!(worst < 0.05, "2N7000 最大相对误差 {:.2}% 超过 5%", worst * 100.0);
+    assert!(
+        worst < 0.05,
+        "2N7000 最大相对误差 {:.2}% 超过 5%",
+        worst * 100.0
+    );
 }

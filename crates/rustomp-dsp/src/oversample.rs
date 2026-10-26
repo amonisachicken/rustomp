@@ -165,10 +165,7 @@ mod tests {
                 }
             }
             let gain = peak / peak_ref;
-            assert!(
-                (gain - 1.0).abs() < 0.02,
-                "f={f} 通带增益 {gain:.4} 偏离 1"
-            );
+            assert!((gain - 1.0).abs() < 0.02, "f={f} 通带增益 {gain:.4} 偏离 1");
         }
     }
 

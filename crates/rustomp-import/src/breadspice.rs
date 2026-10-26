@@ -14,7 +14,9 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::{sanitize_refdes, spice_value, Element, ElementKind, ImportedCircuit, ImportError, Importer};
+use crate::{
+    sanitize_refdes, spice_value, Element, ElementKind, ImportError, ImportedCircuit, Importer,
+};
 
 pub struct BreadSpice;
 
@@ -173,7 +175,11 @@ impl Importer for BreadSpice {
                 "npn" | "pnp" => {
                     elements.push(Element {
                         name: refdes,
-                        kind: if kind_str == "npn" { ElementKind::Npn } else { ElementKind::Pnp },
+                        kind: if kind_str == "npn" {
+                            ElementKind::Npn
+                        } else {
+                            ElementKind::Pnp
+                        },
                         nodes: ordered(&["C", "B", "E"]),
                         value: String::new(),
                         model: Some(value.to_string()),
@@ -191,7 +197,11 @@ impl Importer for BreadSpice {
                 "nmos" | "pmos" => {
                     elements.push(Element {
                         name: refdes,
-                        kind: if kind_str == "nmos" { ElementKind::Nmos } else { ElementKind::Pmos },
+                        kind: if kind_str == "nmos" {
+                            ElementKind::Nmos
+                        } else {
+                            ElementKind::Pmos
+                        },
                         nodes: ordered(&["D", "G", "S"]),
                         value: String::new(),
                         model: Some(value.to_string()),
@@ -214,8 +224,12 @@ impl Importer for BreadSpice {
                             .unwrap_or(d)
                             .to_string()
                     };
-                    let (dc, ac, freq, phase) =
-                        (get("dc", "0"), get("ac", "0.2"), get("freq", "1k"), get("phase", "0"));
+                    let (dc, ac, freq, phase) = (
+                        get("dc", "0"),
+                        get("ac", "0.2"),
+                        get("freq", "1k"),
+                        get("phase", "0"),
+                    );
                     elements.push(Element {
                         name: refdes,
                         kind: ElementKind::VoltageSource,

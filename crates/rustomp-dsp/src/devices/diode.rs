@@ -28,7 +28,12 @@ impl Diode {
     /// 用 SPICE 参数构造（`n_ideal` 是发射系数，内部乘上 `VT`）。
     pub const fn from_spice(is: f64, n_ideal: f64, rs: f64) -> Self {
         let n_vt = n_ideal * VT;
-        Self { is, n_vt, rs, inv_n_vt: 1.0 / n_vt }
+        Self {
+            is,
+            n_vt,
+            rs,
+            inv_n_vt: 1.0 / n_vt,
+        }
     }
 
     /// 由两个同型号二极管**串联**得到等效器件（电流相同、电压对半分 ⇒ `N` 与 `Rs` 各翻倍）。
@@ -103,29 +108,64 @@ impl Diode {
 // ---------------------------------------------------------------- 库内型号（闭集）
 
 /// 1N4148（硅小信号）：`Is=2.52n N=1.752 Rs=.568`
-pub const D_1N4148: Diode = Diode { is: 2.52e-9, n_vt: 1.752 * VT, rs: 0.568, inv_n_vt: 1.0 / (1.752 * VT) };
+pub const D_1N4148: Diode = Diode {
+    is: 2.52e-9,
+    n_vt: 1.752 * VT,
+    rs: 0.568,
+    inv_n_vt: 1.0 / (1.752 * VT),
+};
 
 /// 1N34A（锗点接触）：`Is=2.6u N=1.6 Rs=6.5`
 /// 低拐点（Vf@1mA ≈ 0.25 V）+ 大 Rs ⇒ 圆头削波，是"锗味"的来源。
-pub const D_1N34A: Diode = Diode { is: 2.6e-6, n_vt: 1.6 * VT, rs: 6.5, inv_n_vt: 1.0 / (1.6 * VT) };
+pub const D_1N34A: Diode = Diode {
+    is: 2.6e-6,
+    n_vt: 1.6 * VT,
+    rs: 6.5,
+    inv_n_vt: 1.0 / (1.6 * VT),
+};
 
 /// 1N4007（硅整流）：`Is=7.028n N=1.808 Rs=.034`
 /// 大芯片 ⇒ 极小 Rs，拐点更"硬"、能承受更大电流。
-pub const D_1N4007: Diode = Diode { is: 7.02767e-9, n_vt: 1.80803 * VT, rs: 0.0341512, inv_n_vt: 1.0 / (1.80803 * VT) };
+pub const D_1N4007: Diode = Diode {
+    is: 7.02767e-9,
+    n_vt: 1.80803 * VT,
+    rs: 0.0341512,
+    inv_n_vt: 1.0 / (1.80803 * VT),
+};
 
 /// 1N5817（**肖特基**）：`Is=31.7µ N=1.373 Rs=.051`
 ///
 /// 低 Vf（@1 A ≈ 0.42 V）+ 快恢复：电源反接保护、检波、硬削波。
-pub const D_1N5817: Diode = Diode { is: 31.7e-6, n_vt: 1.373 * VT, rs: 0.051, inv_n_vt: 1.0 / (1.373 * VT) };
+pub const D_1N5817: Diode = Diode {
+    is: 31.7e-6,
+    n_vt: 1.373 * VT,
+    rs: 0.051,
+    inv_n_vt: 1.0 / (1.373 * VT),
+};
 
 /// 红色 LED：`Is=93.2p N=3.73 Rs=42m`（Vf@20 mA ≈ 1.85 V）
-pub const LED_RED: Diode = Diode { is: 93.2e-12, n_vt: 3.73 * VT, rs: 0.042, inv_n_vt: 1.0 / (3.73 * VT) };
+pub const LED_RED: Diode = Diode {
+    is: 93.2e-12,
+    n_vt: 3.73 * VT,
+    rs: 0.042,
+    inv_n_vt: 1.0 / (3.73 * VT),
+};
 
 /// 绿色 LED：`Is=93.2p N=4.61 Rs=42m`（Vf@20 mA ≈ 2.29 V）
-pub const LED_GREEN: Diode = Diode { is: 93.2e-12, n_vt: 4.61 * VT, rs: 0.042, inv_n_vt: 1.0 / (4.61 * VT) };
+pub const LED_GREEN: Diode = Diode {
+    is: 93.2e-12,
+    n_vt: 4.61 * VT,
+    rs: 0.042,
+    inv_n_vt: 1.0 / (4.61 * VT),
+};
 
 /// 蓝色 LED：`Is=93.2p N=7.47 Rs=42m`（Vf@20 mA ≈ 3.71 V）
-pub const LED_BLUE: Diode = Diode { is: 93.2e-12, n_vt: 7.47 * VT, rs: 0.042, inv_n_vt: 1.0 / (7.47 * VT) };
+pub const LED_BLUE: Diode = Diode {
+    is: 93.2e-12,
+    n_vt: 7.47 * VT,
+    rs: 0.042,
+    inv_n_vt: 1.0 / (7.47 * VT),
+};
 
 #[cfg(test)]
 mod tests {
@@ -134,8 +174,14 @@ mod tests {
     #[test]
     fn forward_voltages_are_plausible() {
         // 与 ngspice 实测值对齐（DEVLOG E34）
-        assert!((D_1N34A.voltage_for_current(1e-3) - 0.253).abs() < 0.02, "1N34A Vf@1mA");
-        assert!((D_1N4007.voltage_for_current(1e-3) - 0.555).abs() < 0.02, "1N4007 Vf@1mA");
+        assert!(
+            (D_1N34A.voltage_for_current(1e-3) - 0.253).abs() < 0.02,
+            "1N34A Vf@1mA"
+        );
+        assert!(
+            (D_1N4007.voltage_for_current(1e-3) - 0.555).abs() < 0.02,
+            "1N4007 Vf@1mA"
+        );
         // 1N4148 由 breadspice 模型给出，同量级即可
         let v = D_1N4148.voltage_for_current(1e-3);
         assert!((0.55..0.75).contains(&v), "1N4148 Vf@1mA={v}");

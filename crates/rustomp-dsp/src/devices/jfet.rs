@@ -25,7 +25,13 @@ pub struct Jfet {
 
 impl Default for Jfet {
     fn default() -> Self {
-        Self { vto: -0.6, beta: 1e-3, lambda: 0.0, rd: 0.0, rs: 0.0 }
+        Self {
+            vto: -0.6,
+            beta: 1e-3,
+            lambda: 0.0,
+            rd: 0.0,
+            rs: 0.0,
+        }
     }
 }
 
@@ -84,7 +90,13 @@ impl Jfet {
 
     /// 由本征参数构造（`rd/rs` 常为 0）。
     pub fn new(vto: f64, beta: f64, lambda: f64, rd: f64, rs: f64) -> Self {
-        Self { vto, beta, lambda, rd, rs }
+        Self {
+            vto,
+            beta,
+            lambda,
+            rd,
+            rs,
+        }
     }
 }
 
@@ -108,7 +120,10 @@ mod tests {
     fn idss_matches_datasheet_range() {
         // Vgs=0 时的饱和电流（Idss）：J201 典型 0.2~1 mA
         let idss = J201.channel(0.0, 5.0);
-        assert!((0.2e-3..1.2e-3).contains(&idss), "Idss={idss:e} 超出 J201 范围");
+        assert!(
+            (0.2e-3..1.2e-3).contains(&idss),
+            "Idss={idss:e} 超出 J201 范围"
+        );
     }
 
     #[test]
@@ -124,14 +139,24 @@ mod tests {
         let vgs = J201.vto + vov;
         let a = J201.channel(vgs, vov - 1e-6);
         let b = J201.channel(vgs, vov + 1e-6);
-        assert!((a - b).abs() / b < 1e-4, "三极管/饱和区不连续：{a:e} vs {b:e}");
+        assert!(
+            (a - b).abs() / b < 1e-4,
+            "三极管/饱和区不连续：{a:e} vs {b:e}"
+        );
     }
 
     #[test]
     fn series_resistance_reduces_current() {
-        let ideal = Jfet { rd: 0.0, rs: 0.0, ..J201 };
+        let ideal = Jfet {
+            rd: 0.0,
+            rs: 0.0,
+            ..J201
+        };
         let with_r = J201.drain_current(0.0, 0.5); // 三极管区，电阻影响明显
         let without = ideal.drain_current(0.0, 0.5);
-        assert!(with_r < without, "串联电阻应降低电流：{with_r:e} vs {without:e}");
+        assert!(
+            with_r < without,
+            "串联电阻应降低电流：{with_r:e} vs {without:e}"
+        );
     }
 }

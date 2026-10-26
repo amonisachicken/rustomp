@@ -8,9 +8,7 @@
 //! 支持：`R C L D V I Q J M X` 元件、`.model`（只记名字）、`.subckt/.ends`（整段跳过）、
 //! 续行 `+`、注释 `*`、以及 `* @rustomp ...` 指令行（原样收进 notes）。
 
-use crate::{
-    Element, ElementKind, ImportError, ImportedCircuit, Importer,
-};
+use crate::{Element, ElementKind, ImportError, ImportedCircuit, Importer};
 use std::path::Path;
 
 pub struct SpiceNetlist;
@@ -21,14 +19,18 @@ impl Importer for SpiceNetlist {
     }
 
     fn matches(&self, path: &Path, content: &str) -> bool {
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
         if matches!(ext.as_str(), "cir" | "net" | "spice" | "sp") {
             return true;
         }
         // 内容嗅探：有元件行 + `.end`
-        let has_element = content
-            .lines()
-            .any(|l| matches!(l.chars().next(), Some(c) if "rclvdqjmx".contains(c.to_ascii_lowercase())));
+        let has_element = content.lines().any(
+            |l| matches!(l.chars().next(), Some(c) if "rclvdqjmx".contains(c.to_ascii_lowercase())),
+        );
         has_element && content.to_lowercase().contains(".end")
     }
 
@@ -251,8 +253,17 @@ RC1 7 80 8.842E+03
         let c = SpiceNetlist.import(Path::new("t.cir"), SAMPLE).unwrap();
         assert_eq!(c.format, "spice");
         // V1 R1 C1 D1 XU1（子电路内的 RC1 应被跳过）
-        assert_eq!(c.elements.len(), 5, "{:?}", c.elements.iter().map(|e| &e.name).collect::<Vec<_>>());
-        assert!(c.notes.iter().any(|n| n.contains("in=V1")), "指令行应进 notes：{:?}", c.notes);
+        assert_eq!(
+            c.elements.len(),
+            5,
+            "{:?}",
+            c.elements.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        assert!(
+            c.notes.iter().any(|n| n.contains("in=V1")),
+            "指令行应进 notes：{:?}",
+            c.notes
+        );
         let d = c.elements.iter().find(|e| e.name == "D1").unwrap();
         assert_eq!(d.model.as_deref(), Some("1N4148"));
         assert_eq!(d.nodes, vec!["x", "0"]);

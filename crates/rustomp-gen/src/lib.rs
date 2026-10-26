@@ -43,8 +43,8 @@ impl Report {
 /// 读 `<project>/rustomp.toml`。
 pub fn load(project: &Path) -> Result<Manifest, String> {
     let path = project.join("rustomp.toml");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| format!("读不到 {}: {e}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("读不到 {}: {e}", path.display()))?;
     toml::from_str(&text).map_err(|e| format!("解析 {} 失败：{e}", path.display()))
 }
 
@@ -55,7 +55,10 @@ pub fn generate(project: &Path, check: bool) -> Result<Report, String> {
     let manifest = load(project)?;
     let errs = validate(&manifest);
     if !errs.is_empty() {
-        return Err(format!("rustomp.toml 校验失败：\n  - {}", errs.join("\n  - ")));
+        return Err(format!(
+            "rustomp.toml 校验失败：\n  - {}",
+            errs.join("\n  - ")
+        ));
     }
 
     let dir = project.join("plugin/src/generated");
@@ -69,10 +72,7 @@ pub fn generate(project: &Path, check: bool) -> Result<Report, String> {
     let mut report = Report::default();
     for (name, content) in files {
         let path = dir.join(name);
-        let rel = path
-            .strip_prefix(project)
-            .unwrap_or(&path)
-            .to_path_buf();
+        let rel = path.strip_prefix(project).unwrap_or(&path).to_path_buf();
         let old = std::fs::read_to_string(&path).ok();
         if old.as_deref() == Some(content.as_str()) {
             report.unchanged.push(rel);

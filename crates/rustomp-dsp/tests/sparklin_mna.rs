@@ -166,11 +166,18 @@ fn dc_operating_point_matches_baseline() {
         ("IN−  ", node[net::INM], BASE_DC_INM),
         ("BIAS ", node[net::BIAS], BASE_DC_BIAS),
     ] {
-        println!("  {name} 我们={ours:.6}  ngspice={base:.6}  差={:+.3} mV", (ours - base) * 1e3);
+        println!(
+            "  {name} 我们={ours:.6}  ngspice={base:.6}  差={:+.3} mV",
+            (ours - base) * 1e3
+        );
     }
 
     // 未削波时 DC 增益 = 1（C2 隔直）→ OUT ≈ IN+ ≈ 4.5 V
-    assert!((out - BASE_DC_OUT).abs() < 1e-3, "OUT 偏差 {:.3} mV", (out - BASE_DC_OUT).abs() * 1e3);
+    assert!(
+        (out - BASE_DC_OUT).abs() < 1e-3,
+        "OUT 偏差 {:.3} mV",
+        (out - BASE_DC_OUT).abs() * 1e3
+    );
     assert!(
         (node[net::INM] - BASE_DC_INM).abs() < 1e-3,
         "IN− 偏差 {:.3} mV",
@@ -182,7 +189,11 @@ fn dc_operating_point_matches_baseline() {
         (node[net::BIAS] - BASE_DC_BIAS).abs() * 1e3
     );
     // 输出隔直：音量抽头在直流上应为 0
-    assert!(node[net::WIPER].abs() < 1e-3, "输出直流偏移 {:.3} mV", node[net::WIPER] * 1e3);
+    assert!(
+        node[net::WIPER].abs() < 1e-3,
+        "输出直流偏移 {:.3} mV",
+        node[net::WIPER] * 1e3
+    );
 }
 
 /// THD @ 0.2 V / 1 kHz：与 ngspice 基线（27.57%）和 legacy WDF（27.65%）比较。
@@ -194,11 +205,19 @@ fn thd_at_200mv_matches_baseline() {
     let out = run_200mv_settled();
     let thd = thd_percent(out, FS, 1_000.0, 9);
     let hp = harmonics_percent(&harmonics(out, FS, 1_000.0, 9));
-    let (min, max) = out.iter().fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    let (min, max) = out
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
 
     println!("\n=== Sparklin Drive（MNA）THD @ 0.2 V / 1 kHz ===");
     println!("  THD = {thd:.3} %   （ngspice 基线 {BASE_THD_200MV:.3}%，legacy WDF 27.650%）");
-    println!("  h2..h9 = {}", hp.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>().join(" / "));
+    println!(
+        "  h2..h9 = {}",
+        hp.iter()
+            .map(|x| format!("{x:.2}"))
+            .collect::<Vec<_>>()
+            .join(" / ")
+    );
     println!("  音量抽头摆幅 = {min:+.4} .. {max:+.4} V");
 
     assert!(
@@ -217,30 +236,46 @@ fn small_signal_thd_matches_baseline() {
     let mean = out.iter().sum::<f64>() / out.len() as f64;
     let amp = out.iter().fold(0.0f64, |a, &x| a.max((x - mean).abs()));
     println!("\n=== Sparklin Drive（MNA）小信号 @ 1 mV ===");
-    println!("  THD = {thd:.4} %（基线 {BASE_THD_1MV:.4}%）  输出峰值 {:.4} V", amp);
+    println!(
+        "  THD = {thd:.4} %（基线 {BASE_THD_1MV:.4}%）  输出峰值 {:.4} V",
+        amp
+    );
     assert!(thd < 0.6, "小信号 THD {thd:.4}% 偏大（应 ≈0.283%）");
     // 基线在 1 kHz 是 +26.99 dB（= 22.4×，已含音量电位器的 1/2 分压）
-    println!("  增益 = {:.1}×（基线 1 kHz = +26.99 dB = 22.4×）", amp / 1e-3);
-    assert!((0.005..0.05).contains(&amp), "小信号输出幅度 {amp:.4} V 不合理");
+    println!(
+        "  增益 = {:.1}×（基线 1 kHz = +26.99 dB = 22.4×）",
+        amp / 1e-3
+    );
+    assert!(
+        (0.005..0.05).contains(&amp),
+        "小信号输出幅度 {amp:.4} V 不合理"
+    );
 }
 
 /// 削波的不对称性：OUT 摆幅应以 4.5 V 为中心偏向负侧（1 只 vs 2 只二极管）。
 #[test]
 fn clipping_is_asymmetric() {
     let out = run_200mv_settled();
-    let (min, max) = out.iter().fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    let (min, max) = out
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
     let mean = out.iter().sum::<f64>() / out.len() as f64;
 
     // 音量电位器把 OUT 的摆幅减半，所以与基线的 3.459/5.121 差一个 2 倍分压 + 隔直
     println!("\n=== 削波不对称性 ===");
     println!("  输出 min={min:+.4} max={max:+.4} mean={mean:+.4}");
-    println!("  （基线 OUT 摆幅 {BASE_OUT_MIN:.3}..{BASE_OUT_MAX:.3}，经 C3 隔直 + 1/2 分压后到输出）");
+    println!(
+        "  （基线 OUT 摆幅 {BASE_OUT_MIN:.3}..{BASE_OUT_MAX:.3}，经 C3 隔直 + 1/2 分压后到输出）"
+    );
 
     assert!(max > 0.2 && min < -0.2, "输出摆幅不足：{min:.3}..{max:.3}");
     // 以稳态均值为中心比较两侧摆幅：负向（单只二极管那半边）应该更大
     let (up, down) = (max - mean, mean - min);
     println!("  相对均值：上摆 {up:.4} V / 下摆 {down:.4} V");
-    assert!(down > up * 1.02, "应偏向负侧（1 只二极管的半边先削波）：上 {up:.4} / 下 {down:.4}");
+    assert!(
+        down > up * 1.02,
+        "应偏向负侧（1 只二极管的半边先削波）：上 {up:.4} / 下 {down:.4}"
+    );
 }
 
 /// 频响：50 Hz ~ 10 kHz，与 `baseline.txt` 的 `.ac` 结果比较。
@@ -275,7 +310,10 @@ fn frequency_response_matches_baseline() {
         let db = 20.0 * (fund / 1e-3).log10();
         let err = (db - base_db).abs();
         worst = worst.max(err);
-        println!("  {f:>7.0} Hz  我们={db:+6.2} dB  基线={base_db:+6.2} dB  差={:+.2} dB", db - base_db);
+        println!(
+            "  {f:>7.0} Hz  我们={db:+6.2} dB  基线={base_db:+6.2} dB  差={:+.2} dB",
+            db - base_db
+        );
     }
     // 高频端受运放离散化影响（192 kHz 下 GBW 等效偏低），留 1.5 dB 余量
     assert!(worst < 1.0, "频响最大偏差 {worst:.2} dB 超过 1.0 dB");
@@ -334,7 +372,11 @@ struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Self { gain: 0.5, level: 0.5, symmetric: false }
+        Self {
+            gain: 0.5,
+            level: 0.5,
+            symmetric: false,
+        }
     }
 }
 
@@ -361,7 +403,8 @@ impl SparklinMna {
         net.diode(D_1N4148, rt::OUT, rt::INM)
             .diode(D_1N4148, rt::INM, rt::MID)
             .diode(D_1N4148, rt::MID, rt::OUT);
-        let idx_d3 = net.push_resistor(rt::INM, rt::MID, if params.symmetric { 1e-3 } else { 1e12 });
+        let idx_d3 =
+            net.push_resistor(rt::INM, rt::MID, if params.symmetric { 1e-3 } else { 1e12 });
         // 输出隔直 + 电平电位器（空载时抽头就是等比缩放，省一个节点）
         net.capacitor(rt::OUT, rt::VOL, v.c3);
         let idx_level = net.push_resistor(rt::VOL, GND, Self::LEVEL_POT);
@@ -402,14 +445,11 @@ impl rustomp_dsp::Circuit for SparklinMna {
         if params == self.params {
             return; // 最常走的分支：什么都不用做
         }
-        self.net
-            .set_resistance(self.idx_level, Self::LEVEL_POT);
+        self.net.set_resistance(self.idx_level, Self::LEVEL_POT);
         self.net
             .set_resistance(self.idx_gain, Self::GAIN_POT * params.gain.max(1e-4));
-        self.net.set_resistance(
-            self.idx_d3,
-            if params.symmetric { 1e-3 } else { 1e12 },
-        );
+        self.net
+            .set_resistance(self.idx_d3, if params.symmetric { 1e-3 } else { 1e12 });
         self.params = params;
     }
 
@@ -447,7 +487,10 @@ fn realtime_path_matches_offline() {
             }
         }
         let thd = thd_percent(&out, INNER_FS, 1_000.0, 9);
-        println!("  {iters} 次迭代 → THD = {thd:.3} %（差 {:+.3} pp）", thd - 27.579);
+        println!(
+            "  {iters} 次迭代 → THD = {thd:.3} %（差 {:+.3} pp）",
+            thd - 27.579
+        );
         if iters == 1 {
             // 1 次迭代是**已知不够**的：热启动的外推点在"只走一步"时反而离真解更远
             println!("    ↑ 1 次迭代不够准，实时路径用 2 次");

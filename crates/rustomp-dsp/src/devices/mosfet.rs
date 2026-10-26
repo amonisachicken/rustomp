@@ -28,7 +28,13 @@ pub struct Nmos {
 
 impl Default for Nmos {
     fn default() -> Self {
-        Self { vto: 1.6, kp: 0.035, lambda: 0.02, rd: 2.0, rs: 1.0 }
+        Self {
+            vto: 1.6,
+            kp: 0.035,
+            lambda: 0.02,
+            rd: 2.0,
+            rs: 1.0,
+        }
     }
 }
 
@@ -116,7 +122,10 @@ mod tests {
     fn matches_calibration_points() {
         // 与 devices/handwritten.lib 的 N2N7000 子电路标定值对比（Vds=5V）
         let id5 = NMOS_2N7000.drain_current(5.0, 5.0);
-        assert!((0.15..0.30).contains(&id5), "Id@Vgs=5V = {id5:.4} A 不在 0.15~0.30");
+        assert!(
+            (0.15..0.30).contains(&id5),
+            "Id@Vgs=5V = {id5:.4} A 不在 0.15~0.30"
+        );
         let id3 = NMOS_2N7000.drain_current(3.0, 5.0);
         assert!((0.025..0.055).contains(&id3), "Id@Vgs=3V = {id3:.4} A");
     }

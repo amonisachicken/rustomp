@@ -15,7 +15,8 @@
 | **代码生成** | ✅ **网表 → 可运行电路**（S1a/S1b）+ **`rustomp.toml` → 插件外壳**（S1c，含参数表/身份/导出宏） |
 | 示例插件 | ✅ `Sparklin Drive` 已完整交付并拆为独立仓库（`sparklin-drive-legacy`） |
 | **进 GUI 之前** | ✅ 清单全过（`docs/pre-gui-checklist.md`）：网表 → 电路 → 插件 → 安装 → AB 无可感差别 |
-| 下一步 | **GUI（S1d）**；器件动态档（`Cje/Cjc`、`Cjo/tt`）；CI 三平台矩阵 |
+| **平台策略** | **macOS 默认**；Windows/Linux 走独立打包工具仓库（ADR-015，见下） |
+| 下一步 | **GUI 设计器**（`rustomp-box-designer`）；器件动态档（`Cje/Cjc`、`Cjo/tt`） |
 
 > **闭环已打通**：面包板/原理图 → SPICE 网表 → 与 ngspice 对拍的 DSP → 插件。
 > 其中「原理图设计器」与「插件 GUI 设计器」将作为独立项目开发，本项目只保证契约（[接口说明](#与外部设计器的接口)）。
@@ -31,6 +32,7 @@
 - [新建一个插件](#新建一个插件)
 - [电路建模的工作流](#电路建模的工作流)
 - [质量把关：与 ngspice 对拍](#质量把关与-ngspice-对拍)
+- [平台策略](#平台策略)
 - [与外部设计器的接口](#与外部设计器的接口)
 - [持续集成](#持续集成)
 - [宿主兼容性（Logic）](#宿主兼容性logic)
@@ -52,9 +54,10 @@
 |---|---|---|
 | **器件库** | `crates/rustomp-dsp/src/devices/` | 闭集器件模型（二极管/BJT/JFET/MOSFET/运放），参数与 SPICE 对齐 |
 | **电路装配** | `crates/rustomp-dsp/src/mna.rs` | 通用 MNA：器件 + 拓扑 → 可求解电路（牛顿、gmin 步进、伴随模型） |
-| **框架机制** | `crates/rustomp-dsp/src/{engine,oversample,circuit,branch}.rs` | `Circuit` 契约、`Engine<C>`、4× 过采样、真旁通、NaN 熔断、**分支切换** |
+| **框架机制** | `crates/rustomp-dsp/src/{engine,oversample,circuit,branch}.rs` | `Circuit` 契约、`Engine<C>`、4× 过采样、真旁通（`set_bypass`）、NaN 熔断、分支切换 |
+| **界面层** | `crates/rustomp-gui` | 声明式面板（`PanelSpec`）、参数桥（`ParamAccess`）、贴图生命周期、面板校验 |
 | **SPICE 模型库** | `devices/` | 清洗后的 `devices.lib` + 手写子电路 + 对拍报告 |
-| **插件外壳** | `template/` + `scripts/new-plugin.sh` + `rustomp-gen` | nih-plug 外壳（**无 GUI 阶段**）+ 单声道/立体声变体（下游项目生成到 `plugins/`） |
+| **插件外壳** | `template/` + `scripts/new-plugin.sh` + `rustomp-gen` | nih-plug 外壳 + 单声道/立体声变体（下游项目生成到 `plugins/`）；`gui = true` 时含面板模块与窗口尺寸记忆 |
 
 `Sparklin Drive` 是第一个用这套框架做出来的插件，也是"怎么用这个框架"的活样板。
 
@@ -73,6 +76,8 @@
   - **一维牛顿 / WDF** —— 简单电路（如单级削波）更快，用于性能敏感的级。
 - **精度分档明确**（ADR-012）：静态 D1/D2/D3、动态 C0/C1/C2，逐器件给出档位；
   「静态给足、动态按需」，元件精度**不影响延迟**（固定 15 样本）。
+- **界面也是声明式的**：`rustomp.toml` 的 `[ui]` → `PanelSpec`（毫米坐标、12 px/mm 素材）→
+  旋钮整图旋转 / 拨杆 / LED / 脚踏，控件数量不限；**开关 = 两份完整电路 + 交叉淡化**。
 - **运放宏模型**：单极点（A0 / GBW）+ 压摆率 + 输出钳位，
   **更新式代进节点方程，反馈环内没有一采样延迟**。
 - **数值鲁棒**：阻尼牛顿、残差判据、失败兜底、状态限幅、引擎级 NaN 熔断。
@@ -101,7 +106,7 @@ crates/
     tests/generated/    由网表自动生成的电路（入库，有漂移守卫）
   rustomp-gui/          框架：声明式面板 + 交互 + 纹理生命周期（不含素材）
   rustomp-oracle/       框架：ngspice 对拍（跑网表 / 解析 rawfile / 统一测量函数）
-  rustomp-gen/          框架：插件侧代码生成（rustomp.toml → identity/params/plugin_impl）
+  rustomp-gen/          框架：插件侧代码生成（rustomp.toml → identity/params/plugin_impl/panel）
   rustomp-import/       框架：外部电路导入（IR + 可插拔 Importer）+ **网表 → 装配代码生成**
     src/spice.rs        SPICE 网表导入器（.cir/.net/.sp）
     src/mna_codegen.rs  网表 → Netlist/Params/impl Circuit（参数化、器件卡片、导线合并）
@@ -109,14 +114,15 @@ plugins/                下游插件项目的输出目录（new-plugin.sh 生成
                         ↑ 参考实现见独立仓库 sparklin-drive-legacy
 template/               脚手架模板（new-plugin.sh 用；与下游插件结构同构）
 tools/
-  meta/                 rustomp.toml 读取器（身份/界面声明生成）
+  meta/                 rustomp.toml 读取器（身份/界面声明 panel.rs 生成）
   oracle/               ngspice 冒烟测试用的最小电路
   au-smoke/             AU 进程内自检（绕过系统注册表）
   clap-probe/           最小 CLAP 宿主（查端口 / feature / 参数）
 patches/                第三方补丁（clap-wrapper 的宿主兼容修复）
 scripts/                构建、网表生成、基线仿真、自检、缓存清理
 experiments/            归档的一次性验证代码（不参与构建，见其 README）
-.github/workflows/      CI：cargo test --workspace（macOS + 可选 ngspice）
+.github/workflows/      CI：macOS 矩阵（cargo test --workspace + verify.sh 的 ngspice 对拍）
+                        ↑ Windows/Linux 的打包与 CI 在独立仓库（见「平台策略」）
 DEVLOG.md               开发日志：每个决策、实验数据、踩过的坑
 ```
 
@@ -281,6 +287,25 @@ legacy 实现的其余实测（电位器 50%）：
 
 ---
 
+## 平台策略
+
+**本仓库默认只面向 macOS。** 其他平台不靠"仓库内交叉编译"，而是**独立打包工具仓库**：
+
+```text
+rustomp（框架 + macOS 打包脚本 + 平台契约）
+   ├── rustomp-win-plugin     Windows 打包（VST3/CLAP + standalone/安装包）
+   └── rustomp-linux-plugin   Linux 打包（VST3/CLAP + standalone/包）
+```
+
+| 层 | 谁提供 | 说明 |
+|---|---|---|
+| DSP / 电路 / 代码生成 | **本仓库** | 纯 Rust，跨平台编译不是难点 |
+| macOS 打包 | **本仓库** `scripts/build-all.sh` | AU/VST3/CLAP，已在 Logic 验证 |
+| Windows / Linux 打包 | **外部仓库** | 各自平台原生构建 + 宿主验证；满足 ADR-014 的后端契约（成功打印 `ARTIFACT: <路径>`）即可无缝接入 |
+
+理由：难点不在编译而在**打包与宿主兼容**（clap-wrapper/CMake/签名/宿主缓存），
+每个平台都必须在本机验证；先写没环境验证的脚本等于猜。详见 `docs/declarative-build.md` §4.0。
+
 ## 与外部设计器的接口
 
 用户会分别开发两个**独立**的设计器；本项目刻意只给契约，不内置它们：
@@ -288,15 +313,18 @@ legacy 实现的其余实测（电位器 50%）：
 ```text
  原理图设计器 ──(网表 .cir + @rustomp 指令)──► rustomp-import --mna ──► src/generated/circuit.rs
                                                                               │
- 插件 GUI 设计器 ──(rustomp.toml [ui] + PNG)──► build.rs ──► PanelSpec ────────┴──► 插件 crate
+ 面板设计器 ──(rustomp.toml 的 [ui] + PNG)──► plugin_meta.py ──► panel.rs ─────┴──► 插件 crate
 ```
+
+> 面板链路：`[ui]`（毫米坐标）→ `PanelSpec`（`const`，漏素材在编译期就报错）→ `rustomp_gui::draw`。
+> 契约见 `crates/rustomp-gui/README.md`。
 
 对设计器的三条硬要求（`docs/circuit-import.md` §10）：
 
 | 要求 | 原因 |
 |---|---|
 | 端口**显式标注**（`in=` / `out=`） | 绝不猜"哪个节点是输出" |
-| 可调元件**显式声明**（`param` / `switch`） | 不从 `250k + 250k` 反推电位器 |
+| 可调元件**显式声明**（`param`） | 不从 `250k + 250k` 反推电位器；开关按 D-005 拆成多份完整网表 |
 | 型号落在**闭集表**里 | 未命中在导入阶段就报错，而不是上线后才发现换了器件 |
 
 > 为什么设计器不直接生成 Rust：**网表是可被 ngspice 验证的中间格式**，
@@ -379,7 +407,10 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 - 实时 MNA 路径 2.07 µs/样本（192 kHz 单核 40%），比手推实现慢 2.5×；
   下一步是预计算稀疏 LU。
 - 单线程；多线程原型实测立体声 1.97x，但因单声道变体零收益 + 实时调度风险暂未启用（ADR-010）。
-- 界面是按像素贴图 + 程序化指针，未做矢量/多主题。
+- 界面：**声明式贴图面板**已可用（毫米坐标、12 px/mm、旋钮整图旋转、拨杆/LED/脚踏），
+  但还没有数值显示、素材热重载、多主题；`template/` + `new-plugin.sh` 尚未支持 `--gui`
+  （现在要手工加 `gui` feature 并写 `editor.rs`）。
+- `panel.rs` 目前由 `tools/meta/plugin_meta.py` 生成；搬进 `rustomp-gen`（单一发射器）还是 TODO。
 
 **路线图**
 
@@ -395,9 +426,12 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
       生成的项目能 `cargo build` 并导出 CLAP/VST3 入口；模板改为无 GUI 外壳
 - [x] **多分支（开关）** ✅ 框架 `Branch<A,B>`：两份完整电路 + 预热/交叉淡化；
       Sparklin Drive 已有 Clip Mode（非对称 THD 27.58 % / 对称 h2 **0.000 %**）
-- [ ] S1d：界面（`[ui]` → `PanelSpec` + `gui` feature + 手写 `editor.rs`）
-- [ ] 把 oracle 对拍铺进 CI 矩阵（各平台 + 可选 ngspice）
-- [ ] 原理图设计器 / GUI 设计器（**独立项目**，本仓库只维护契约）
+- [x] **S1d：界面** ✅ `[ui]` → `panel.rs`、`gui` feature + 手写 `editor.rs`（~100 行）；
+      Sparklin Drive v2 已带面板（毫米坐标、12 px/mm、旋钮整图旋转、3PDT 踩钉、LED 活动量）
+- [x] 把 oracle 对拍铺进 CI（macOS，缺 ngspice 即失败）
+- [ ] **图形设计器**（`rustomp-box-designer`，独立仓库）：面板 → `[ui]` + 素材，本仓库只维护契约
+- [ ] **原理图设计器**（`rustomp-circuit-designer`，独立仓库）：原理图 → 网表
+- [ ] Windows/Linux 打包工具（`rustomp-win-plugin` / `rustomp-linux-plugin`，独立仓库，ADR-015）
 - [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
 - [ ] 电位器 A/C taper；预设与状态管理；安装包（pkg）+ 签名公证
 - [ ] 更多示例电路（BJT 前级 / 光电压缩 / BBD）
@@ -412,11 +446,13 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 | `sparklin-drive-legacy` 仓库 | 参考实现（完整插件 + 电路解读 + 基线数据） |
 | `docs/component-library.md` | **元件库精度规范**：档位定义、逐器件推荐、验收实验模板 |
 | `docs/circuit-import.md` | **电路导入与元件映射规范**：可插拔导入、映射流水线、引脚绑定、mapping.toml |
-| `docs/declarative-build.md` | **声明式构建规范**：代码生成 vs 打包两个平面、后端契约、多平台矩阵、S1–S5 路线 |
+| `docs/declarative-build.md` | **声明式构建规范**：代码生成 vs 打包两个平面、后端契约、**平台策略（macOS 默认 + 外部打包工具）**、S1–S5 路线 |
 | `docs/ab-test-sparklin-v2.md` | **AB 测试复盘**：v2 生成路径 vs legacy 手推实现；两个 bug 的定位过程、13 条经验、最终收敛数据 |
 | `docs/pre-gui-checklist.md` | **进 GUI 之前的清单**：器件/求解器/生成器/外壳/验证逐项状态 + GUI 阶段依赖的接口 |
+| `crates/rustomp-gui/README.md` | 界面层：面板声明 `PanelSpec`、绘制顺序、贴图与生命周期、校验 |
 | `crates/rustomp-dsp/README.md` | DSP 核心：器件库、MNA 装配器、实时路径、对拍结果 |
 | `crates/rustomp-import/README.md` | 导入器 + 网表 → 装配代码生成（指令、产物、漂移守卫、更新流程） |
+| `crates/rustomp-gen/README.md` | `rustomp.toml` → 插件外壳（身份/参数/Plugin 实现/面板模块、三条硬规则） |
 | `devices/REPORT.md` | 器件模型的清洗报告（保留/丢弃了哪些参数、为什么） |
 | `patches/README.md` | 三个宿主兼容补丁的原因与验证方法 |
 | `tools/oracle/smoke/README.md` | ngspice 冒烟测试的用法与基线数字 |

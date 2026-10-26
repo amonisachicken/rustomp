@@ -93,7 +93,10 @@ impl ImportedCircuit {
     /// 生成 SPICE 网表**元件行**（不含分析语句与 `.end`，由调用方追加）。
     pub fn to_spice(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("* {} — imported from {}\n", self.name, self.format));
+        out.push_str(&format!(
+            "* {} — imported from {}\n",
+            self.name, self.format
+        ));
         for n in &self.notes {
             out.push_str(&format!("* note: {n}\n"));
         }
@@ -122,7 +125,10 @@ impl ImportedCircuit {
     pub fn to_skeleton(&self) -> String {
         let mut out = String::new();
         out.push_str("// SPDX-License-Identifier: GPL-3.0-or-later\n");
-        out.push_str(&format!("//! {} —— 由 rustomp-import 从 {} 生成。\n", self.name, self.format));
+        out.push_str(&format!(
+            "//! {} —— 由 rustomp-import 从 {} 生成。\n",
+            self.name, self.format
+        ));
         out.push_str("//!\n//! 这不是可直接运行的实现：请把下面的元件表翻译成\n");
         out.push_str("//! `rustomp_dsp::Circuit` 的实现（线性用伴随模型 / 非线性用牛顿）。\n\n");
         out.push_str("use rustomp_dsp::Circuit;\n\n");
@@ -131,7 +137,11 @@ impl ImportedCircuit {
         out.push_str("pub const ELEMENTS: &[(&str, &str, &[&str], &str)] = &[\n");
         for e in &self.elements {
             let nodes: Vec<String> = e.nodes.iter().map(|n| format!("{n:?}")).collect();
-            let value = if let Some(m) = &e.model { m.clone() } else { e.value.clone() };
+            let value = if let Some(m) = &e.model {
+                m.clone()
+            } else {
+                e.value.clone()
+            };
             out.push_str(&format!(
                 "    ({:?}, {:?}, &[{}], {:?}),\n",
                 e.name,
@@ -147,7 +157,9 @@ impl ImportedCircuit {
                 out.push_str(&format!("// - {n}\n"));
             }
         }
-        out.push_str("\n// TODO: 实现 Circuit 的 new / set_sample_rate / set_params / reset / process。\n");
+        out.push_str(
+            "\n// TODO: 实现 Circuit 的 new / set_sample_rate / set_params / reset / process。\n",
+        );
         out
     }
 
@@ -293,7 +305,13 @@ pub fn sanitize_refdes(name: &str) -> String {
 pub fn node_name(net: &str) -> String {
     let s: String = net
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!("n_{s}")
 }
@@ -322,7 +340,10 @@ mod tests {
         assert!(c.ground_nets.contains(&"rail_Lm".to_string()));
         let spice = c.to_spice();
         // 运放按 IN+/IN-/V+/V-/OUT 排序
-        assert!(spice.contains("XU1 n_t11L n_t10L n_t10R n_t12L n_t11R OP07A"), "{spice}");
+        assert!(
+            spice.contains("XU1 n_t11L n_t10L n_t10R n_t12L n_t11R OP07A"),
+            "{spice}"
+        );
         // 电位器 50% → 两段 250k
         assert!(spice.contains("RP1A n_t10L n_t1L 250k"), "{spice}");
         assert!(spice.contains("RP2B n_t27R n_t24R 250k"), "{spice}");

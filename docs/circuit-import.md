@@ -1,6 +1,7 @@
 # 电路导入与元件映射规范
 
-> 状态：**S1a/S1b 已实现**（2026-10-23）—— `SpiceNetlist` 导入器 + 闭集映射 + 网表→装配代码生成。
+> 状态：**S1a/S1b/S1c 已实现**（2026-10-26）—— `SpiceNetlist` 导入器 + 闭集映射 +
+> 网表→装配代码生成 + 多分支（开关=两份完整电路），并已在真插件上跑通（Sparklin Drive v2）。
 > 映射分层里目前只落地了「精确命中 / 报错」两级，别名、项目映射、类别兜底、参数直通仍是待做项（§3）。
 > 相关：`DEVLOG.md` E32 / ADR-013、E44 / E45；`docs/component-library.md`、`docs/declarative-build.md`
 > 上游：用户提供的 LTspice 风格器件模型；原理图设计器（规划中，见 §10）；`plugins/` 下的下游插件项目
@@ -165,7 +166,7 @@ params_passthrough = false   # power user 档，默认关闭
 
 ---
 
-## 6.5 网表 → 装配代码（S1a/S1b，已实现）
+## 6.5 网表 → 装配代码（S1a/S1b/S1c，已实现）
 
 导入的终点不是"生成一份 SPICE"，而是**生成能跑的 Rust 电路**：
 
@@ -179,10 +180,15 @@ cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check] [--ou
 * @rustomp in=VS1 out=n_t27R
 * @rustomp param RP1A gain pot max=500k              # R = max·gain
 * @rustomp param RP2B level pot max=500k invert      # R = max·(1−level)
-* @rustomp switch symmetric n_t10L n_t5L closed=0.001 open=1e12
-* @rustomp newton=4                                 # 每样本牛顿迭代次数（默认 3）
+* @rustomp switch symmetric n_t10L n_t5L closed=0.001 open=1e12   # legacy，见下
+* @rustomp newton=8                                 # 每样本牛顿迭代次数**上限**（默认 3，残差够了就提前停）
+* @rustomp activity_i=50u                           # LED 活动量的参考电流（**只驱动 GUI**，不影响 DSP）
 ```
 
+> **`switch` 已是 legacy**（设计器决策 D-005）：开关改成"每个状态一份**完整网表**"，
+> 由插件层的 `rustomp_dsp::Branch<A,B>` 选择 + 预热 5 ms / 淡化 10 ms。Sparklin Drive 现在是
+> `sparklin_drive_asym.cir` + `sparklin_drive_sym.cir` 两份完整网表（对称那份用一根 ≤0.01 Ω 导线短接 D3）。
+>
 > **`newton=` 不是性能旋钮，是正确性旋钮**（DEVLOG E50）：次数不够时求解器会进入
 > 次谐波极限环 —— 正弦输入完全看不出来，方波/快速边沿才会暴露（低频"噗噗"、高频发毛）。
 
