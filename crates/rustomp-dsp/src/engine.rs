@@ -27,6 +27,8 @@ pub struct Engine<C: Circuit> {
     dry_pos: usize,
     /// bypass 交叉淡化量：0 = 干，1 = 湿
     mix: f64,
+    /// 目标（0 或 1）：由 [`Engine::set_bypass`] 设置，`mix` 每样本向它靠拢
+    mix_target: f64,
     mix_coef: f64,
     /// 活动指示包络（0..1，给 GUI 的 LED）
     activity_env: f32,
@@ -43,6 +45,7 @@ impl<C: Circuit> Engine<C> {
             dry: [0.0; DRY_LEN],
             dry_pos: 0,
             mix: 1.0,
+            mix_target: 1.0,
             mix_coef: 0.0,
             activity_env: 0.0,
             activity_decay: 0.0,
@@ -59,6 +62,19 @@ impl<C: Circuit> Engine<C> {
         self.mix_coef = 1.0 - (-1.0 / (0.005 * fs)).exp();
         self.activity_decay = (-1.0 / (0.15 * fs)).exp();
         self.reset();
+    }
+
+    /// **true-bypass**：`true` = 干路直通（湿路继续运行，避免接回时状态陈旧）。
+    ///
+    /// 切换是 5 ms 交叉淡化（`mix_coef`），并且干路走与过采样链路等长的延迟线，
+    /// 所以切换瞬间没有咔哒、也没有梳状滤波。
+    pub fn set_bypass(&mut self, bypass: bool) {
+        self.mix_target = if bypass { 0.0 } else { 1.0 };
+    }
+
+    /// 当前是否处于 bypass（`mix` 已经走到干路）
+    pub fn is_bypassed(&self) -> bool {
+        self.mix < 0.5
     }
 
     pub fn set_params(&mut self, p: C::Params) {
@@ -78,6 +94,7 @@ impl<C: Circuit> Engine<C> {
         self.dry = [0.0; DRY_LEN];
         self.dry_pos = 0;
         self.mix = 1.0;
+        self.mix_target = 1.0;
         self.activity_env = 0.0;
     }
 
@@ -108,8 +125,12 @@ impl<C: Circuit> Engine<C> {
         self.dry[self.dry_pos] = x;
         self.dry_pos = (self.dry_pos + 1) % DRY_LEN;
 
-        // true-bypass：淡入淡出，电路仍在运行（避免接回时状态陈旧产生爆音）
-        self.mix += (1.0 - self.mix) * self.mix_coef;
+        // true-bypass：向目标靠拢（5 ms 交叉淡化），电路仍在运行
+        self.mix += (self.mix_target - self.mix) * self.mix_coef;
+        // 指数淡化有无穷长的尾巴；到位后吸附，避免"永远差一点"
+        if (self.mix - self.mix_target).abs() < 1e-5 {
+            self.mix = self.mix_target;
+        }
         let y = dry * (1.0 - self.mix) + wet * self.mix;
 
         // 活动指示：快起慢落

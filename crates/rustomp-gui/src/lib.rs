@@ -514,8 +514,9 @@ pub fn validate_panel(spec: &PanelSpec, assets: &Assets) -> Vec<String> {
 
 /// 解码内嵌 PNG，并缩放到目标像素尺寸（`w == 0` 表示保持原始尺寸）。
 ///
-/// 忽略 alpha 会把透明像素当成黑色（曾在拨杆贴图上表现为"边缘发脏"），
-/// 所以这里把 alpha 与面板底色合成。
+/// **必须保留 alpha**：贴图（旋钮/拨杆）是叠在面板美术上的，
+/// 把 alpha 提前与某个固定底色合成会让贴图边缘对不上下面的像素 ——
+/// 表现就是"旋钮边缘像被方框切过"（DEVLOG E62）。交给 GPU 混合即可。
 pub fn decode_png(data: &'static [u8], w: usize, h: usize) -> Option<egui::ColorImage> {
     let mut decoder = png::Decoder::new(data);
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
@@ -545,17 +546,9 @@ pub fn decode_png(data: &'static [u8], w: usize, h: usize) -> Option<egui::Color
                 4 | 3 => (buf[i], buf[i + 1], buf[i + 2]),
                 _ => (buf[i], buf[i], buf[i]),
             };
-            // alpha 与白底合成（面板底色由上层覆盖，这里只要不留黑边）
-            let (r, g, b) = if channels == 4 {
-                let a = buf[i + 3] as u16;
-                let mix = |c: u8, bg: u8| -> u8 {
-                    ((c as u16 * a + bg as u16 * (255 - a)) / 255) as u8
-                };
-                (mix(r, 0xfa), mix(g, 0xf1), mix(b, 0xe0))
-            } else {
-                (r, g, b)
-            };
-            px.push(egui::Color32::from_rgb(r, g, b));
+            let a = if channels == 4 { buf[i + 3] } else { 255 };
+            // egui 的 Color32 默认按 **unmultiplied** 解释，直接带上 alpha 即可正确混合
+            px.push(egui::Color32::from_rgba_unmultiplied(r, g, b, a));
         }
     }
     Some(egui::ColorImage {

@@ -174,6 +174,9 @@ struct Directives {
     /// 每样本的牛顿迭代次数（实时路径用）。**默认 3**：
     /// 2 次在方波/快速边沿下会欠收敛、进入次谐波极限环（DEVLOG E50）。
     newton: Option<usize>,
+    /// 活动指示的参考电流（`* @rustomp activity_i=50u`）。**只驱动 GUI 的 LED**。
+    /// 不同电路的二极管电流量级差很多（本电路 0.2 V 输入时只有 ~30 µA），所以必须可配。
+    activity_i: Option<f64>,
     pots: Vec<PotParam>,
     switches: Vec<SwitchSpec>,
 }
@@ -193,6 +196,10 @@ fn parse_directives(notes: &[String]) -> Result<Directives, String> {
                     d.input = Some(v.to_string());
                 } else if let Some(v) = t.strip_prefix("out=") {
                     d.output = Some(v.to_string());
+                } else if let Some(v) = t.strip_prefix("activity_i=") {
+                    d.activity_i = Some(
+                        parse_value(v).ok_or_else(|| format!("`activity_i={v}` 读不出数值"))?,
+                    );
                 } else if let Some(v) = t.strip_prefix("newton=") {
                     let n: usize = v
                         .parse()
@@ -816,13 +823,20 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     code.push_str("    net\n}\n\n");
 
     // Ckt：直接实现 Circuit
-    code.push_str("/// 生成的实时电路（直接实现 `rustomp_dsp::Circuit`）。\npub struct Ckt {\n    net: Netlist<N>,\n    params: Params,\n    fs: f64,\n}\n\n");
+    code.push_str(
+        "/// 生成的实时电路（直接实现 `rustomp_dsp::Circuit`）。\npub struct Ckt {\n    net: Netlist<N>,\n    params: Params,\n    fs: f64,\n    /// 削波活动量（0..1）：二极管最大正向电流 / ACTIVITY_I_REF\n    activity: f32,\n}\n\n",
+    );
+    let i_ref = dirs.activity_i.unwrap_or(50e-6);
+    code.push_str(&format!(
+        "/// 活动指示的参考电流（`* @rustomp activity_i=` 可改；**只驱动 GUI 的 LED**）\npub const ACTIVITY_I_REF: f64 = {};\n\n",
+        fmt_f64(i_ref)
+    ));
     code.push_str("impl rustomp_dsp::Circuit for Ckt {\n    type Params = Params;\n\n");
     code.push_str("    fn new(sample_rate: f64) -> Self {\n");
     code.push_str("        let params = Params::default();\n");
     code.push_str("        let mut net = build(sample_rate, &params);\n");
     code.push_str("        net.solve_dc();\n");
-    code.push_str("        Self { net, params, fs: sample_rate }\n    }\n\n");
+    code.push_str("        Self { net, params, fs: sample_rate, activity: 0.0 }\n    }\n\n");
     code.push_str("    fn set_sample_rate(&mut self, sample_rate: f64) {\n");
     code.push_str("        if (sample_rate - self.fs).abs() > 1e-9 {\n            *self = Self::new(sample_rate);\n        }\n    }\n\n");
     code.push_str("    fn set_params(&mut self, params: Params) {\n");
@@ -841,7 +855,27 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     } else {
         code.push_str("        let _ = x;\n");
     }
-    code.push_str("        let v = self.net.step_fixed(dt, NEWTON_ITERS);\n        v[OUT]\n    }\n}\n");
+    // ---- 削波活动量（给 GUI 的 LED）----
+    code.push_str("        let v = self.net.step_fixed(dt, NEWTON_ITERS);\n");
+    code.push_str("        // 削波活动量：网表里**所有二极管**正向电流的最大值（反向的不算）\n");
+    code.push_str("        let mut imax = 0.0f64;\n");
+    code.push_str("        for e in &self.net.elems {\n");
+    code.push_str(
+        "            if let rustomp_dsp::Element::Diode { model, a, k } = e {\n",
+    );
+    code.push_str(
+        "                let va = if *a == rustomp_dsp::GND { 0.0 } else { v[*a] };\n",
+    );
+    code.push_str(
+        "                let vk = if *k == rustomp_dsp::GND { 0.0 } else { v[*k] };\n",
+    );
+    code.push_str("                imax = imax.max(model.current(va - vk));\n");
+    code.push_str("            }\n");
+    code.push_str("        }\n");
+    code.push_str("        self.activity = (imax / ACTIVITY_I_REF).clamp(0.0, 1.0) as f32;\n");
+    code.push_str("        v[OUT]\n    }\n\n");
+    code.push_str("    /// 削波活动量（0..1）→ 引擎做快起慢落包络 → GUI 的 LED\n");
+    code.push_str("    fn activity(&self) -> f32 {\n        self.activity\n    }\n}\n");
 
     Ok(Generated { code, notes, unknowns })
 }

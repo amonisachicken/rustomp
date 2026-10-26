@@ -174,6 +174,8 @@ pub fn params_rs(m: &Manifest) -> String {
         let args: Vec<String> = m
             .params
             .iter()
+            // `bypass` 是**保留 id**：由引擎的 true-bypass 处理，不进电路参数
+            .filter(|p| p.id != "bypass")
             .map(|p| match p.kind {
                 ParamKind::Float => format!("self.{}.smoothed.next() as f64", p.id),
                 ParamKind::Bool => format!("self.{}.value()", p.id),
@@ -325,6 +327,13 @@ pub fn plugin_impl_rs(m: &Manifest) -> String {
          }}\n\n"
     ));
 
+    // `bypass` 参数存在时，每个 buffer 开头同步给引擎
+    let bypass_stmt = if m.params.iter().any(|p| p.id == "bypass") {
+        "let bypass = self.params.bypass.value();\n                 for e in self.engines.iter_mut() { e.set_bypass(bypass); }"
+    } else {
+        "// （未声明 bypass 参数）"
+    };
+
     // Plugin impl
     out.push_str(&format!(
         "impl Plugin for {s} {{\n\
@@ -366,6 +375,8 @@ pub fn plugin_impl_rs(m: &Manifest) -> String {
                  _aux: &mut AuxiliaryBuffers,\n\
                  _context: &mut impl ProcessContext<Self>,\n\
              ) -> ProcessStatus {{\n\
+                 // `bypass` 是保留参数 id：交给引擎的 true-bypass（5 ms 淡化 + 干路对齐）\n\
+                 {bypass_stmt}\n\
                  let mut peak = 0.0f32;\n\
                  for mut channel_samples in buffer.iter_samples() {{\n\
                      let p = self.params.to_dsp();\n\

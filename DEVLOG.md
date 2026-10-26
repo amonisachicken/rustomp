@@ -3705,6 +3705,81 @@ mod editor;
 
 ---
 
+## E62：S1d 联调 —— 三个界面 bug 的根因与修复（2026-10-26）
+
+用户装上第一个带界面的 v2 后报三个问题：**LED 不闪 / 踩钉按不下去 / 旋钮边缘像被切过**。
+三个都定位到了具体代码，且都属于"契约没接全"，不是美术问题。
+
+### 62.1 LED 不闪：`Ckt::activity()` 走的是 trait 默认值 0
+
+引擎侧链路本来是全的：`Circuit::activity()` → `Engine` 的"快起慢落"包络 → `activity_indicator()`
+→ 生成代码写进 `AtomicU32` → GUI 的 `clip_indicator`。
+
+但**生成的 `Ckt` 没有实现 `activity()`** → 走 trait 默认返回 `0.0` → 灯永远不亮。
+
+修复：`mna_codegen` 生成实现——
+
+```rust
+// process() 末尾：网表里所有二极管正向电流的最大值
+let mut imax = 0.0f64;
+for e in &self.net.elems {
+    if let rustomp_dsp::Element::Diode { model, a, k } = e { … }
+}
+self.activity = (imax / ACTIVITY_I_REF).clamp(0.0, 1.0) as f32;
+```
+
+`ACTIVITY_I_REF` 做成**网表指令** `* @rustomp activity_i=50u`（默认 50 µA）：
+不同电路的二极管电流量级差很多 —— 本电路 0.2 V 输入时只有 ~30 µA，
+一开始写死 1 mA 时活动量只有 0.032（灯等于不亮）。改成 50 µA 后 **0.647** ✓。
+**这个量只驱动 LED，不影响 DSP**。
+
+### 62.2 踩钉按不下去：根本没有 bypass 参数
+
+面板上画了 3PDT，但 `rustomp.toml` 里**没有 `[[ui.buttons]]`**（因为插件没有 `bypass` 参数），
+所以运行时那块只是美术。
+
+修复三处：
+
+1. `Engine` 增加 **`set_bypass(bool)`** + `is_bypassed()`：
+   复用原有的 5 ms 交叉淡化与 15 样本干路对齐，只把 `mix` 的目标从写死改成可设；
+   顺带修了"指数淡化有无穷长尾巴"——到位后吸附（`< 1e-5`）。
+2. `rustomp-gen`：`bypass` 是**保留参数 id** —— 不进 `make_params`，而是在 `process()` 开头
+   `for e in engines { e.set_bypass(...) }`。
+3. `rustomp.toml` 加 `[[params]] id="bypass"` + `[[ui.buttons]]`（3PDT，center/r=5.4mm）。
+
+新增回归测试 `bypass_passes_dry_signal`：淡出后与"延迟 15 样本的干信号"逐点比较 →
+**偏差 0.00e0**；切回后又与输入不同（确认回到湿路）。
+
+### 62.3 旋钮边缘像被切过：`decode_png` 把 alpha 提前与固定底色合成
+
+`decode_png` 原本对 RGBA 做 `alpha × (0xfa,0xf1,0xe0)` 混合并输出**不透明**像素。
+贴图是叠在面板美术上的，提前按某个固定底色合成 = 贴图边缘的像素永远对不上下面的东西，
+于是圆形旋钮看着像带一个方形"底"、边缘不干净。
+
+修复：保留 alpha，交给 GPU 混合（`Color32::from_rgba_unmultiplied`）。
+**教训**：贴图解码不要"替 GPU 做混合"，尤其是不知道下面是什么的时候。
+
+### 62.4 面板素材也换了（用户提供的新 SVG）
+
+用户把新素材放进 `rustomp-box-designer`：`knob_round_dark.svg`（15 mm，指针朝上）、
+`3pdt.svg`（10.76 mm）、`led_{red,green,blue}.svg`（6.27 mm）。全部按 **mm 画**，与我们的坐标系天然一致。
+
+- `knob.png`：Inkscape `--export-width=180`（15 mm × 12 px/mm）；
+- `panel.svg`：脚本把 3PDT 与 LED 的图层**内联**进 60×112 mm 的面板（含丝印：LEVEL/CLIP/GAIN、
+  Sparklin Drive、BYPASS、HONEYPIE EFFECTS），再 `--export-width=720`（12 px/mm）；
+- 旋钮**不进底图**（运行时整图旋转），面板上只留虚线刻度环。
+
+### 62.5 验证
+
+| 项 | 结果 |
+|---|---|
+| 电路测试 | 6 个全过（新增 activity / bypass 两个） |
+| 活动量 | 静音 0.000 → 削波 **0.647** |
+| bypass | 与干路偏差 **0.00e0**；切回恢复湿声 |
+| AU | CocoaUI ✓、纯音频 ✓、渲染 RMS 与无 GUI 版一致（0.356170） |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -3973,6 +4048,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-26 | **S1d 联调：三个界面 bug**（E62）：① LED 不闪 = 生成的 `Ckt` 没实现 `activity()`（补二极管电流指标 + 网表指令 `activity_i=`，0.032 → 0.647）；② 踩钉无效 = 没有 bypass 参数（Engine 加 `set_bypass`、`bypass` 成为保留 id、下发 `[[ui.buttons]]`，干路偏差 0.00e0）；③ 旋钮边缘被切 = `decode_png` 提前把 alpha 与固定底色合成（改为保留 alpha 交给 GPU）。面板素材换成用户新给的 mm 制 SVG（knob 15mm / 3pdt 10.76mm / led 6.27mm） |
 | 2026-10-26 | **S1d：第一个带界面的插件**（E61）：素材坐标改毫米（60×112 mm、12 px/mm = 720×1344）；panel 由 Inkscape 渲染 legacy SVG，knob 程序生成（指针朝上=50%），拨杆复用 legacy 贴图；生成器在 gui=true 时补 `editor_state` 与 `pub mod panel`；手写只有 `editor.rs`（~100 行）。实测：validate_panel 通过、AU 报 CocoaUI、音频与无 GUI 版一致 |
 | 2026-10-25 | **GUI 契约升级**（E60）：LED/拨杆/按钮 Option<T> 改为数组（数量不限）、控件 id 改为 (kind,index)、旋钮支持**整图旋转**（素材指针朝上 ⇔ 参数 0.5，角度范围必须对称）、新增固定绘制顺序常量与 validate_panel() 校验器；plugin_meta.py 同步（travel_deg、[assets] 全键导出）；examples/panel_check.rs 编译+校验生成的 PanelSpec |
 | 2026-10-25 | **进 GUI 前的清单 + AB 复盘补全**（E59）：新增 `docs/pre-gui-checklist.md`（9 节逐项状态 + GUI 依赖的接口 + 未完成项优先级）；AB 复盘补 §10（自适应迭代）、§11（开关）、§12（最终状态与"同一台机器"的定义）、§13（13 条方法学收获）；README 路线图/状态表同步（并把"稀疏 LU"划掉——E57 证明不是瓶颈） |
