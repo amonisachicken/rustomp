@@ -123,7 +123,7 @@ scripts/                构建、网表生成、基线仿真、自检、缓存�
 experiments/            归档的一次性验证代码（不参与构建，见其 README）
 .github/workflows/      CI：macOS 矩阵（cargo test --workspace + verify.sh 的 ngspice 对拍）
                         ↑ Windows/Linux 的打包与 CI 在独立仓库（见「平台策略」）
-DEVLOG.md               开发日志：每个决策、实验数据、踩过的坑
+DEVLOG.md               开发日志：每个决策、实验数据、踩过的坑（追加时请"读全文→写临时文件→替换"）
 ```
 
 ---
