@@ -91,6 +91,11 @@ fn panel_is_consistent() {
 `validate_panel` 检查：参数 id 是否存在、素材是否提供、旋钮角度是否对称、
 控件是否越界、拨杆两态锚点是否归一。示例见 `examples/panel_check.rs`。
 
+## 6.5 从设计器接手（runbook）
+
+设计器导出 `ui.toml` + `panel.svg` → 替换 `[assets]`/`[ui]` → 栅格化底图 → 生成代码 → 构建。
+完整 6 步与常见问题见 **`rustomp-box-designer/docs/06-export-runbook.md`**（DEVLOG E67 是第一次实测）。
+
 ## 7. 现状与待办
 
 | 项 | 状态 |
