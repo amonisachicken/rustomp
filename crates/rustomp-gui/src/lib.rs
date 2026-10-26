@@ -250,16 +250,19 @@ pub fn draw(
     };
 
     // ---- 指示灯（可多个）----
+    //
+    // 旁通时**去色变灰**且不随音频闪：灯表示的是"这台效果器在不在工作"，
+    // 不是"输入有没有信号"。`bypass` 是保留参数 id（见 rustomp-gen 的桥）。
+    let bypassed = params.get("bypass").unwrap_or(0.0) > 0.5;
     for led in spec.leds {
         let c = to_screen(led.center);
         let r = led.radius * scale;
-        let level = params.get(led.param).unwrap_or(activity).clamp(0.0, 1.0);
-        let t = level;
-        let colour = egui::Color32::from_rgb(
-            (led.off.0 as f32 + (led.on.0 as f32 - led.off.0 as f32) * t) as u8,
-            (led.off.1 as f32 + (led.on.1 as f32 - led.off.1 as f32) * t) as u8,
-            (led.off.2 as f32 + (led.on.2 as f32 - led.off.2 as f32) * t) as u8,
-        );
+        let colour = if bypassed {
+            led_grey(led.off)
+        } else {
+            let t = params.get(led.param).unwrap_or(activity).clamp(0.0, 1.0);
+            lerp_rgb(led.off, led.on, t)
+        };
         painter.circle_filled(c, r, colour);
     }
 
@@ -425,6 +428,19 @@ pub fn draw(
 /// 这是 `rustomp-box-designer` 与运行时之间唯一的"角度契约"：
 /// 素材里指针朝上 ⇔ 参数 0.5 ⇒ `angle_min + angle_max == 0`。
 #[inline]
+/// 两个颜色线性插值
+fn lerp_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f32) -> egui::Color32 {
+    let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
+    egui::Color32::from_rgb(mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2))
+}
+
+/// 旁通态的灯色：**去色**，并抬到"熄灭的灰塑料"亮度（太暗会看不出和暗红的区别）
+fn led_grey(off: (u8, u8, u8)) -> egui::Color32 {
+    let lum = 0.299 * off.0 as f32 + 0.587 * off.1 as f32 + 0.114 * off.2 as f32;
+    let l = (lum * 0.6 + 90.0) as u8; // 亮一点，像没通电的灰色灯珠
+    egui::Color32::from_rgb(l, l, l)
+}
+
 pub fn knob_angle_deg(value: f32, angle_min: f32, angle_max: f32) -> f32 {
     angle_min + (angle_max - angle_min) * value.clamp(0.0, 1.0)
 }
