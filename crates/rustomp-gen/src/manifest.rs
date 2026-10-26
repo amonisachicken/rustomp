@@ -226,6 +226,20 @@ impl Manifest {
         out
     }
 
+    /// `[ui]` 里的窗口尺寸（无 GUI 时给个默认值）。
+    pub fn window_size(&self) -> (u32, u32) {
+        let get = |k: &str| -> u32 {
+            self.ui
+                .as_ref()
+                .and_then(|ui| ui.get(k))
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as u32
+        };
+        let w = get("window_width");
+        let h = get("window_height");
+        (if w == 0 { 400 } else { w }, if h == 0 { 600 } else { h })
+    }
+
     /// 只含电路映射的参数（进 DSP 的那些）
     pub fn dsp_params(&self) -> Vec<&ParamMeta> {
         self.params.iter().filter(|p| p.circuit.is_some()).collect()

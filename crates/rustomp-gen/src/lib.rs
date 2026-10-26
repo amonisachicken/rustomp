@@ -63,7 +63,7 @@ pub fn generate(project: &Path, check: bool) -> Result<Report, String> {
         ("identity.rs", emit::identity_rs(&manifest)),
         ("params.rs", emit::params_rs(&manifest)),
         ("plugin_impl.rs", emit::plugin_impl_rs(&manifest)),
-        ("mod.rs", emit::mod_rs()),
+        ("mod.rs", emit::mod_rs(manifest.build.gui)),
     ];
 
     let mut report = Report::default();

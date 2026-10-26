@@ -3620,6 +3620,91 @@ GUI 设计器开工前，先把运行时要支持的形态定下来。两条动�
 
 ---
 
+## E61：S1d —— 第一个带界面的插件（Sparklin Drive v2 面板）（2026-10-26）
+
+无 GUI 那条链已经验证完了（E49–E60）。这一步把界面接上，用**新契约**（E60：数组化 + 整图旋转）。
+
+### 61.1 关键决定：素材坐标改用**毫米**
+
+legacy 面板的 SVG 单位是 **pt**（170.08 × 317.48 pt = **60 × 112 mm**，正好 1590B 竖放），
+窗口 340×635 px（1 pt = 2 px = 144 dpi），导出 680×1269 px（1 pt = 4 px ≈ **288 dpi**）。
+
+v2 改成 **1 素材单位 = 1 mm**（与 `rustomp.toml` 的 mm 化、`gb4728-symbols-kit` 的约定一致）：
+
+| 项 | 值 |
+|---|---|
+| 面板物理尺寸 | 60 × 112 mm |
+| 逻辑窗口 | `mm × 6 px/mm` = 360 × 672 |
+| 面板素材 | `mm × 12 px/mm` = **720 × 1344**（= 304.8 dpi，比 legacy 高 6%） |
+| 旋钮素材 | 22 × 22 mm = 264 × 264 px |
+
+实测数据与"PNG 里的 dpi 字段是假的"这个坑，记在设计器仓库 `docs/03-assets.md` §6。
+
+### 61.2 面板怎么来的（还没有设计器）
+
+1. `panel.png`：**Inkscape 直接渲染 legacy 的 `panel.svg`**，`--export-width=720` → 720×1344（12 px/mm）；
+2. `switch_up/down.png`：复用 legacy 的两张（95×101 px ≈ 289 dpi，同样清晰度）；
+3. `knob.png`：**程序生成**（Python 手写 PNG：深色圆 + 奶白描边环 + 朝上的指针，4× 超采样抗锯齿）
+   —— 指针朝上 ⇔ 参数 0.5，符合 E60 的约定。
+
+坐标从 legacy 的 pt 换算到 mm（×0.352778）：旋钮 (15.32, 25.26)/(44.64, 24.85) mm、
+LED (30.00, 11.94) mm r=3.0、拨杆 x=25.93 / y_up=38.26 / y_down=38.80 / pivot=(30.10, 42.98) mm。
+
+### 61.3 生成器补了两块
+
+- `rustomp-gen` 在 `gui = true` 时，`params.rs` 额外生成 `#[persist = "editor-state"]
+  editor_state: Arc<EguiState>`（窗口尺寸记忆），初始尺寸取 `[ui]` 的 `window_*`；
+- `mod.rs` 同时生成 `pub mod panel;`，于是 `plugin/src/lib.rs` 依旧只有 `mod generated;`。
+
+`panel.rs` 目前由 `tools/meta/plugin_meta.py --panel-rust` 生成（**入库**，与 legacy 同一套脚本）；
+把这一步搬进 `rustomp-gen` 是后续 TODO（避免两套发射器）。
+
+### 61.4 手写的只有 `editor.rs`（约 100 行）
+
+参数 id ↔ nih-plug 参数的桥（`ParamAccess`）+ `create_egui_editor`：
+
+```rust
+fn get(&self, id: &str) -> Option<f32> {
+    match id {
+        "gain" => Some(self.params.gain.value()),
+        "level" => Some(self.params.level.value()),
+        "symmetric" => Some(if self.params.symmetric.value() { 1.0 } else { 0.0 }),
+        "clip_indicator" => Some(self.activity),   // 虚拟 id：削波指示
+        _ => None,
+    }
+}
+```
+
+`lib.rs` 增加：
+
+```rust
+#[cfg(feature = "gui")]
+mod editor;
+```
+
+`plugin/Cargo.toml` 加 `nih_plug_egui` + `rustomp-gui`，并设 `default = ["gui"]`（无界面构建用 `--no-default-features`）。
+
+### 61.5 验证
+
+| 项 | 结果 |
+|---|---|
+| 编译 | `cargo check -p sparklin-drive`（含 GUI）通过 |
+| 面板自洽性 | `validate_panel` 通过：2 旋钮 / 1 拨杆 / 1 LED，画布 60×112 mm |
+| 构建安装 | mono + stereo 均成功（Sp02 / Sp03） |
+| AU 界面能力 | `au-smoke`：**提供自定义界面（CocoaUI）** ✓ |
+| 音频 | 渲染 512 帧：非有限值 0、RMS 0.356170（与无 GUI 版完全一致） |
+
+### 61.6 还没做的（清单）
+
+| # | 事项 |
+|---|---|
+| 1 | `panel.rs` 由 `rustomp-gen` 生成（去掉对 python 的依赖） |
+| 2 | `template/` + `new-plugin.sh` 支持 `--gui`（现在要手工改 Cargo.toml + 写 editor.rs） |
+| 3 | 面板素材仍复用 legacy 的美术；等 box-designer 出来再做原创面板 |
+| 4 | 拖动/滚轮手感与 legacy 对齐（`drag_range`、双击回中）——先看用户的实机反馈 |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -3888,6 +3973,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-26 | **S1d：第一个带界面的插件**（E61）：素材坐标改毫米（60×112 mm、12 px/mm = 720×1344）；panel 由 Inkscape 渲染 legacy SVG，knob 程序生成（指针朝上=50%），拨杆复用 legacy 贴图；生成器在 gui=true 时补 `editor_state` 与 `pub mod panel`；手写只有 `editor.rs`（~100 行）。实测：validate_panel 通过、AU 报 CocoaUI、音频与无 GUI 版一致 |
 | 2026-10-25 | **GUI 契约升级**（E60）：LED/拨杆/按钮 Option<T> 改为数组（数量不限）、控件 id 改为 (kind,index)、旋钮支持**整图旋转**（素材指针朝上 ⇔ 参数 0.5，角度范围必须对称）、新增固定绘制顺序常量与 validate_panel() 校验器；plugin_meta.py 同步（travel_deg、[assets] 全键导出）；examples/panel_check.rs 编译+校验生成的 PanelSpec |
 | 2026-10-25 | **进 GUI 前的清单 + AB 复盘补全**（E59）：新增 `docs/pre-gui-checklist.md`（9 节逐项状态 + GUI 依赖的接口 + 未完成项优先级）；AB 复盘补 §10（自适应迭代）、§11（开关）、§12（最终状态与"同一台机器"的定义）、§13（13 条方法学收获）；README 路线图/状态表同步（并把"稀疏 LU"划掉——E57 证明不是瓶颈） |
 | 2026-10-25 | **双分支 + 开关切换**（E58）：框架新增 `Branch<A,B>`（两份完整电路 + 5 ms 预热 + 10 ms 淡化，空闲时只跑当前分支）；生成器新增 `params_builder`；插件拆成 asym/sym 两份网表。实测：非对称 THD 27.58%、对称 h2 **0.000 %**、切换跳变比值 0.99（无咔哒）；教训：切进来的分支必须先"预热"，否则冷状态瞬态会从淡入窗口漏出 |

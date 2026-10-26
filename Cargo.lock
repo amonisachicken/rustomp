@@ -1858,7 +1858,9 @@ name = "sparklin-drive"
 version = "0.1.0"
 dependencies = [
  "nih_plug",
+ "nih_plug_egui",
  "rustomp-dsp",
+ "rustomp-gui",
  "sparklin-drive-circuit",
 ]
 

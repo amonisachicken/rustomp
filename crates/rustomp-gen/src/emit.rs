@@ -124,7 +124,11 @@ fn variants_cfg_any(variants: &[String]) -> String {
 pub fn params_rs(m: &Manifest) -> String {
     let mut out = String::from(HEADER);
     out.push_str("// 参数表（由 rustomp.toml 的 [[params]] 生成）。\n\n");
-    out.push_str("use nih_plug::prelude::*;\n\n");
+    out.push_str("use nih_plug::prelude::*;\n");
+    if m.build.gui {
+        out.push_str("use std::sync::Arc;\n");
+    }
+    out.push_str("\n");
 
     out.push_str("#[derive(Params)]\npub struct PluginParams {\n");
     for p in &m.params {
@@ -136,12 +140,22 @@ pub fn params_rs(m: &Manifest) -> String {
         };
         out.push_str(&format!("    pub {}: {},\n\n", p.id, ty));
     }
+    if m.build.gui {
+        // 窗口尺寸记忆（nih-plug 的 #[persist]）
+        out.push_str("    #[persist = \"editor-state\"]\n    pub editor_state: Arc<::nih_plug_egui::EguiState>,\n\n");
+    }
     out.push_str("}\n\n");
 
     // Default
     out.push_str("impl Default for PluginParams {\n    fn default() -> Self {\n        Self {\n");
     for p in &m.params {
         out.push_str(&format!("            {},\n", default_expr(p)));
+    }
+    if m.build.gui {
+        let (w, h) = m.window_size();
+        out.push_str(&format!(
+            "            editor_state: ::nih_plug_egui::EguiState::from_size({w}, {h}),\n"
+        ));
     }
     out.push_str("        }\n    }\n}\n\n");
 
@@ -432,12 +446,14 @@ pub fn plugin_impl_rs(m: &Manifest) -> String {
 
 // ---------------------------------------------------------------- mod.rs
 
-pub fn mod_rs() -> String {
+pub fn mod_rs(gui: bool) -> String {
+    let panel = if gui { "pub mod panel;\n" } else { "" };
     format!(
         "{HEADER}// 生成模块的汇总。`local.rs` 是手写文件的落点（不会被覆盖）。\n\n\
          pub mod identity;\n\
          pub mod params;\n\
-         pub mod plugin_impl;\n"
+         pub mod plugin_impl;\n\
+         {panel}"
     )
 }
 
