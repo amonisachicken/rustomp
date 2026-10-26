@@ -61,7 +61,12 @@ pub struct Ckt {
     net: Netlist<N>,
     params: Params,
     fs: f64,
+    /// 削波活动量（0..1）：二极管最大正向电流 / ACTIVITY_I_REF
+    activity: f32,
 }
+
+/// 活动指示的参考电流（`* @rustomp activity_i=` 可改；**只驱动 GUI 的 LED**）
+pub const ACTIVITY_I_REF: f64 = 5e-5;
 
 impl rustomp_dsp::Circuit for Ckt {
     type Params = Params;
@@ -70,7 +75,7 @@ impl rustomp_dsp::Circuit for Ckt {
         let params = Params::default();
         let mut net = build(sample_rate, &params);
         net.solve_dc();
-        Self { net, params, fs: sample_rate }
+        Self { net, params, fs: sample_rate, activity: 0.0 }
     }
 
     fn set_sample_rate(&mut self, sample_rate: f64) {
@@ -95,6 +100,21 @@ impl rustomp_dsp::Circuit for Ckt {
         let dt = 1.0 / self.fs;
         self.net.set_fixed(FIXED_IN, x);
         let v = self.net.step_fixed(dt, NEWTON_ITERS);
+        // 削波活动量：网表里**所有二极管**正向电流的最大值（反向的不算）
+        let mut imax = 0.0f64;
+        for e in &self.net.elems {
+            if let rustomp_dsp::Element::Diode { model, a, k } = e {
+                let va = if *a == rustomp_dsp::GND { 0.0 } else { v[*a] };
+                let vk = if *k == rustomp_dsp::GND { 0.0 } else { v[*k] };
+                imax = imax.max(model.current(va - vk));
+            }
+        }
+        self.activity = (imax / ACTIVITY_I_REF).clamp(0.0, 1.0) as f32;
         v[OUT]
+    }
+
+    /// 削波活动量（0..1）→ 引擎做快起慢落包络 → GUI 的 LED
+    fn activity(&self) -> f32 {
+        self.activity
     }
 }
