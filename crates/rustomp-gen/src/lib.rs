@@ -86,6 +86,18 @@ pub fn generate(project: &Path, check: bool) -> Result<Report, String> {
     if !assets_rs.is_empty() {
         files.push(("assets.rs", assets_rs));
     }
+    if manifest.build.gui {
+        // 界面相关：参数桥（[[params]] 派生）与面板声明（[ui] 派生）
+        files.push(("bridge.rs", emit::bridge_rs(&manifest)));
+        match emit::panel_rs(&manifest)? {
+            Some(panel) => files.push(("panel.rs", panel)),
+            None => {
+                return Err(
+                    "[build] gui = true 但 rustomp.toml 里没有 [ui] 段（面板声明无处来）".into(),
+                )
+            }
+        }
+    }
 
     let mut report = Report::default();
     for (name, content) in files {

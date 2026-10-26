@@ -24,6 +24,8 @@ cargo run -q -p rustomp-gen -- <项目目录> --check   # 只比对（CI 防漂�
 
 | 文件 | 内容 |
 |---|---|
+| `generated/panel.rs` | `[ui]` → `pub const PANEL: PanelSpec`（旋钮/LED/拨杆/脚踏，坐标毫米） |
+| `generated/bridge.rs` | `[[params]]` → `impl ParamAccess`（GUI ↔ 参数的桥；**漏一个参数不会编译失败**，所以必须生成） |
 | `generated/assets.rs` | `PANEL_PNG` + `IMAGES`（`[assets]` 里的 PNG 编进二进制；`include_bytes!` 相对生成物，所以是 `../../../assets/...`） |
 
 > **为什么放在生成器里**：素材是设计器产出的、会被改名/增删的东西。

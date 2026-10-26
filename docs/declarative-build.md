@@ -60,9 +60,9 @@ cargo run -q -p rustomp-gen -- <项目目录> --check    # 只比对（CI 防漂
 > **`identity.rs` 不再由 build.rs 生成**（S1c）：变体差异改成 `#[cfg(feature = "mono"/"stereo")]`，
 > 于是文件是静态的、可入库、可 diff、可 `--check`。`build.rs` 已移除（GUI 阶段也不再加回来）。
 >
-> **界面（S1d，已实现）**：`panel.rs` 目前由 `plugin_meta.py --panel-rust` 生成并入库
-> （旋钮整图旋转 / 拨杆 / LED / 脚踏数组化，毫米坐标）；`rustomp-gen` 在 `gui = true` 时
-> 额外生成 `editor_state`（窗口尺寸记忆）与 `pub mod panel;`。把 panel 生成搬进 `rustomp-gen` 是 TODO。
+> **界面（S1d，已实现）**：`panel.rs`（`[ui]` → `PanelSpec`）与 `bridge.rs`（`[[params]]` → `ParamAccess`）
+> 都由 `rustomp-gen` 生成；`editor.rs` 里只剩"创建 egui 编辑器"几十行。
+> `plugin_meta.py --panel-rust` 已退役（保留一行报错，防止旧脚本产出第二份）。
 >
 > 历史上的说明：`panel.rs` 与 egui 依赖在 `gui` feature 之后。
 >

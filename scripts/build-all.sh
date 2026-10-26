@@ -23,6 +23,18 @@ for a in "$@"; do
     esac
 done
 
+echo "############ 0/2  重新生成插件代码 ############"
+# 生成物（params/bridge/panel/assets）来自 rustomp.toml；
+# 这里统一重生成一次，避免"改了 toml 但忘了跑生成器"用旧代码构建。
+GEN="./target/release/rustomp-gen"
+[ -x "$GEN" ] || cargo build -q --release -p rustomp-gen
+for proj in plugins/*/rustomp.toml; do
+    [ -e "$proj" ] || continue
+    dir="$(dirname "$proj")"
+    echo "  → $dir"
+    "$GEN" "$dir" | tail -1
+done
+
 echo "############ 1/2  单声道变体 ############"
 ./scripts/build-variant.sh mono
 

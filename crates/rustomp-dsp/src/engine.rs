@@ -83,9 +83,12 @@ impl<C: Circuit> Engine<C> {
     }
 
     /// 活动/削波指示电平（0..1），供 GUI 使用
+    ///
+    /// 乘上旁通权重：**踩下 true-bypass 时灯自然熄灭**（否则电路还在跑，
+    /// 灯会继续闪，用户看到的就是"已经 bypass 了灯还亮着"）。
     #[inline]
     pub fn activity_indicator(&self) -> f32 {
-        self.activity_env
+        self.activity_env * self.mix as f32
     }
 
     pub fn reset(&mut self) {

@@ -53,11 +53,14 @@ rustomp_gui::draw(...)        ← 一次性画出整块面板，返回控件交�
 |---|---|
 | 拖旋钮 | 纵向拖动 → `drag_range`（默认 260）像素跑完整个范围，按住 Shift 精调 |
 | 拖拨杆 | 拖动/点击切两态，可带 `travel_deg` 旋转 |
-| 点脚踏 | 触发 bool 参数（true-bypass），按下时**从底图抠出那块缩放**，抬脚弹回 |
+| 点脚踏 | 触发 bool 参数（true-bypass）；有 `image_hold` 就整张换上，否则从底图抠出那块缩小 |
 
 > ⚠️ 脚踏的两个硬约束（box-designer E64 实测）：
 > 1. `radius` 必须 **≥ 美术外接圆半径**（3PDT 是 5.38 mm，取 5.4），否则按下时原美术会露出一圈；
 > 2. 擦除用的是 `2r × 2r` 的**背景色方块**，所以脚踏下面不要放渐变/图案/大块丝印。
+
+LED 的亮度建议直接用 `Engine::activity_indicator()`：它已经乘了旁通权重，
+所以**踩下 true-bypass 时灯自然熄灭**（`mix → 0`）。
 
 参数读写走 `ParamAccess` 抽象：`get_param(id)` / `set_param(id, value)`。
 虚拟指示（LED）用 `get_param("clip_indicator")` 读引擎的 `activity_indicator()`。

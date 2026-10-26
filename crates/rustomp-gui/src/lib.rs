@@ -95,8 +95,14 @@ pub struct ToggleSpec {
 pub struct ButtonSpec {
     pub param: &'static str,
     pub center: (f32, f32),
+    /// 命中半径，**必须 ≥ 美术外接圆半径**（按下时要擦掉这块）
     pub radius: f32,
     pub press_scale: f32,
+    /// 按下态贴图（""=没有）。有的话按下时**整张换上**（尺寸按 `image_size`），
+    /// 不再做"把底图那块缩小贴回"。
+    pub image_hold: &'static str,
+    /// 按下态贴图的物理尺寸（mm）；`image_hold` 为空时忽略
+    pub image_size: (f32, f32),
 }
 
 /// 整个面板的声明。
@@ -369,8 +375,24 @@ pub fn draw(
             params.set(btn.param, if on { 0.0 } else { 1.0 });
         }
         if resp.is_pointer_button_down_on() {
-            if let Some(t) = &panel_tex {
-                // 先从底图取该区域（uv 子矩形），抹掉原位，再贴回缩小版
+            // 擦掉原位（方块；radius 必须盖住美术，见 README 的约束）
+            painter.rect_filled(
+                egui::Rect::from_center_size(c, egui::vec2(r * 2.0, r * 2.0)),
+                0.0,
+                bg,
+            );
+            let hold = image_tex(btn.image_hold);
+            if let Some(t) = hold.filter(|_| !btn.image_hold.is_empty()) {
+                // 设计师给了按住态：整张换上（与常态同尺寸，不缩放）
+                let (w, h) = (btn.image_size.0 * scale, btn.image_size.1 * scale);
+                painter.image(
+                    t.id(),
+                    egui::Rect::from_center_size(c, egui::vec2(w, h)),
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            } else if let Some(t) = &panel_tex {
+                // 兜底：从底图取该区域，再贴回缩小版（旧行为）
                 let r_svg = r / scale;
                 let uv = egui::Rect::from_min_max(
                     egui::pos2(
@@ -381,11 +403,6 @@ pub fn draw(
                         (btn.center.0 + r_svg) / spec.svg_w,
                         (btn.center.1 + r_svg) / spec.svg_h,
                     ),
-                );
-                painter.rect_filled(
-                    egui::Rect::from_center_size(c, egui::vec2(r * 2.0, r * 2.0)),
-                    0.0,
-                    bg,
                 );
                 painter.image(
                     t.id(),

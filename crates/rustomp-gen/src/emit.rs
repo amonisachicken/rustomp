@@ -512,17 +512,335 @@ pub fn assets_rs(m: &Manifest) -> String {
     out
 }
 
+// ---------------------------------------------------------------- panel.rs
+
+/// f32 字面量：`[ui]` 里 `svg_width = 60` 是整数，字段是 f32 → 必须写成 `60.0`
+fn rf(v: f64) -> String {
+    let t = format!("{v:.6}");
+    let t = t.trim_end_matches('0');
+    if t.ends_with('.') {
+        format!("{t}0")
+    } else {
+        t.to_string()
+    }
+}
+
+fn vf(v: &toml::Value, key: &str) -> Result<f64, String> {
+    v.get(key)
+        .and_then(|x| x.as_float().or_else(|| x.as_integer().map(|i| i as f64)))
+        .ok_or_else(|| format!("`[ui]` 缺少数值字段 `{key}`"))
+}
+
+fn vstr<'a>(v: &'a toml::Value, key: &str) -> Result<&'a str, String> {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| format!("`[ui]` 缺少字符串字段 `{key}`"))
+}
+
+fn vpair(v: &toml::Value, key: &str) -> Result<(f64, f64), String> {
+    let arr = v
+        .get(key)
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| format!("`[ui]` 缺少数组字段 `{key}`"))?;
+    let get = |i: usize| -> f64 {
+        arr.get(i)
+            .and_then(|x| x.as_float().or_else(|| x.as_integer().map(|i| i as f64)))
+            .unwrap_or(0.0)
+    };
+    Ok((get(0), get(1)))
+}
+
+/// 一组 `[[ui.xxx]]` 块
+fn tables<'a>(ui: &'a toml::Value, key: &str) -> Vec<&'a toml::Value> {
+    ui.get(key)
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().collect())
+        .unwrap_or_default()
+}
+
+/// `[ui]` → `pub const PANEL: PanelSpec`
+///
+/// 与 rustomp-box-designer 的契约一一对应（`docs/contract-panel-toml`）：
+/// - 旋钮默认 `render = "rotate"`，`travel_deg` 导出成对称的 `angle_min/angle_max`
+/// - 拨杆两态各自一张贴图；`y_up == y_down`（归一化后不跳）
+/// - 按钮可带 `image_hold`（按住态贴图）
+pub fn panel_rs(m: &Manifest) -> Result<Option<String>, String> {
+    let Some(ui) = m.ui.as_ref() else {
+        return Ok(None);
+    };
+
+    let rgb = |hex: &str| -> (u8, u8, u8) {
+        let h = hex.trim_start_matches('#');
+        let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0);
+        (p(0), p(2), p(4))
+    };
+
+    let mut out = String::from(HEADER);
+    out.push_str("//! 面板声明（由 `rustomp.toml` 的 `[ui]` 生成）。\n\n");
+    out.push_str("pub const PANEL: rustomp_gui::PanelSpec = rustomp_gui::PanelSpec {\n");
+    out.push_str(&format!("    svg_w: {},\n", rf(vf(ui, "svg_width")?)));
+    out.push_str(&format!("    svg_h: {},\n", rf(vf(ui, "svg_height")?)));
+    out.push_str(&format!(
+        "    window: ({}u32, {}u32),\n",
+        vf(ui, "window_width")? as u32,
+        vf(ui, "window_height")? as u32
+    ));
+    let bg = rgb(ui
+        .get("background")
+        .and_then(|x| x.as_str())
+        .unwrap_or("#000000"));
+    out.push_str(&format!(
+        "    background: ({}, {}, {}),\n",
+        bg.0, bg.1, bg.2
+    ));
+
+    // ---- 旋钮 ----
+    out.push_str("    knobs: &[\n");
+    for k in tables(ui, "knobs") {
+        let c = vpair(k, "center")?;
+        let size = vpair(k, "image_size")?;
+        let render = k.get("render").and_then(|x| x.as_str()).unwrap_or("rotate");
+        let (amin, amax) = match k.get("travel_deg").and_then(|x| x.as_float()) {
+            Some(travel) => (-travel / 2.0, travel / 2.0),
+            None => (
+                k.get("angle_min")
+                    .and_then(|x| x.as_float())
+                    .unwrap_or(-135.0),
+                k.get("angle_max")
+                    .and_then(|x| x.as_float())
+                    .unwrap_or(135.0),
+            ),
+        };
+        out.push_str("        rustomp_gui::KnobSpec {\n");
+        out.push_str(&format!("            param: \"{}\",\n", vstr(k, "param")?));
+        out.push_str(&format!(
+            "            center: ({}, {}),\n",
+            rf(c.0),
+            rf(c.1)
+        ));
+        out.push_str(&format!("            radius: {},\n", rf(vf(k, "radius")?)));
+        out.push_str(&format!(
+            "            image: \"{}\",\n",
+            k.get("asset").and_then(|x| x.as_str()).unwrap_or("")
+        ));
+        out.push_str(&format!(
+            "            image_size: ({}, {}),\n",
+            rf(size.0),
+            rf(size.1)
+        ));
+        out.push_str(&format!(
+            "            render: rustomp_gui::KnobRender::{},\n",
+            if render == "rotate" {
+                "Rotate"
+            } else {
+                "Pointer"
+            }
+        ));
+        out.push_str(&format!(
+            "            pointer_len: {},\n",
+            rf(k.get("pointer_len")
+                .and_then(|x| x.as_float())
+                .unwrap_or(0.0))
+        ));
+        out.push_str(&format!(
+            "            pointer_width: {},\n",
+            rf(k.get("pointer_width")
+                .and_then(|x| x.as_float())
+                .unwrap_or(1.0))
+        ));
+        out.push_str(&format!("            angle_min: {},\n", rf(amin)));
+        out.push_str(&format!("            angle_max: {},\n", rf(amax)));
+        out.push_str(&format!(
+            "            drag_range: {},\n",
+            rf(k.get("drag_full_range_px")
+                .and_then(|x| x.as_float())
+                .unwrap_or(260.0))
+        ));
+        out.push_str("        },\n");
+    }
+    out.push_str("    ],\n");
+
+    // ---- LED ----
+    out.push_str("    leds: &[\n");
+    for l in tables(ui, "leds") {
+        let c = vpair(l, "center")?;
+        let off = rgb(vstr(l, "off_color")?);
+        let on = rgb(vstr(l, "on_color")?);
+        out.push_str("        rustomp_gui::LedSpec {\n");
+        out.push_str(&format!("            param: \"{}\",\n", vstr(l, "param")?));
+        out.push_str(&format!(
+            "            center: ({}, {}),\n",
+            rf(c.0),
+            rf(c.1)
+        ));
+        out.push_str(&format!("            radius: {},\n", rf(vf(l, "radius")?)));
+        out.push_str(&format!(
+            "            off: ({}, {}, {}),\n",
+            off.0, off.1, off.2
+        ));
+        out.push_str(&format!(
+            "            on: ({}, {}, {}),\n",
+            on.0, on.1, on.2
+        ));
+        out.push_str("        },\n");
+    }
+    out.push_str("    ],\n");
+
+    // ---- 拨杆 ----
+    out.push_str("    toggles: &[\n");
+    for t in tables(ui, "toggles") {
+        let pivot = vpair(t, "pivot")?;
+        out.push_str("        rustomp_gui::ToggleSpec {\n");
+        out.push_str(&format!("            param: \"{}\",\n", vstr(t, "param")?));
+        out.push_str(&format!(
+            "            image_up: \"{}\",\n",
+            vstr(t, "image_up")?
+        ));
+        out.push_str(&format!(
+            "            image_down: \"{}\",\n",
+            vstr(t, "image_down")?
+        ));
+        out.push_str(&format!("            x: {},\n", rf(vf(t, "x")?)));
+        out.push_str(&format!("            y_up: {},\n", rf(vf(t, "y_up")?)));
+        out.push_str(&format!("            y_down: {},\n", rf(vf(t, "y_down")?)));
+        out.push_str(&format!("            width: {},\n", rf(vf(t, "width")?)));
+        out.push_str(&format!("            height: {},\n", rf(vf(t, "height")?)));
+        out.push_str(&format!(
+            "            pivot: ({}, {}),\n",
+            rf(pivot.0),
+            rf(pivot.1)
+        ));
+        out.push_str(&format!(
+            "            press_scale: {},\n",
+            rf(t.get("press_scale")
+                .and_then(|x| x.as_float())
+                .unwrap_or(0.9))
+        ));
+        out.push_str("        },\n");
+    }
+    out.push_str("    ],\n");
+
+    // ---- 按钮 ----
+    out.push_str("    buttons: &[\n");
+    for b in tables(ui, "buttons") {
+        let c = vpair(b, "center")?;
+        let size = match b.get("image_size").and_then(|x| x.as_array()) {
+            Some(_) => vpair(b, "image_size")?,
+            None => (0.0, 0.0),
+        };
+        out.push_str("        rustomp_gui::ButtonSpec {\n");
+        out.push_str(&format!("            param: \"{}\",\n", vstr(b, "param")?));
+        out.push_str(&format!(
+            "            center: ({}, {}),\n",
+            rf(c.0),
+            rf(c.1)
+        ));
+        out.push_str(&format!("            radius: {},\n", rf(vf(b, "radius")?)));
+        out.push_str(&format!(
+            "            press_scale: {},\n",
+            rf(b.get("press_scale")
+                .and_then(|x| x.as_float())
+                .unwrap_or(0.9))
+        ));
+        out.push_str(&format!(
+            "            image_hold: \"{}\",\n",
+            b.get("image_hold").and_then(|x| x.as_str()).unwrap_or("")
+        ));
+        out.push_str(&format!(
+            "            image_size: ({}, {}),\n",
+            rf(size.0),
+            rf(size.1)
+        ));
+        out.push_str("        },\n");
+    }
+    out.push_str("    ],\n");
+    out.push_str("};\n");
+    Ok(Some(out))
+}
+
+// ---------------------------------------------------------------- bridge.rs
+
+/// 参数桥：`ParamAccess` 的生成实现。
+///
+/// 手写这个桥的问题很具体：**漏掉一个参数不会编译失败**，只会"点了没反应"。
+/// 真实事故：`bypass` 漏了 `set` 分支 → 踩钉按下去什么也没发生（DEVLOG E66）。
+/// 所以它必须由 `[[params]]` 生成。
+pub fn bridge_rs(m: &Manifest) -> String {
+    let mut gets = String::new();
+    let mut sets = String::new();
+    for p in &m.params {
+        let (id, f) = (&p.id, &p.id);
+        match p.kind {
+            ParamKind::Bool => {
+                gets.push_str(&format!(
+                    "            \"{id}\" => Some(if self.params.{f}.value() {{ 1.0 }} else {{ 0.0 }}),\n"
+                ));
+                sets.push_str(&format!(
+                    "            \"{id}\" => self.setter.set_parameter(&self.params.{f}, value > 0.5),\n"
+                ));
+            }
+            ParamKind::Float => {
+                gets.push_str(&format!(
+                    "            \"{id}\" => Some(self.params.{f}.value()),\n"
+                ));
+                sets.push_str(&format!(
+                    "            \"{id}\" => self.setter.set_parameter(&self.params.{f}, value),\n"
+                ));
+            }
+        }
+    }
+
+    let mut out = String::from(HEADER);
+    out.push_str(
+        "//! 参数桥（由 `[[params]]` 生成）：`rustomp_gui::ParamAccess` 的实现。\n\
+         //!\n\
+         //! 为什么必须生成：手写的 match **漏一个参数不会编译失败**，只会\"点了没反应\"。\n\
+         //! 真实事故：`bypass` 漏了 `set` 分支 → 踩钉按下去什么也没发生（DEVLOG E66）。\n\n",
+    );
+    out.push_str(&format!(
+        "use crate::generated::params::PluginParams;
+use nih_plug::prelude::ParamSetter;
+use rustomp_gui::ParamAccess;
+
+pub struct ParamBridge<'a> {{
+    pub params: &'a PluginParams,
+    pub setter: &'a ParamSetter<'a>,
+    /// 音频线程写入的削波活动量（0..1）
+    pub activity: f32,
+}}
+
+impl ParamAccess for ParamBridge<'_> {{
+    fn get(&self, id: &str) -> Option<f32> {{
+        match id {{
+{gets}            // 虚拟 id：削波指示灯的亮度（不是真参数，只读）
+            \"clip_indicator\" => Some(self.activity),
+            _ => None,
+        }}
+    }}
+
+    fn set(&self, id: &str, value: f32) {{
+        match id {{
+{sets}            _ => {{}}
+        }}
+    }}
+}}
+"
+    ));
+    out
+}
+
 // ---------------------------------------------------------------- mod.rs
 
 pub fn mod_rs(gui: bool, has_assets: bool) -> String {
     let panel = if gui { "pub mod panel;\n" } else { "" };
     let assets = if has_assets { "pub mod assets;\n" } else { "" };
+    let bridge = if gui { "pub mod bridge;\n" } else { "" };
     format!(
         "{HEADER}// 生成模块的汇总。`local.rs` 是手写文件的落点（不会被覆盖）。\n\n\
          pub mod identity;\n\
          pub mod params;\n\
          pub mod plugin_impl;\n\
-         {assets}{panel}"
+         {assets}{bridge}{panel}"
     )
 }
 
@@ -537,11 +855,80 @@ mod tests {
         m.assets.insert("knob_a".into(), "assets/knob_a.png".into());
         let s = assets_rs(&m);
         // 生成物在 plugin/src/generated/，素材相对项目根 → 必须向上三级
-        assert!(s.contains("include_bytes!(\"../../../assets/panel.png\")"), "{s}");
+        assert!(
+            s.contains("include_bytes!(\"../../../assets/panel.png\")"),
+            "{s}"
+        );
         assert!(s.contains("pub static PANEL_PNG"));
         assert!(s.contains("(\"knob_a\", include_bytes!(\"../../../assets/knob_a.png\"))"));
         // panel 不能重复出现在 IMAGES 里
         assert!(!s.contains("(\"panel\""));
+    }
+
+    #[test]
+    fn bridge_covers_every_param_in_get_and_set() {
+        // 回归 DEVLOG E66：手写桥漏掉 `bypass` 的 set 分支 → 踩钉"点了没反应"。
+        let m = manifest();
+        let s = bridge_rs(&m);
+        for p in &m.params {
+            let n = s.matches(&format!("\"{}\" =>", p.id)).count();
+            assert!(
+                n >= 2,
+                "参数 {} 在桥里只出现了 {} 次（get/set 都要有）\n{s}",
+                p.id,
+                n
+            );
+        }
+        // bool 参数在 set 里必须走 `value > 0.5`（不是直接把 f32 塞进去）
+        for p in m.params.iter().filter(|p| p.kind == ParamKind::Bool) {
+            assert!(
+                s.contains(&format!(
+                    "\"{}\" => self.setter.set_parameter(&self.params.{}, value > 0.5)",
+                    p.id, p.id
+                )),
+                "bool 参数 {} 的 set 分支不对\n{s}",
+                p.id
+            );
+        }
+        assert!(s.contains("\"clip_indicator\" => Some(self.activity)"));
+    }
+
+    #[test]
+    fn panel_rs_emits_float_literals_and_hold_image() {
+        let m: Manifest = toml::from_str(
+            r##"
+[plugin]
+package = "p"
+name = "P"
+vendor = "V"
+clap_id = "x"
+vst3_class_id = "0123456789abcdef"
+
+[build]
+gui = true
+
+[ui]
+svg_width = 60
+svg_height = 112
+window_width = 360
+window_height = 672
+background = "#faf1e0"
+
+[[ui.buttons]]
+param = "bypass"
+center = [30.1, 83.3]
+radius = 7.2
+press_scale = 0.9
+image_hold = "3pdt_alt_hold"
+image_size = [14.35, 14.35]
+"##,
+        )
+        .unwrap();
+        let s = panel_rs(&m).unwrap().unwrap();
+        assert!(s.contains("svg_w: 60.0"), "整数要写成 f32 字面量\n{s}");
+        assert!(s.contains("window: (360u32, 672u32)"));
+        assert!(s.contains("image_hold: \"3pdt_alt_hold\""));
+        assert!(s.contains("image_size: (14.35, 14.35)"));
     }
 
     #[test]
