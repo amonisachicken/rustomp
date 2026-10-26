@@ -68,7 +68,9 @@ rustomp_gui::draw(...)        ← 一次性画出整块面板，返回控件交�
 pub struct Assets { /* include_bytes! 进来的 PNG 字节 */ }
 ```
 
-- `include_bytes!` **相对源文件**：`plugin/src/lib.rs` 引用素材要写 `../../assets/`；
+- 素材字节现在由 `generated/assets.rs` 提供（`rustomp-gen` 从 `[assets]` 生成），
+  手写代码只需要 `use crate::generated::assets::{IMAGES, PANEL_PNG};`；
+- 若要自己写 `include_bytes!`：它**相对源文件**（`plugin/src/lib.rs` 要写 `../../assets/`）；
 - 窗口重开必须 `reset_textures()`（纹理随旧的 `egui::Context` 一起失效）；
 - `decode_png` **保留 alpha**（`from_rgba_unmultiplied`），交给 GPU 混合：
   提前和固定底色合成会让圆形贴图看着"带一个方底、边缘像被切过"（DEVLOG E62）。

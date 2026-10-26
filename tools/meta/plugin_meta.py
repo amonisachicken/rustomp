@@ -140,14 +140,23 @@ def main() -> None:
         # - LED / 拨杆 / 按钮都是**数组**（数量不限）；
         # - 旋钮默认 `render = "rotate"`（整图旋转，素材指针朝上 ⇔ 参数 0.5，角度范围必须对称）；
         # - 绘制顺序固定：panel → leds → knobs → toggles → buttons。
+        def rf(v):
+            """Rust `f32` 字面量：TOML 里 `60` 是整数，但字段类型是 f32，必须写成 `60.0`。"""
+            f = float(v)
+            t = f"{f:.6f}".rstrip("0")
+            return t + "0" if t.endswith(".") else t
+
+        def vec2(p):
+            return f"({rf(p[0])}, {rf(p[1])})"
+
         def rgb(hexstr: str):
             h = hexstr.lstrip("#")
             return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
         out = []
         out.append("pub const PANEL: rustomp_gui::PanelSpec = rustomp_gui::PanelSpec {")
-        out.append(f"    svg_w: {ui['svg_width']},")
-        out.append(f"    svg_h: {ui['svg_height']},")
+        out.append(f"    svg_w: {rf(ui['svg_width'])},")
+        out.append(f"    svg_h: {rf(ui['svg_height'])},")
         out.append(f"    window: ({ui['window_width']}, {ui['window_height']}),")
         bg = rgb(ui["background"])
         out.append(f"    background: ({bg[0]}, {bg[1]}, {bg[2]}),")
@@ -166,20 +175,20 @@ def main() -> None:
             size = k.get("image_size", [0.0, 0.0])
             out.append("        rustomp_gui::KnobSpec {")
             out.append(f'            param: {rust_str(k["param"])},')
-            out.append(f'            center: ({k["center"][0]}, {k["center"][1]}),')
-            out.append(f'            radius: {k["radius"]},')
+            out.append(f"            center: {vec2(k['center'])},")
+            out.append(f'            radius: {rf(k["radius"])},')
             out.append(f'            image: {rust_str(k.get("asset", ""))},')
-            out.append(f"            image_size: ({size[0]}, {size[1]}),")
+            out.append(f"            image_size: ({rf(size[0])}, {rf(size[1])}),")
             out.append(
                 "            render: rustomp_gui::KnobRender::"
                 + ("Rotate" if render == "rotate" else "Pointer")
                 + ","
             )
-            out.append(f'            pointer_len: {k.get("pointer_len", 0.0)},')
-            out.append(f'            pointer_width: {k.get("pointer_width", 1.0)},')
-            out.append(f"            angle_min: {angle_min},")
-            out.append(f"            angle_max: {angle_max},")
-            out.append(f'            drag_range: {k.get("drag_full_range_px", 260.0)},')
+            out.append(f'            pointer_len: {rf(k.get("pointer_len", 0.0))},')
+            out.append(f'            pointer_width: {rf(k.get("pointer_width", 1.0))},')
+            out.append(f"            angle_min: {rf(angle_min)},")
+            out.append(f"            angle_max: {rf(angle_max)},")
+            out.append(f'            drag_range: {rf(k.get("drag_full_range_px", 260.0))},')
             out.append("        },")
         out.append("    ],")
 
@@ -189,8 +198,8 @@ def main() -> None:
             off, on = rgb(led["off_color"]), rgb(led["on_color"])
             out.append("        rustomp_gui::LedSpec {")
             out.append(f'            param: {rust_str(led["param"])},')
-            out.append(f'            center: ({led["center"][0]}, {led["center"][1]}),')
-            out.append(f'            radius: {led["radius"]},')
+            out.append(f"            center: {vec2(led['center'])},")
+            out.append(f'            radius: {rf(led["radius"])},')
             out.append(f"            off: ({off[0]}, {off[1]}, {off[2]}),")
             out.append(f"            on: ({on[0]}, {on[1]}, {on[2]}),")
             out.append("        },")
@@ -203,13 +212,13 @@ def main() -> None:
             out.append(f'            param: {rust_str(tg["param"])},')
             out.append(f'            image_up: {rust_str(tg["image_up"])},')
             out.append(f'            image_down: {rust_str(tg["image_down"])},')
-            out.append(f'            x: {tg["x"]},')
-            out.append(f'            y_up: {tg["y_up"]},')
-            out.append(f'            y_down: {tg["y_down"]},')
-            out.append(f'            width: {tg["width"]},')
-            out.append(f'            height: {tg["height"]},')
-            out.append(f'            pivot: ({tg["pivot"][0]}, {tg["pivot"][1]}),')
-            out.append(f'            press_scale: {tg.get("press_scale", 0.9)},')
+            out.append(f'            x: {rf(tg["x"])},')
+            out.append(f'            y_up: {rf(tg["y_up"])},')
+            out.append(f'            y_down: {rf(tg["y_down"])},')
+            out.append(f'            width: {rf(tg["width"])},')
+            out.append(f'            height: {rf(tg["height"])},')
+            out.append(f"            pivot: {vec2(tg['pivot'])},")
+            out.append(f'            press_scale: {rf(tg.get("press_scale", 0.9))},')
             out.append("        },")
         out.append("    ],")
 
@@ -218,9 +227,9 @@ def main() -> None:
         for bt in ui.get("buttons", []):
             out.append("        rustomp_gui::ButtonSpec {")
             out.append(f'            param: {rust_str(bt["param"])},')
-            out.append(f'            center: ({bt["center"][0]}, {bt["center"][1]}),')
-            out.append(f'            radius: {bt["radius"]},')
-            out.append(f'            press_scale: {bt.get("press_scale", 0.9)},')
+            out.append(f"            center: {vec2(bt['center'])},")
+            out.append(f'            radius: {rf(bt["radius"])},')
+            out.append(f'            press_scale: {rf(bt.get("press_scale", 0.9))},')
             out.append("        },")
         out.append("    ],")
 

@@ -3909,6 +3909,62 @@ D1：把设计器产物真正接进插件项目（替换手搓的 `panel.png`/`k
 
 ---
 
+## E65：D0.5 —— 设计器产物接进真插件（2026-10-26）
+
+box-designer 的导出第一次进发布路径：Sparklin Drive 的 `panel.png` / 旋钮贴图 / 拨杆两态贴图
+全部改成**设计器产物**，`[assets]` + `[ui]` 也是设计器生成的整块。
+
+### 65.1 换掉了什么
+
+| 之前（手搓） | 现在（设计器） |
+|---|---|
+| `panel.png`（脚本拼 SVG → 720×1344） | `panel.png`（`.box.json` → 同样 720×1344） |
+| `knob.png`（程序画的 264×264 指针图） | `knob_round_dark.png`（用户素材，**180×180 = 15 mm × 12 px/mm**） |
+| `switch_up/down.png`（legacy 美术） | `toggle_small_up/down.png`（用户素材 8.35×8.89 mm） |
+| 丝印是 Helvetica 文字（靠宿主字体渲染） | 丝印是 `label_*.svg` **矢量 path**（不依赖字体） |
+
+音频路径完全没动：AU 自检的 RMS 与之前**逐位相同**（0.356170），CocoaUI 正常。
+
+### 65.2 顺手补的一块：素材字节由生成器负责
+
+`editor.rs` 以前写死四行 `include_bytes!` + 一个 `IMAGES` 数组，素材改名就得改手写代码。
+现在 `rustomp-gen` 多生成一个 **`generated/assets.rs`**：
+
+```rust
+pub static PANEL_PNG: &[u8] = include_bytes!("../../../assets/panel.png");
+pub static IMAGES: &[(&str, &[u8])] = &[
+    ("knob_round_dark", include_bytes!("../../../assets/knob_round_dark.png")),
+    …
+];
+```
+
+于是 `editor.rs` 只剩一行 `use crate::generated::assets::{IMAGES, PANEL_PNG};`——
+**设计器改名/加图后重新生成即可，不用碰手写文件**。
+
+两个必须注意的点（都加了测试）：
+
+1. `include_bytes!` 相对**源文件**：生成物在 `plugin/src/generated/`，素材相对项目根 → 必须是 **`../../../`**；
+   一开始写成 `../../` 直接 "file not found"。
+2. 生成器现在会**先检查素材文件是否存在**，缺文件在生成阶段报错（而不是等 cargo 才炸出 include 路径）。
+
+### 65.3 一个 Python 生成器的坑：整数不是 f32
+
+设计器的 `ui.toml` 写 `svg_width = 60`（整数），而 `--panel-rust` 直接原样吐出 `svg_w: 60,`
+→ Rust 报 `expected f32, found integer`。修法是在 `plugin_meta.py` 里统一用 `rf()` 格式化浮点
+（`60` → `60.0`）。**TOML 里 `60` 和 `60.0` 是两个类型，生成器不能假设。**
+
+### 65.4 验证
+
+| 项 | 结果 |
+|---|---|
+| `cargo test -p rustomp-gen` | 14 个（新增 3 个：assets.rs 的路径层级 / 空素材 / mod.rs 模块开关） |
+| 插件面板自检 | `validate_panel` 通过（2 旋钮 / 1 拨杆 / 1 LED / 1 脚踏） |
+| `build-all.sh` | Sp02 / Sp03 重新构建安装 |
+| AU 自检 | CocoaUI ✓、纯音频 ✓、RMS **0.356170**（与无界面版、与手搓面板版都一致） |
+| `verify.sh` | 8 层全绿 |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4198,6 +4254,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-26 | **D0.5：设计器产物进发布路径**（E65）：面板/旋钮/拨杆贴图与 `[assets]`+`[ui]` 全部由设计器生成，音频 RMS 逐位不变；新增 `generated/assets.rs`（素材字节由生成器提供，`editor.rs` 不再写死素材名）；修了 `--panel-rust` 的整数→f32 与 include 路径层级两个坑 |
 | 2026-10-26 | **box-designer D0**（E64）：设计器可用（零依赖 ES modules + 原生 SVG），复刻真实 Sparklin Drive 面板，导出 panel.png 720×1344 / knob 180×180；**契约首次被独立实现消费且无需改动**；记下"按钮 radius 必须盖住美术"与三个素材内联坑 |
 | 2026-10-26 | **全项目复盘 + 平台策略**（E63 + ADR-015）：链路五段全部完成（器件/MNA/实时/生成/界面），91 用例 / verify.sh 8 层；确立 **macOS 默认 + Windows/Linux 独立打包工具仓库**；逐一校对 9 份文档（新增 `crates/rustomp-gui/README.md`）；沉淀七条经验 |
 | 2026-10-26 | **S1d 联调：三个界面 bug**（E62）：① LED 不闪 = 生成的 `Ckt` 没实现 `activity()`（补二极管电流指标 + 网表指令 `activity_i=`，0.032 → 0.647）；② 踩钉无效 = 没有 bypass 参数（Engine 加 `set_bypass`、`bypass` 成为保留 id、下发 `[[ui.buttons]]`，干路偏差 0.00e0）；③ 旋钮边缘被切 = `decode_png` 提前把 alpha 与固定底色合成（改为保留 alpha 交给 GPU）。面板素材换成用户新给的 mm 制 SVG（knob 15mm / 3pdt 10.76mm / led 6.27mm） |

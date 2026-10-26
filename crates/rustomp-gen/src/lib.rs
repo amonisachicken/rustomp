@@ -61,13 +61,31 @@ pub fn generate(project: &Path, check: bool) -> Result<Report, String> {
         ));
     }
 
+    // 素材文件必须真的在（否则 include_bytes! 会在 cargo 阶段才炸，且报错难懂）
+    for (key, rel) in &manifest.assets {
+        let path = project.join(rel);
+        if !path.is_file() {
+            return Err(format!(
+                "[assets] {key} = \"{rel}\" 指向的文件不存在：{}",
+                path.display()
+            ));
+        }
+    }
+
     let dir = project.join("plugin/src/generated");
-    let files = [
+    let assets_rs = emit::assets_rs(&manifest);
+    let mut files = vec![
         ("identity.rs", emit::identity_rs(&manifest)),
         ("params.rs", emit::params_rs(&manifest)),
         ("plugin_impl.rs", emit::plugin_impl_rs(&manifest)),
-        ("mod.rs", emit::mod_rs(manifest.build.gui)),
+        (
+            "mod.rs",
+            emit::mod_rs(manifest.build.gui, !manifest.assets.is_empty()),
+        ),
     ];
+    if !assets_rs.is_empty() {
+        files.push(("assets.rs", assets_rs));
+    }
 
     let mut report = Report::default();
     for (name, content) in files {

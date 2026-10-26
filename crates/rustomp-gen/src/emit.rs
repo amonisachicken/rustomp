@@ -471,22 +471,93 @@ pub fn plugin_impl_rs(m: &Manifest) -> String {
     out
 }
 
+// ---------------------------------------------------------------- assets.rs
+
+/// 素材模块：把 `[assets]` 里的 PNG 编进二进制。
+///
+/// `include_bytes!` 的路径**相对本文件**（`plugin/src/generated/assets.rs`），
+/// 而 rustomp.toml 里的路径相对项目根，所以统一加 `../../`。
+pub fn assets_rs(m: &Manifest) -> String {
+    if m.assets.is_empty() {
+        return String::new();
+    }
+    // 生成物住在 plugin/src/generated/，素材相对项目根 → 三级向上
+    const UP: &str = "../../../";
+    let mut out = String::from(HEADER);
+    out.push_str(
+        r#"//! 素材字节（由 `rustomp.toml` 的 `[assets]` 生成）。
+//!
+//! 素材本身住在插件项目里，框架不持有素材；这里只是把它们编进二进制，
+//! 让插件不带外部依赖即可起界面。
+
+"#,
+    );
+    if let Some(panel) = m.assets.get("panel") {
+        out.push_str(&format!(
+            "pub static PANEL_PNG: &[u8] = include_bytes!(\"{UP}{panel}\");\n\n"
+        ));
+    }
+    out.push_str(
+        "/// 贴图名 → PNG 字节（`panel` 不在这里，它走 `PANEL_PNG`）。\npub static IMAGES: &[(&str, &[u8])] = &[\n",
+    );
+    for (key, rel) in &m.assets {
+        if key == "panel" {
+            continue;
+        }
+        out.push_str(&format!(
+            "    (\"{key}\", include_bytes!(\"{UP}{rel}\")),\n"
+        ));
+    }
+    out.push_str("];\n");
+    out
+}
+
 // ---------------------------------------------------------------- mod.rs
 
-pub fn mod_rs(gui: bool) -> String {
+pub fn mod_rs(gui: bool, has_assets: bool) -> String {
     let panel = if gui { "pub mod panel;\n" } else { "" };
+    let assets = if has_assets { "pub mod assets;\n" } else { "" };
     format!(
         "{HEADER}// 生成模块的汇总。`local.rs` 是手写文件的落点（不会被覆盖）。\n\n\
          pub mod identity;\n\
          pub mod params;\n\
          pub mod plugin_impl;\n\
-         {panel}"
+         {assets}{panel}"
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assets_rs_keeps_panel_separate_and_fixes_relative_path() {
+        let mut m = manifest();
+        m.assets.insert("panel".into(), "assets/panel.png".into());
+        m.assets.insert("knob_a".into(), "assets/knob_a.png".into());
+        let s = assets_rs(&m);
+        // 生成物在 plugin/src/generated/，素材相对项目根 → 必须向上三级
+        assert!(s.contains("include_bytes!(\"../../../assets/panel.png\")"), "{s}");
+        assert!(s.contains("pub static PANEL_PNG"));
+        assert!(s.contains("(\"knob_a\", include_bytes!(\"../../../assets/knob_a.png\"))"));
+        // panel 不能重复出现在 IMAGES 里
+        assert!(!s.contains("(\"panel\""));
+    }
+
+    #[test]
+    fn assets_rs_is_empty_without_assets() {
+        let mut m = manifest();
+        m.assets.clear();
+        assert!(assets_rs(&m).is_empty());
+    }
+
+    #[test]
+    fn mod_rs_follows_assets_and_gui() {
+        assert!(mod_rs(true, true).contains("pub mod assets;"));
+        assert!(mod_rs(true, true).contains("pub mod panel;"));
+        assert!(!mod_rs(false, false).contains("pub mod assets;"));
+        assert!(!mod_rs(false, false).contains("pub mod panel;"));
+    }
 
     fn manifest() -> Manifest {
         toml::from_str(

@@ -65,6 +65,9 @@ cargo run -q -p rustomp-gen -- <项目目录> --check    # 只比对（CI 防漂
 > 额外生成 `editor_state`（窗口尺寸记忆）与 `pub mod panel;`。把 panel 生成搬进 `rustomp-gen` 是 TODO。
 >
 > 历史上的说明：`panel.rs` 与 egui 依赖在 `gui` feature 之后。
+>
+> **素材**：`[assets]` 里的 PNG 由生成器写成 `generated/assets.rs`（`PANEL_PNG` + `IMAGES`），
+> 手写的 `editor.rs` 不再出现 `include_bytes!`。生成前会检查素材文件是否存在。
 > `plugin_impl.rs` 里已经留好钩子 —— `gui` 关闭时 `editor()` 返回 `None`；
 > 开启时调用手写的 `src/editor.rs::make(params, activity)`。生成器不掺和 GUI。
 

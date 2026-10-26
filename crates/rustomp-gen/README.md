@@ -20,6 +20,16 @@ cargo run -q -p rustomp-gen -- <项目目录> --check   # 只比对（CI 防漂�
 手写 `src/editor.rs` 提供 `make(params, activity)` 并开启 `gui` feature ——
 生成器不掺和 GUI。
 
+## 生成什么（2026-10-27 起多一个 `assets.rs`）
+
+| 文件 | 内容 |
+|---|---|
+| `generated/assets.rs` | `PANEL_PNG` + `IMAGES`（`[assets]` 里的 PNG 编进二进制；`include_bytes!` 相对生成物，所以是 `../../../assets/...`） |
+
+> **为什么放在生成器里**：素材是设计器产出的、会被改名/增删的东西。
+> 让 `editor.rs` 写死 `include_bytes!` 就等于"设计器一改，手写代码要跟着改"。
+> 生成器还会**先检查文件存在**，缺了在生成阶段就报错。
+
 ## `gui = true` 时多生成什么（S1d，2026-10-26）
 
 | 文件/字段 | 内容 |

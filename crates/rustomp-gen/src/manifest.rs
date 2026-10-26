@@ -21,6 +21,10 @@ pub struct Manifest {
     /// 存在即表示"有 GUI"（面板生成属 S1d，当前只是记录）
     #[serde(default)]
     pub ui: Option<toml::Value>,
+    /// 素材：键名 → 相对项目根的路径（`panel` 是面板底图，其余是贴图）。
+    /// BTreeMap 保证生成顺序稳定（可 diff）。
+    #[serde(default)]
+    pub assets: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
