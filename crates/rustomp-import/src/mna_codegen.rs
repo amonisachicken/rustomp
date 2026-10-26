@@ -267,6 +267,22 @@ fn check_field(name: &str) -> Result<String, String> {
 
 // ---------------------------------------------------------------- 并查集
 
+/// 每条运放子电路占一条电压源支路（生成前就要知道，用于排布节点编号）。
+fn next_branch_estimate(circuit: &ImportedCircuit, _dirs: &Directives) -> usize {
+    circuit
+        .elements
+        .iter()
+        .filter(|e| {
+            if e.kind != ElementKind::Subckt {
+                return false;
+            }
+            model_const(e.model.as_deref().unwrap_or(""))
+                .map(|(_, kind)| kind == ModelKind::OpAmp)
+                .unwrap_or(false)
+        })
+        .count()
+}
+
 struct Union {
     parent: BTreeMap<String, String>,
 }
@@ -345,11 +361,32 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         names.insert(canon(&s.node_b));
     }
     names.remove("0");
-    let node_index: BTreeMap<String, usize> = names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.clone(), i + 1))
-        .collect();
+
+    // 先找出"固定电位节点"对应的合并后节点名（电源轨、输入源），它们在编号时排最后：
+    //   [未知节点 1..K] [电压源支路 K+1..K+B] [固定节点 K+B+1..]
+    // 这样 LU 只需要处理前 K+B 行（固定节点的行列全零）—— 12 个未知量里砍掉 3 个尸体，
+    // LU 代价 (9/12)³ ≈ 0.42（DEVLOG E57）。
+    let mut fixed_names: BTreeSet<String> = BTreeSet::new();
+    for e in &circuit.elements {
+        if e.kind == ElementKind::VoltageSource {
+            fixed_names.insert(canon(&e.nodes[0]));
+        }
+    }
+    for s in &dirs.switches {
+        let _ = s;
+    }
+    let unknown_names: Vec<&String> = names.iter().filter(|n| !fixed_names.contains(*n)).collect();
+    let fixed_only: Vec<&String> = names.iter().filter(|n| fixed_names.contains(*n)).collect();
+    let n_unknown_nodes = unknown_names.len();
+    let n_branches = next_branch_estimate(&circuit, &dirs);
+    let mut node_index: BTreeMap<String, usize> = BTreeMap::new();
+    for (i, n) in unknown_names.iter().enumerate() {
+        node_index.insert((*n).clone(), i + 1);
+    }
+    for (i, n) in fixed_only.iter().enumerate() {
+        node_index.insert((*n).clone(), n_unknown_nodes + n_branches + i + 1);
+    }
+    let _ = (n_unknown_nodes, n_branches);
     let idx = |n: &str| -> usize {
         let c = canon(n);
         if c == "0" {
@@ -421,7 +458,8 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     // 参数驱动的元件：(字段, 常量名, 阻值表达式)
     let mut param_writes: Vec<(String, String, String)> = Vec::new();
     let mut param_fields: Vec<(String, ParamType)> = Vec::new();
-    let mut next_branch = node_index.values().copied().max().unwrap_or(0) + 1;
+    // 支路紧跟在"未知节点"之后，固定节点排在最后（见上面的编号布局）
+    let mut next_branch = n_unknown_nodes + 1;
     // 已经 push 进 `Netlist` 的元件个数（= 下一个元件的下标）
     let mut elem_count = 0usize;
     // 参数元件：(常量名, 下标) —— 生成模块级 const，供 set_params 用
@@ -667,7 +705,14 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         ));
     }
 
-    let unknowns = next_branch;
+    // `N` 要覆盖所有出现过的下标（下标 0 是地，不上矩阵）：
+    //   [未知节点 1..K][支路 K+1..K+B][固定节点 K+B+1..K+B+F]  ⇒ N = K+B+F+1
+    let n_fixed_nodes = fixed_only.len();
+    let max_index = n_unknown_nodes + n_branches + n_fixed_nodes;
+    let unknowns = max_index + 1;
+    // LU 处理"下标 0..=max_unknown_index"这些行：未知节点 1..K、支路 K+1..K+B
+    // → 最大未知下标 = K+B → 行数 = K+B+1（下标 0 是地，白占一行但不影响正确性）
+    let lu_rows = n_unknown_nodes + n_branches + 1;
     if unknowns > MAX_UNKNOWNS {
         return Err(format!("未知量 {unknowns} 超过上限 {MAX_UNKNOWNS}"));
     }
@@ -684,7 +729,10 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     use_list.sort();
     code.push_str(&format!("use rustomp_dsp::{{{}}};\n\n", use_list.join(", ")));
     code.push_str(&format!(
-        "/// 未知量个数（`Netlist<N>` 的 N）\npub const N: usize = {unknowns};\n\n"
+        "/// 总下标数（`Netlist<N>` 的 N；包含排在最后的固定电位节点）\npub const N: usize = {unknowns};\n\n"
+    ));
+    code.push_str(&format!(
+        "/// LU 真正要处理的未知量个数（固定节点排在它之后，行列全零）\npub const UNKNOWNS: usize = {lu_rows};\n\n"
     ));
     let iters = dirs.newton.unwrap_or(DEFAULT_NEWTON_ITERS);
     // 注意：字符串里不要用「缩进续行」——续行后的空格会原样进入生成物
@@ -749,6 +797,7 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     // build()
     code.push_str("/// 按网表搭出电路（`fs` 是**内层**采样率，含过采样倍率）。\npub fn build(fs: f64, p: &Params) -> Netlist<N> {\n");
     code.push_str("    let mut net = Netlist::<N>::new();\n");
+    code.push_str("    net.set_unknowns(UNKNOWNS);\n");
     code.push_str("    let _ = (fs, p);\n");
     for line in &body {
         code.push_str(line);

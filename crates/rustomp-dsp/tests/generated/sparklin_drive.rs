@@ -4,8 +4,11 @@
 
 use rustomp_dsp::{D_1N4148, GND, Netlist, OP07};
 
-/// 未知量个数（`Netlist<N>` 的 N）
+/// 总下标数（`Netlist<N>` 的 N；包含排在最后的固定电位节点）
 pub const N: usize = 12;
+
+/// LU 真正要处理的未知量个数（固定节点排在它之后，行列全零）
+pub const UNKNOWNS: usize = 10;
 
 /// 实时路径的牛顿迭代次数（`* @rustomp newton=` 指定；默认 3）
 
@@ -46,40 +49,41 @@ pub const IDX_SW_SYMMETRIC: usize = 14;
 /// 节点编号（0 = 地；其余按名字排序，保证 diff 稳定）
 pub mod node {
     /// `n_rail_Lp`
-    pub const N_RAIL_LP: usize = 1;
+    pub const N_RAIL_LP: usize = 10;
     /// `n_t10L`
-    pub const N_T10L: usize = 2;
+    pub const N_T10L: usize = 1;
     /// `n_t11L`
-    pub const N_T11L: usize = 3;
+    pub const N_T11L: usize = 2;
     /// `n_t11R`
-    pub const N_T11R: usize = 4;
+    pub const N_T11R: usize = 3;
     /// `n_t19R`
-    pub const N_T19R: usize = 5;
+    pub const N_T19R: usize = 4;
     /// `n_t1R`
-    pub const N_T1R: usize = 6;
+    pub const N_T1R: usize = 5;
     /// `n_t21L`
-    pub const N_T21L: usize = 7;
+    pub const N_T21L: usize = 11;
     /// `n_t24R`
-    pub const N_T24R: usize = 8;
+    pub const N_T24R: usize = 6;
     /// `n_t27R`
-    pub const N_T27R: usize = 9;
+    pub const N_T27R: usize = 7;
     /// `n_t5L`
-    pub const N_T5L: usize = 10;
+    pub const N_T5L: usize = 8;
 }
 
 /// 输入端口节点（`process(x)` 用 `net.set_fixed(FIXED_IN, x)`）
-pub const IN: usize = 7;
+pub const IN: usize = 11;
 /// 输出节点
-pub const OUT: usize = 9;
+pub const OUT: usize = 7;
 /// 输入端口在 `Netlist::fixed` 里的下标（电源轨排在它前面）
 pub const FIXED_IN: usize = 1;
 
 /// 按网表搭出电路（`fs` 是**内层**采样率，含过采样倍率）。
 pub fn build(fs: f64, p: &Params) -> Netlist<N> {
     let mut net = Netlist::<N>::new();
+    net.set_unknowns(UNKNOWNS);
     let _ = (fs, p);
     // XU1 OP07A（in+ in- v+ v- out）
-    net.opamp(OP07.model(1.0 / fs), node::N_T11L, node::N_T10L, node::N_T11R, 11);
+    net.opamp(OP07.model(1.0 / fs), node::N_T11L, node::N_T10L, node::N_T11R, 9);
     // CC1 (4.7n F)
     net.capacitor(node::N_T11L, node::N_T21L, 4.7e-9);
     // RR2 (47k Ω) n_rail_Lp—n_t19R

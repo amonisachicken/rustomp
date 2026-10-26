@@ -4,8 +4,11 @@
 
 use rustomp_dsp::{BC549C, GND, Netlist};
 
-/// 未知量个数（`Netlist<N>` 的 N）
+/// 总下标数（`Netlist<N>` 的 N；包含排在最后的固定电位节点）
 pub const N: usize = 5;
+
+/// LU 真正要处理的未知量个数（固定节点排在它之后，行列全零）
+pub const UNKNOWNS: usize = 3;
 
 /// 实时路径的牛顿迭代次数（`* @rustomp newton=` 指定；默认 3）
 
@@ -38,6 +41,7 @@ pub const FIXED_IN: usize = 1;
 /// 按网表搭出电路（`fs` 是**内层**采样率，含过采样倍率）。
 pub fn build(fs: f64, p: &Params) -> Netlist<N> {
     let mut net = Netlist::<N>::new();
+    net.set_unknowns(UNKNOWNS);
     let _ = (fs, p);
     // CIN (100n F)
     net.capacitor(node::IN, node::B, 1e-7);

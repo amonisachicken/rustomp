@@ -267,17 +267,32 @@ impl<const N: usize> Mna<N> {
     /// 内层用切片 `zip` 而不是 `a[row][k]` 双重下标 —— 去掉边界检查后
     /// 实时路径的 LU 快 ~3 倍（这是 E43 里最有效的一处优化）。
     pub fn solve(&self) -> [f64; N] {
+        self.solve_len(N)
+    }
+
+    /// 只对**前 `n` 个未知量**做消元。
+    ///
+    /// 生成器会把**固定电位节点**（电源轨、输入）排在所有未知量之后，
+    /// 它们的行列全零 —— 交给通用 LU 只是白算。12 个未知量里 3 个是尸体，
+    /// 砍掉后 LU 代价降到 `(9/12)³ ≈ 0.42`，即 **2.4 倍**（DEVLOG E57）。
+    pub fn solve_len(&self, n: usize) -> [f64; N] {
+        let n = n.clamp(1, N);
+        #[allow(unused_mut)]
         let mut a = self.y;
         let mut b = self.rhs;
+        self.eliminate(&mut a, &mut b, n);
+        self.back_substitute(&a, &b, n)
+    }
 
-        for col in 0..N {
+    fn eliminate(&self, a: &mut [[f64; N]; N], b: &mut [f64; N], n: usize) {
+        for col in 0..n {
             // 选主元：MNA 矩阵天然对角占优，**对角线够大就跳过搜索**（省掉 66 次比较和行交换）；
             // 只有对角线偏小（病态）时才做部分主元，保证数值安全。
             let mut pivot = a[col][col];
             if pivot.abs() < 1e-12 {
                 let mut best = col;
                 let mut best_abs = pivot.abs();
-                for row in (col + 1)..N {
+                for row in (col + 1)..n {
                     let v = a[row][col].abs();
                     if v > best_abs {
                         best_abs = v;
@@ -298,6 +313,9 @@ impl<const N: usize> Mna<N> {
             let pivot_row = &head[col];
             for (offset, row) in tail.iter_mut().enumerate() {
                 let j = col + 1 + offset;
+                if j >= n {
+                    break;
+                }
                 let factor = row[col] * inv_pivot;
                 if factor == 0.0 {
                     continue;
@@ -305,26 +323,24 @@ impl<const N: usize> Mna<N> {
                 let (row_lo, row_hi) = row.split_at_mut(col);
                 let (piv_lo, piv_hi) = pivot_row.split_at(col);
                 let _ = (row_lo, piv_lo);
-                for (r, p) in row_hi.iter_mut().zip(piv_hi.iter()) {
+                let upto = n - col;
+                for (r, p) in row_hi[..upto].iter_mut().zip(piv_hi[..upto].iter()) {
                     *r -= factor * p;
                 }
                 b[j] -= factor * b[col];
             }
         }
 
-        // 回代
+    }
+
+    fn back_substitute(&self, a: &[[f64; N]; N], b: &[f64; N], n: usize) -> [f64; N] {
         let mut x = [0.0; N];
-        for (node, fx) in self.fixed.iter().enumerate() {
-            if let Some(v) = fx {
-                x[node] = *v;
-            }
-        }
-        for row in (0..N).rev() {
+        for row in (0..n).rev() {
             if a[row][row].abs() < 1e-300 {
                 continue;
             }
             let mut sum = b[row];
-            for (k, xv) in x.iter().enumerate().skip(row + 1) {
+            for (k, xv) in x.iter().enumerate().take(n).skip(row + 1) {
                 sum -= a[row][k] * xv;
             }
             x[row] = sum / a[row][row];
@@ -484,6 +500,18 @@ pub struct Netlist<const N: usize> {
     pub sources: Vec<(usize, usize, usize, f64)>,
     /// `(节点, 电压)`：**固定电位节点**（电源轨、输入源），不占未知量
     pub fixed: Vec<(usize, f64)>,
+    /// 实时路径的提前退出阈值（两次迭代间的最大相对变化）。
+    ///
+    /// `0` = 关闭（严格跑满 `iters` 次）。默认 `1e-6`：实测在 4~5 次内满足，
+    /// 与"跑满 8 次"的输出差异可忽略（DEVLOG E57）。
+    pub fixed_tol: f64,
+    /// 上一拍实际做了几次牛顿迭代（诊断用）
+    pub last_iters: usize,
+    /// 真正的未知量个数（= 节点未知量 + 电压源支路）。
+    ///
+    /// 生成器把固定电位节点排在**最大的几个下标**上，于是 LU 只需处理前 `unknowns` 行
+    /// （`0` 表示"不裁剪"，等价于 `N`）。
+    pub unknowns: usize,
     pub v: [f64; N],
     /// 上一拍的解（牛顿初值用线性外推 `2v − v_prev2`，实测能省掉一次迭代）
     v_prev2: [f64; N],
@@ -506,6 +534,9 @@ impl<const N: usize> Netlist<N> {
             elems: Vec::new(),
             sources: Vec::new(),
             fixed: Vec::new(),
+            fixed_tol: 1e-6,
+            last_iters: 0,
+            unknowns: 0,
             v: [0.0; N],
             v_prev2: [0.0; N],
             has_prev2: false,
@@ -546,6 +577,21 @@ impl<const N: usize> Netlist<N> {
         self.sources.push((branch, a, b, value));
         self
     }
+    /// 声明真正的未知量个数（生成器会调用；固定节点排在它之后）。
+    pub fn set_unknowns(&mut self, n: usize) {
+        self.unknowns = n.min(N);
+    }
+
+    /// LU 实际要处理的行数。
+    #[inline]
+    fn solve_len(&self) -> usize {
+        if self.unknowns == 0 {
+            N
+        } else {
+            self.unknowns
+        }
+    }
+
     /// 固定一个节点的电位（电源轨、输入源），返回索引供 [`Self::set_fixed`] 用。
     pub fn fix_node(&mut self, node: usize, v: f64) -> usize {
         self.fixed.push((node, v));
@@ -663,7 +709,7 @@ impl<const N: usize> Netlist<N> {
     fn newton(&self, sys: &mut Mna<N>, mut v: [f64; N], dt: f64, dc: bool) -> Option<[f64; N]> {
         for _ in 0..self.max_iter {
             self.stamp_all(sys, &v, dt, dc);
-            let v_new = sys.solve();
+            let v_new = sys.solve_len(self.solve_len());
             let mut max_dv: f64 = 0.0;
             for i in 0..N {
                 let d = (v_new[i] - v[i]).abs();
@@ -721,6 +767,7 @@ impl<const N: usize> Netlist<N> {
         self.stamp_linear(&mut base, &self.v, dt, false);
 
         // 初值：线性外推（热启动）。温启动让 2 次迭代就够用。
+        let tol = self.fixed_tol;
         let mut v = if self.has_prev2 {
             let mut guess = [0.0; N];
             for i in 0..N {
@@ -730,10 +777,23 @@ impl<const N: usize> Netlist<N> {
         } else {
             self.v
         };
+        self.last_iters = 0;
         for _ in 0..iters.max(1) {
+            self.last_iters += 1;
             let mut sys = base.clone();
             self.stamp_nonlinear(&mut sys, &v, dt, false);
-            v = sys.solve();
+            let v_new = sys.solve_len(self.solve_len());
+            // **自适应提前退出**：残差够小就不再迭代。
+            // 这一步很关键：固定 4 次在硬驱动下差 0.76 dB，固定 8 次又太贵；
+            // 用"两次迭代之间的最大相对变化"当判据，稳态常见 4~5 次、难算时自动补到 8 次。
+            let mut max_dv: f64 = 0.0;
+            for i in 0..N {
+                max_dv = max_dv.max((v_new[i] - v[i]).abs() / (1.0 + v_new[i].abs()));
+            }
+            v = v_new;
+            if tol > 0.0 && max_dv < tol {
+                break;
+            }
         }
         self.v_prev2 = self.v;
         self.has_prev2 = true;
