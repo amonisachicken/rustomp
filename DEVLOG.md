@@ -4150,6 +4150,33 @@ macOS TCC 会直接拒绝（`Operation not permitted`），Finder 自动化也�
 
 ---
 
+## E69：生态边界成文（`docs/ecosystem.md`，2026-10-27）
+
+拆仓前先把"谁负责什么"写成文档。218 行，一页说清六件事：
+
+1. **仓库地图**：`rustomp`（框架）/ `rustomp-mac|win|linux-plugin`（打包）/
+   `sparklin-drive`（参考插件）/ `rustomp-box-designer` / `rustomp-circuit-designer` /
+   `sparklin-drive-legacy`（冻结），以及它们之间的依赖方向（只有两种：git tag 依赖、产物单向导出）。
+2. **三个契约**：`rustomp.toml`（清单）、packer 的 `ARTIFACT:` 行、设计器的 `ui.toml` + 素材。
+   除此之外跨仓不共享任何东西。
+3. **版本约束**：`rustomp.toml` 新增 `[requires]`（framework/packer/designer），
+   `rustomp-gen` 与 packer 各校验一次 —— 不匹配明确报错，而不是产出"能编但行为不同"的插件。
+4. **文件归属表**：判断标准一句话 —— *提到 clap-wrapper / codesign / CMake / Logic / .component 的文件就该去 mac 工具*。
+5. **拆分顺序**：tag + 契约可执行测试 → 拆 mac 打包 → 独立插件仓 → 电路设计器 D0，每条都有完成标准。
+6. **已知风险**：nih-plug 是 git rev 依赖、universal 要两个 target、**standalone 其实还没做**（v0.1 先不出）、
+   现在只是 ad-hoc 签名（公证单列）、`plugins/` 是 gitignore 却是 workspace member。
+
+另外把「拆仓期纪律」写死了：**只搬不改**；要改契约就在第 0 步做掉。
+
+### 69.1 第 0 步为什么值得花 30 分钟
+
+ADR-014 早就写了 packer 契约，但**没有任何代码验证它**。文档里不成立的事情，
+拆仓后一定会变成"mac 工具偷偷知道 Logic 的缓存路径"。所以第 0 步的产物是一个 30 行的
+`tests/packer_contract.sh`：假插件 + 假 packer，断言入参、`ARTIFACT:` 行、以及
+**框架源码里不许出现平台专属词**。有了它，"加一个 Windows 打包工具"就是加一个脚本，而不是改框架。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4439,6 +4466,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
 | 2026-10-27 | **真实下载件完整安装**（E68）：用户自绘设计（3 个导入 SVG）8 文件 zip → 装上 Sp02/Sp03；`rustomp-gen` 写 0 个文件（只改美术 → 只动 panel.png）；修掉 CLI 不认 `imported[]` 的 bug；RMS 逐位不变 |
 | 2026-10-27 | **用设计器导出的文件重做 GUI**（E67）：只拿 `ui.toml` + `panel.svg` 走完 6 步交接；LED/脚踏半径已改"由素材推导"（2.249→2.247、7.2→7.175）；补 `docs/06-export-runbook.md` |
 | 2026-10-26 | **踩钉不旁通 / 灯不灭**（E66）：① 手写 `ParamAccess` 桥漏 `bypass` 分支 → 参数桥改由 `[[params]]` 生成 + 覆盖测试；② 旁通时电路仍在跑 → `activity × mix`；③ `panel.rs` 生成搬进 `rustomp-gen`；④ 脚踏增 `image_hold`；`build-all.sh` 加"先重生成" |
