@@ -16,14 +16,18 @@
 //!
 //! 产出（48 kHz / 16-bit / 单声道）：
 //!
-//! | 文件 | 内容 |
-//! |---|---|
-//! | `even_v2.wav` / `even_legacy.wav` | 各自**只含偶次谐波**（h2…h22）的重建信号，**同一增益**（可直接比音量） |
-//! | `even_diff.wav` | `even_v2 − even_legacy`，即"偶次谐波到底差在哪" |
-//! | `even_abex.wav` | 三段各 1 s：v2 偶次 → legacy 偶次 → 差值（便于一遍听完） |
-//! | `full_diff.wav` | 全带差值 `v2 − legacy`（参考：所有差异的总和） |
+//! | 文件 | 内容 | 增益 |
+//! |---|---|---|
+//! | `even_v2` / `even_legacy` | 各自**只含偶次谐波**（h2…h22）的重建 | **同一增益** |
+//! | `even_diff` | `even_v2 − even_legacy` | **同一增益**（因此比上面低约 12 dB，这才是真实关系） |
+//! | `abex` | 三段各 1 s：v2 偶次 → legacy 偶次 → 差值 | **同一增益**（三段可直接比音量） |
+//! | `even_diff_boost` | 差值（单独归一化到 −1 dBFS） | 诊断用：**专门放大**才听得清内容 |
+//! | `full_diff` | 全带差值 `v2 − legacy`（单独归一化） | 诊断用 |
+//! | `swap_a_carrier_v2` / `swap_b_v2_with_legacy_even` | **判断可听性的关键实验**：两条都是 v2 的原始电平输出，
+//!   唯一的区别是"偶次谐波用谁的" —— 两者之差恰好等于 `even_diff` | 原始电平（不放大） |
 //!
-//! 峰值归一化到 −1 dBFS，**实际施加的增益会打印出来**（这些信号本身只有约 −50 dBFS）。
+//! ⚠️ 教训（DEVLOG E55）：**不要对"要对比的两段"各自做峰值归一化** ——
+//! 那会把真实的电平差抹掉，让 12 dB 的差异听成"一样响"。
 
 use rustfft::{num_complex::Complex, FftPlanner};
 use std::path::{Path, PathBuf};
@@ -122,35 +126,67 @@ fn main() {
 
     let db_full = db(rms(&v2), 1.0);
     println!("原始输出 RMS: v2 {:.1} dBFS", db_full);
-    println!("  偶次谐波分量 RMS: v2 {:.1} dB  ·  legacy {:.1} dB（相对满刻度）",
-        db(rms(&ev2), 1.0), db(rms(&eleg), 1.0));
-    println!("  偶次差值 RMS: {:.1} dB  ·  全带差值 RMS: {:.1} dB",
-        db(rms(&ediff), 1.0), db(rms(&fdiff), 1.0));
+    println!(
+        "  偶次谐波分量 RMS: v2 {:.1} dB  ·  legacy {:.1} dB（相对满刻度）",
+        db(rms(&ev2), 1.0),
+        db(rms(&eleg), 1.0)
+    );
+    println!(
+        "  偶次差值 RMS: {:.1} dB（比偶次本身低 {:.1} dB）  ·  全带差值 RMS: {:.1} dB",
+        db(rms(&ediff), 1.0),
+        db(rms(&ev2), 1.0) - db(rms(&ediff), 1.0),
+        db(rms(&fdiff), 1.0)
+    );
 
-    // 两组偶次谐波用**同一增益**放大，保持相对音量；目标峰值 −1 dBFS
-    let g_even = 0.891 / peak(&ev2).max(peak(&eleg)).max(1e-12);
+    // **统一增益**：三段（v2 偶次 / legacy 偶次 / 差值）共用同一个增益，
+    // 这样它们的相对音量就是真实关系（差值低约 12 dB）。
+    let g_common = 0.891 / peak(&ev2).max(peak(&eleg)).max(peak(&ediff)).max(1e-12);
     let scale = |x: &[f64], g: f64| -> Vec<f64> { x.iter().map(|v| v * g).collect() };
 
-    let g_diff = 0.891 / peak(&ediff).max(1e-12);
-    let g_full = 0.891 / peak(&fdiff).max(1e-12);
+    // 诊断用：差值单独归一化（专门放大才听得清"差在哪"）
+    let g_boost = 0.891 / peak(&ediff).max(1e-12);
 
-    println!("  施加增益: 偶次 {:+.1} dB · 偶次差 {:+.1} dB · 全带差 {:+.1} dB",
-        db(g_even, 1.0), db(g_diff, 1.0), db(g_full, 1.0));
+    println!("  统一增益 {:+.1} dB（三段共用）；差值诊断版 {:+.1} dB", db(g_common, 1.0), db(g_boost, 1.0));
 
-    write_wav(&out_dir.join("even_v2.wav"), &scale(&ev2, g_even));
-    write_wav(&out_dir.join("even_legacy.wav"), &scale(&eleg, g_even));
-    write_wav(&out_dir.join("even_diff.wav"), &scale(&ediff, g_diff));
-    write_wav(&out_dir.join("full_diff.wav"), &scale(&fdiff, g_full));
+    write_wav(&out_dir.join("even_v2.wav"), &scale(&ev2, g_common));
+    write_wav(&out_dir.join("even_legacy.wav"), &scale(&eleg, g_common));
+    write_wav(&out_dir.join("even_diff.wav"), &scale(&ediff, g_common));
+    write_wav(&out_dir.join("even_diff_boost.wav"), &scale(&ediff, g_boost));
+    write_wav(&out_dir.join("full_diff.wav"), &scale(&fdiff, g_boost));
 
-    // 三段拼接：v2 偶次 → legacy 偶次 → 差值（各 1 s，中间不淡入淡出，靠耳朵对齐）
+    // 三段拼接（统一增益 → 可听出真实电平关系）
     let mut abex = Vec::with_capacity(v2.len() * 3);
-    abex.extend_from_slice(&scale(&ev2, g_even));
-    abex.extend_from_slice(&scale(&eleg, g_even));
-    abex.extend_from_slice(&scale(&ediff, g_diff));
-    write_wav(&out_dir.join("even_abex.wav"), &abex);
+    abex.extend_from_slice(&scale(&ev2, g_common));
+    abex.extend_from_slice(&scale(&eleg, g_common));
+    abex.extend_from_slice(&scale(&ediff, g_common));
+    write_wav(&out_dir.join("abex.wav"), &abex);
+
+    // **可听性实验**：两条都是原始电平的全信号，只有"偶次谐波用谁的"不同。
+    // A = v2 原样；B = (v2 − 它的偶次) + legacy 的偶次。
+    // A − B 恰好等于 even_diff → 若正常音量下听不出 A/B 差别，偶次差异就不可听。
+    let carrier_v2: Vec<f64> = v2.iter().zip(&ev2).map(|(a, b)| a - b).collect();
+    let swap_b: Vec<f64> = carrier_v2.iter().zip(&eleg).map(|(a, b)| a + b).collect();
+    write_wav(&out_dir.join("swap_a_carrier_v2.wav"), &v2);
+    write_wav(&out_dir.join("swap_b_v2_with_legacy_even.wav"), &swap_b);
+    let swap_diff: Vec<f64> = v2.iter().zip(&swap_b).map(|(a, b)| a - b).collect();
+    println!(
+        "  swap 实验：A RMS {:.1} dBFS · B RMS {:.1} dBFS · A−B RMS {:.1} dBFS（应等于偶次差值）",
+        db(rms(&v2), 1.0),
+        db(rms(&swap_b), 1.0),
+        db(rms(&swap_diff), 1.0)
+    );
 
     println!("\n已写入 {}:", out_dir.display());
-    for f in ["even_v2.wav", "even_legacy.wav", "even_diff.wav", "full_diff.wav", "even_abex.wav"] {
+    for f in [
+        "even_v2.wav",
+        "even_legacy.wav",
+        "even_diff.wav",
+        "abex.wav",
+        "even_diff_boost.wav",
+        "full_diff.wav",
+        "swap_a_carrier_v2.wav",
+        "swap_b_v2_with_legacy_even.wav",
+    ] {
         println!("  {}", out_dir.join(f).display());
     }
 }
