@@ -25,17 +25,36 @@ use nih_plug_egui::egui;
 
 // ---------------------------------------------------------------- 声明式面板描述
 
-/// 一个旋钮（坐标都是素材 SVG 的 viewBox 坐标）。
+/// 旋钮的渲染方式。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KnobRender {
+    /// **整图旋转**（默认）：素材里指针朝上，旋转整张图。
+    ///
+    /// 约定：**素材指针朝上 ⇔ 参数 0.5**，因此 `angle_min + angle_max` 必须为 0
+    /// （对称范围）。设计器只暴露"总转角"，导出时写成 `−travel/2 .. +travel/2`。
+    Rotate,
+    /// 只画一根指针线（指针颜色固定近白，深色面板慎用）。用于写实风格素材。
+    Pointer,
+}
+
+/// 一个旋钮（坐标都是**素材坐标**）。
 #[derive(Clone, Copy)]
 pub struct KnobSpec {
     /// 对应哪个参数（由插件在 `ParamAccess` 里解释）
     pub param: &'static str,
     pub center: (f32, f32),
+    /// 命中半径（点击/拖动区域）
     pub radius: f32,
-    /// 指针长度（从圆心到端点）
+    /// 整图旋转用的贴图名（[`Assets::images`] 里的名字）；`Rotate` 模式必填
+    pub image: &'static str,
+    /// 贴图绘制尺寸（素材坐标）。旋转围绕 `center`，建议素材是正方形
+    pub image_size: (f32, f32),
+    pub render: KnobRender,
+    /// 指针长度（从圆心到端点）；仅 `Pointer` 模式使用
     pub pointer_len: f32,
+    /// 指针线宽；仅 `Pointer` 模式使用
     pub pointer_width: f32,
-    /// 指针角度范围（度），0.5 对应正上方
+    /// 指针角度范围（度），**0.5 对应正上方**；`Rotate` 模式要求 `min + max == 0`
     pub angle_min: f32,
     pub angle_max: f32,
     /// 拖动多少屏幕像素走完整个 0..1 行程
@@ -87,11 +106,24 @@ pub struct PanelSpec {
     /// 窗口逻辑尺寸
     pub window: (u32, u32),
     pub background: (u8, u8, u8),
+    /// 旋钮（数量不限）
     pub knobs: &'static [KnobSpec],
-    pub led: Option<LedSpec>,
-    pub toggle: Option<ToggleSpec>,
-    pub button: Option<ButtonSpec>,
+    /// 指示灯（数量不限）
+    pub leds: &'static [LedSpec],
+    /// 拨杆（数量不限）
+    pub toggles: &'static [ToggleSpec],
+    /// 按钮（数量不限）
+    pub buttons: &'static [ButtonSpec],
 }
+
+/// 绘制顺序是**固定的**（跨类型不可重排）：
+///
+/// ```text
+/// 底色 → panel.png → LED → 旋钮 → 拨杆 → 按钮
+/// ```
+///
+/// 同一类型内部按数组顺序叠放。设计器的层列表必须照这个顺序显示（只读）。
+pub const DRAW_ORDER: &str = "panel → leds → knobs → toggles → buttons";
 
 /// 插件提供的素材（框架不持有任何素材）。
 pub struct Assets {
@@ -203,8 +235,8 @@ pub fn draw(
             .map(|(_, t)| t.clone())
     };
 
-    // ---- 指示灯 ----
-    if let Some(led) = &spec.led {
+    // ---- 指示灯（可多个）----
+    for led in spec.leds {
         let c = to_screen(led.center);
         let r = led.radius * scale;
         let level = params.get(led.param).unwrap_or(activity).clamp(0.0, 1.0);
@@ -217,21 +249,39 @@ pub fn draw(
         painter.circle_filled(c, r, colour);
     }
 
-    // ---- 旋钮：指针 + 交互 ----
-    for knob in spec.knobs {
+    // ---- 旋钮：整图旋转（默认）或指针线；可多个 ----
+    for (ki, knob) in spec.knobs.iter().enumerate() {
         let c = to_screen(knob.center);
-        let value = params.get(knob.param).unwrap_or(0.0).clamp(0.0, 1.0);
+        let value = params.get(knob.param).unwrap_or(0.5).clamp(0.0, 1.0);
+        let ang_deg = knob_angle_deg(value, knob.angle_min, knob.angle_max);
 
-        let ang = (knob.angle_min + (knob.angle_max - knob.angle_min) * value).to_radians();
-        let dir = egui::vec2(ang.sin(), -ang.cos());
-        painter.line_segment(
-            [c, c + dir * (knob.pointer_len * scale)],
-            egui::Stroke::new((knob.pointer_width * scale).max(2.0), egui::Color32::from_rgb(0xf5, 0xf5, 0xf5)),
-        );
+        match knob.render {
+            KnobRender::Rotate => {
+                if let Some(t) = image_tex(knob.image) {
+                    let half = egui::vec2(
+                        knob.image_size.0 * scale * 0.5,
+                        knob.image_size.1 * scale * 0.5,
+                    );
+                    paint_rotated_image(&painter, t.id(), c, half, ang_deg.to_radians());
+                }
+            }
+            KnobRender::Pointer => {
+                let ang = ang_deg.to_radians();
+                let dir = egui::vec2(ang.sin(), -ang.cos());
+                painter.line_segment(
+                    [c, c + dir * (knob.pointer_len * scale)],
+                    egui::Stroke::new(
+                        (knob.pointer_width * scale).max(2.0),
+                        egui::Color32::from_rgb(0xf5, 0xf5, 0xf5),
+                    ),
+                );
+            }
+        }
 
         let r = knob.radius * scale;
         let hit = egui::Rect::from_center_size(c, egui::vec2(r * 2.0, r * 2.0));
-        let resp = ui.interact(hit, ui.id().with(knob.param), egui::Sense::click_and_drag());
+        // id 用 (类型, 序号)：两个旋钮绑同一个参数时也不会被 egui 合并成一个控件
+        let resp = ui.interact(hit, ui.id().with(("knob", ki)), egui::Sense::click_and_drag());
         let mut v = value;
         if resp.dragged() {
             v -= resp.drag_delta().y / (knob.drag_range * scale).max(1.0);
@@ -251,8 +301,8 @@ pub fn draw(
         }
     }
 
-    // ---- 拨杆开关 ----
-    if let Some(tg) = &spec.toggle {
+    // ---- 拨杆开关（可多个）----
+    for (ti, tg) in spec.toggles.iter().enumerate() {
         let on = params.get(tg.param).unwrap_or(0.0) > 0.5;
         let (y, tex_name) = if on {
             (tg.y_down, tg.image_down)
@@ -269,7 +319,7 @@ pub fn draw(
             to_screen((tg.x, tg.y_up.min(tg.y_down))),
             egui::vec2(tg.width * scale, union_h * scale),
         );
-        let resp = ui.interact(hit, ui.id().with(tg.param), egui::Sense::click());
+        let resp = ui.interact(hit, ui.id().with(("toggle", ti)), egui::Sense::click());
         if resp.clicked() {
             params.set(tg.param, if on { 0.0 } else { 1.0 });
         }
@@ -293,13 +343,13 @@ pub fn draw(
         }
     }
 
-    // ---- 按钮（bypass）：外形不变，按住时缩放 ----
-    if let Some(btn) = &spec.button {
+    // ---- 按钮（bypass/脚踏）：外形不变，按住时缩放；可多个 ----
+    for (bi, btn) in spec.buttons.iter().enumerate() {
         let c = to_screen(btn.center);
         let r = btn.radius * scale;
         let resp = ui.interact(
             egui::Rect::from_center_size(c, egui::vec2(r * 2.0, r * 2.0)),
-            ui.id().with(btn.param),
+            ui.id().with(("button", bi)),
             egui::Sense::click(),
         );
         let on = params.get(btn.param).unwrap_or(0.0) > 0.5;
@@ -337,6 +387,127 @@ pub fn draw(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------- 几何（可单测）
+
+/// 参数值 → 指针角度（度）。**0.5 对正上方（0°）**。
+///
+/// 这是 `rustomp-box-designer` 与运行时之间唯一的"角度契约"：
+/// 素材里指针朝上 ⇔ 参数 0.5 ⇒ `angle_min + angle_max == 0`。
+#[inline]
+pub fn knob_angle_deg(value: f32, angle_min: f32, angle_max: f32) -> f32 {
+    angle_min + (angle_max - angle_min) * value.clamp(0.0, 1.0)
+}
+
+/// 画一张**绕中心旋转**的贴图（`Mesh` 手工搭四边形，不依赖 egui 的 widget 旋转 API）。
+pub fn paint_rotated_image(
+    painter: &egui::Painter,
+    tex: egui::TextureId,
+    center: egui::Pos2,
+    half: egui::Vec2,
+    angle: f32,
+) {
+    let (s, c) = angle.sin_cos();
+    let rot = |v: egui::Vec2| egui::vec2(v.x * c - v.y * s, v.x * s + v.y * c);
+    let mut mesh = egui::Mesh::with_texture(tex);
+    let corners = [
+        (-half.x, -half.y, 0.0f32, 0.0f32),
+        (half.x, -half.y, 1.0, 0.0),
+        (half.x, half.y, 1.0, 1.0),
+        (-half.x, half.y, 0.0, 1.0),
+    ];
+    for (x, y, u, v) in corners {
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: center + rot(egui::vec2(x, y)),
+            uv: egui::pos2(u, v),
+            color: egui::Color32::WHITE,
+        });
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+// ---------------------------------------------------------------- 校验（导出/构建时用）
+
+/// 面板声明的静态校验。返回全部问题（不是只报第一个）。
+///
+/// 设计器导出前、插件构建时都应该跑一遍 —— 这里挡住的每一条，
+/// 在运行时都表现为"控件没反应/指针看不到/切换跳一下"这类难查的现象。
+pub fn validate_panel(spec: &PanelSpec, assets: &Assets) -> Vec<String> {
+    let mut errs = Vec::new();
+    let has_image = |name: &str| assets.images.iter().any(|(n, _)| *n == name);
+
+    if !(spec.svg_w > 0.0 && spec.svg_h > 0.0) {
+        errs.push(format!("画布尺寸非法：{} × {}", spec.svg_w, spec.svg_h));
+    }
+    if spec.window.0 == 0 || spec.window.1 == 0 {
+        errs.push(format!("窗口尺寸非法：{:?}", spec.window));
+    }
+
+    for (i, k) in spec.knobs.iter().enumerate() {
+        let tag = format!("knobs[{i}]（param={}）", k.param);
+        if k.param.is_empty() {
+            errs.push(format!("{tag}：param 为空"));
+        }
+        if k.radius <= 0.0 {
+            errs.push(format!("{tag}：radius 必须 > 0（否则点不到）"));
+        }
+        if k.render == KnobRender::Rotate {
+            // 约定：素材指针朝上 ⇔ 参数 0.5 ⇒ 角度范围必须对称
+            if (k.angle_min + k.angle_max).abs() > 1e-3 {
+                errs.push(format!(
+                    "{tag}：Rotate 模式要求 angle_min + angle_max == 0（现在是 {} + {}），否则指针会整体偏转",
+                    k.angle_min, k.angle_max
+                ));
+            }
+            if k.image.is_empty() || !has_image(k.image) {
+                errs.push(format!("{tag}：Rotate 模式缺少贴图 `{}`", k.image));
+            }
+            if !(k.image_size.0 > 0.0 && k.image_size.1 > 0.0) {
+                errs.push(format!("{tag}：image_size 非法 {:?}", k.image_size));
+            }
+        } else if k.pointer_len <= 0.0 {
+            errs.push(format!("{tag}：Pointer 模式需要 pointer_len > 0"));
+        }
+    }
+
+    for (i, l) in spec.leds.iter().enumerate() {
+        if l.param.is_empty() {
+            errs.push(format!("leds[{i}]：param 为空"));
+        }
+        if l.radius <= 0.0 {
+            errs.push(format!("leds[{i}]：radius 必须 > 0"));
+        }
+    }
+
+    for (i, t) in spec.toggles.iter().enumerate() {
+        let tag = format!("toggles[{i}]（param={}）", t.param);
+        if !has_image(t.image_up) || !has_image(t.image_down) {
+            errs.push(format!(
+                "{tag}：缺少贴图 `{}` / `{}`",
+                t.image_up, t.image_down
+            ));
+        }
+        if t.width <= 0.0 || t.height <= 0.0 {
+            errs.push(format!("{tag}：尺寸非法 {} × {}", t.width, t.height));
+        }
+        if t.press_scale <= 0.0 || t.press_scale > 1.0 {
+            errs.push(format!("{tag}：press_scale 应在 (0, 1]，现在是 {}", t.press_scale));
+        }
+    }
+
+    for (i, b) in spec.buttons.iter().enumerate() {
+        if b.param.is_empty() {
+            errs.push(format!("buttons[{i}]：param 为空"));
+        }
+        if b.radius <= 0.0 {
+            errs.push(format!("buttons[{i}]：radius 必须 > 0"));
+        }
+    }
+
+    errs
 }
 
 // ---------------------------------------------------------------- PNG 解码
@@ -391,4 +562,125 @@ pub fn decode_png(data: &'static [u8], w: usize, h: usize) -> Option<egui::Color
         size: [dw, dh],
         pixels: px,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static IMGS: [(&str, &[u8]); 2] = [("up", &[]), ("down", &[])];
+    static ASSETS: Assets = Assets { panel: &[], images: &IMGS };
+
+    fn knob(render: KnobRender, min: f32, max: f32) -> KnobSpec {
+        KnobSpec {
+            param: "gain",
+            center: (10.0, 10.0),
+            radius: 5.0,
+            image: "up",
+            image_size: (12.0, 12.0),
+            render,
+            pointer_len: 4.0,
+            pointer_width: 0.5,
+            angle_min: min,
+            angle_max: max,
+            drag_range: 200.0,
+        }
+    }
+
+    #[test]
+    fn angle_mapping_puts_midpoint_up() {
+        // −135..+135：0 / 0.5 / 1 → −135 / 0 / +135（0.5 正上方）
+        assert_eq!(knob_angle_deg(0.0, -135.0, 135.0), -135.0);
+        assert_eq!(knob_angle_deg(0.5, -135.0, 135.0), 0.0);
+        assert_eq!(knob_angle_deg(1.0, -135.0, 135.0), 135.0);
+        // 越界要夹住
+        assert_eq!(knob_angle_deg(2.0, -135.0, 135.0), 135.0);
+    }
+
+    #[test]
+    fn rotate_requires_symmetric_range() {
+        let ks_good: &'static [KnobSpec] = Box::leak(
+            vec![knob(KnobRender::Rotate, -135.0, 135.0)].into_boxed_slice(),
+        );
+        let ks_bad: &'static [KnobSpec] = Box::leak(
+            vec![knob(KnobRender::Rotate, -20.0, 200.0)].into_boxed_slice(),
+        );
+        let good = PanelSpec {
+            svg_w: 100.0,
+            svg_h: 50.0,
+            window: (300, 150),
+            background: (0, 0, 0),
+            knobs: ks_good,
+            leds: &[],
+            toggles: &[],
+            buttons: &[],
+        };
+        assert!(validate_panel(&good, &ASSETS).is_empty());
+
+        let bad = PanelSpec { knobs: ks_bad, ..good };
+        let errs = validate_panel(&bad, &ASSETS);
+        assert!(errs.iter().any(|e| e.contains("angle_min + angle_max")), "{errs:?}");
+    }
+
+    #[test]
+    fn missing_toggle_asset_is_reported() {
+        static T: ToggleSpec = ToggleSpec {
+            param: "symmetric",
+            image_up: "nope",
+            image_down: "down",
+            x: 1.0,
+            y_up: 2.0,
+            y_down: 2.0,
+            width: 4.0,
+            height: 4.0,
+            pivot: (3.0, 4.0),
+            press_scale: 0.9,
+        };
+        let spec = PanelSpec {
+            svg_w: 100.0,
+            svg_h: 50.0,
+            window: (300, 150),
+            background: (0, 0, 0),
+            knobs: &[],
+            leds: &[],
+            toggles: Box::leak(vec![T].into_boxed_slice()),
+            buttons: &[],
+        };
+        let errs = validate_panel(&spec, &ASSETS);
+        assert!(errs.iter().any(|e| e.contains("nope")), "{errs:?}");
+    }
+
+    #[test]
+    fn multiple_leds_and_toggles_are_allowed() {
+        static L: [LedSpec; 3] = [LedSpec {
+            param: "clip_indicator",
+            center: (1.0, 1.0),
+            radius: 1.0,
+            off: (0, 0, 0),
+            on: (255, 0, 0),
+        }; 3];
+        static T: [ToggleSpec; 2] = [ToggleSpec {
+            param: "symmetric",
+            image_up: "up",
+            image_down: "down",
+            x: 1.0,
+            y_up: 2.0,
+            y_down: 2.0,
+            width: 4.0,
+            height: 4.0,
+            pivot: (3.0, 4.0),
+            press_scale: 0.9,
+        }; 2];
+        let spec = PanelSpec {
+            svg_w: 100.0,
+            svg_h: 50.0,
+            window: (300, 150),
+            background: (0, 0, 0),
+            knobs: &[],
+            leds: &L,
+            toggles: &T,
+            buttons: &[],
+        };
+        assert!(validate_panel(&spec, &ASSETS).is_empty());
+    }
 }
