@@ -6,6 +6,7 @@
 ```
 devices/       器件库：Diode / Bjt / Jfet / Nmos / OpAmp  （型号是闭集 const）
 mna.rs         通用 MNA 装配器：Element 枚举 + Netlist<N> + 牛顿求解
+branch.rs      Branch<A,B>：两份完整电路 + 开关切换（预热 + 交叉淡化）
 engine.rs      Engine<C>：4× 过采样 + 真旁通 + 活动指示 + NaN 熔断
 oversample.rs  多相 FIR 4× 过采样（64 抽头 Kaiser 窗 sinc）
 circuit.rs     与框架的唯一契约：Circuit trait
@@ -113,6 +114,21 @@ let y = c.process(x);
    （`level=1` 的下臂、`gain=0` 的反馈电阻）。框架在唯一装配入口夹到 `MIN_RESISTANCE`（1 mΩ）。
 
 ---
+
+## 2.5 分支切换（开关）
+
+开关**不在电路层**实现：每个状态是一份**完整电路**，由 `Branch<A,B>` 选择：
+
+```rust
+pub type Branch = rustomp_dsp::Branch<asym::Ckt, sym::Ckt>;
+let mut engine = Engine::<Branch>::new(48_000.0);
+engine.set_params(BranchParams { a: asym_p, b: sym_p, select_b: true });
+```
+
+- 切换 = **预热 5 ms**（两路都跑、输出仍走旧分支）+ **10 ms 线性淡化**；
+- 不切换时只跑当前分支（CPU 不翻倍）；
+- 预热是必需的：切进来的那一支状态是冷的，冷启动瞬态乘上淡化权重就是可听的咔哒
+  （实测 0.099 的台阶，预热后降到与信号自身削波边沿相同）。
 
 ## 3. Engine 与过采样
 

@@ -93,6 +93,13 @@ pub struct CircuitMeta {
     /// 电路 crate 名（默认由 `package` 派生：`<package>_circuit`）
     #[serde(default)]
     pub crate_name: String,
+    /// 参数构造函数名（可选）。
+    ///
+    /// 设了就**不再**生成结构体字面量，而是生成
+    /// `circuit_crate::<params_builder>(<按 manifest 顺序的所有参数>)`。
+    /// 用于"分支电路"（`BranchParams { a, b, select_b }`）这类**不是平坦结构体**的参数。
+    #[serde(default)]
+    pub params_builder: String,
 }
 
 impl Default for CircuitMeta {
@@ -101,6 +108,7 @@ impl Default for CircuitMeta {
             plugin_type: default_plugin_type(),
             params_type: default_params_type(),
             crate_name: String::new(),
+            params_builder: String::new(),
         }
     }
 }

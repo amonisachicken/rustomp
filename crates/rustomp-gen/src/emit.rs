@@ -154,7 +154,24 @@ pub fn params_rs(m: &Manifest) -> String {
         m.circuit_crate(),
         m.circuit.params_type
     ));
-    if dsp.is_empty() {
+    if !m.circuit.params_builder.is_empty() {
+        // 构造函数模式：按 manifest 顺序把所有参数按值传进去
+        // （float 用平滑值、bool 直接取），由电路 crate 决定怎么组装。
+        let args: Vec<String> = m
+            .params
+            .iter()
+            .map(|p| match p.kind {
+                ParamKind::Float => format!("self.{}.smoothed.next() as f64", p.id),
+                ParamKind::Bool => format!("self.{}.value()", p.id),
+            })
+            .collect();
+        out.push_str(&format!(
+            "        {}::{}({})\n",
+            m.circuit_crate(),
+            m.circuit.params_builder,
+            args.join(", ")
+        ));
+    } else if dsp.is_empty() {
         out.push_str(&format!("        {}::{}::default()\n", m.circuit_crate(), m.circuit.params_type));
     } else {
         out.push_str(&format!(
@@ -483,6 +500,18 @@ circuit = "symmetric"
         assert!(s.contains("pub mode: BoolParam"));
         assert!(s.contains("gain: self.gain.smoothed.next() as f64"));
         assert!(s.contains("symmetric: self.mode.value()"));
+    }
+
+    #[test]
+    fn params_builder_uses_positional_args() {
+        let mut m = manifest();
+        m.circuit.params_builder = "make_params".into();
+        let s = params_rs(&m);
+        assert!(
+            s.contains("sparklin_drive_circuit::make_params(self.gain.smoothed.next() as f64, self.mode.value())"),
+            "应生成构造函数调用：{s}"
+        );
+        assert!(!s.contains("symmetric: self.mode.value()"), "构造函数模式不应再生成字段名");
     }
 
     #[test]
