@@ -55,6 +55,10 @@ rustomp_gui::draw(...)        ← 一次性画出整块面板，返回控件交�
 | 拖拨杆 | 拖动/点击切两态，可带 `travel_deg` 旋转 |
 | 点脚踏 | 触发 bool 参数（true-bypass），按下时**从底图抠出那块缩放**，抬脚弹回 |
 
+> ⚠️ 脚踏的两个硬约束（box-designer E64 实测）：
+> 1. `radius` 必须 **≥ 美术外接圆半径**（3PDT 是 5.38 mm，取 5.4），否则按下时原美术会露出一圈；
+> 2. 擦除用的是 `2r × 2r` 的**背景色方块**，所以脚踏下面不要放渐变/图案/大块丝印。
+
 参数读写走 `ParamAccess` 抽象：`get_param(id)` / `set_param(id, value)`。
 虚拟指示（LED）用 `get_param("clip_indicator")` 读引擎的 `activity_indicator()`。
 

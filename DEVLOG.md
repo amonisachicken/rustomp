@@ -3863,6 +3863,52 @@ rustomp（框架 + 构建脚本，macOS 原生）
 
 ---
 
+## E64：box-designer D0 落地 —— 契约第一次被"另一个程序"消费（2026-10-26）
+
+`rustomp-box-designer` 从"只有文档"变成"能用"：零依赖浏览器端设计器，
+画布编辑 + L1 预览 + 导出 `panel.svg` / `panel.png` / 控件贴图 / `[assets]`+`[ui]` 标记块。
+用设计器复刻了真实的 Sparklin Drive 面板（`examples/sparklin.box.json`），
+导出的 `panel.png` **720×1344**、`knob.png` **180×180** —— 与手搓那份逐像素同规格。
+
+### 64.1 契约经受住了检验（这次是真的"第二份实现"）
+
+`[ui]` 的字段一个都没改：设计器照着 `docs/01-contract-panel-toml.md` 直接产出
+`center = [x, y]`、`image_size`、`travel_deg`、`pivot`、`off_color`…，
+`rustomp` 侧不需要任何改动。**这是契约第一次被独立实现消费**，
+比"自己写自己验证"有力得多。
+
+### 64.2 两条运行时行为必须被"照抄"，而不能"看起来差不多"
+
+| 行为 | 设计器必须复刻的细节 | 不照抄的后果 |
+|---|---|---|
+| 旋钮 | 指针朝上 ⇔ 参数 0.5，`angle = (v-0.5) × travel` | 设计器里居中、装上插件偏 135° |
+| 脚踏按下 | **先用背景色方块抹掉原位，再把原美术按 `press_scale` 居中贴回** | 设计器里"缩小"，宿主里出现双影 |
+
+### 64.3 一个框架侧的小结论：`buttons.radius` 必须盖住美术
+
+按下时是用 `2r × 2r` 的**方块**擦除，所以 `radius` 必须 ≥ 美术外接圆半径，
+否则原美术会露出一圈（3PDT 外圈 r=5.38 mm，`radius` 取 5.4 才干净）。
+已写进 `crates/rustomp-gui/README.md`。
+
+> 顺带记下可改进点（不急）：擦除用方块、按钮是圆的，几何上不匹配；
+> 面板若在按钮下面放了渐变/图案，擦出来的方块会露馅。
+> 真要修的话是"圆形擦除 + 圆形裁剪贴回"，需要改运行时并重新验一遍 AU。
+
+### 64.4 素材层面的三个坑（设计器侧解决，写进 box-designer D-006）
+
+1. 素材 path 坐标常常远在 viewBox 之外（标签甚至有 `M253,393`）→ 内联必须用
+   **嵌套 `<svg viewBox>`**，`<g transform>` 会把图形甩到面板外；
+2. 每个素材都有 `.cls-1/.cls-2` → 内联前把 `<style>` **展开成内联 style**，否则互相覆盖；
+3. **自闭合标签的 style 加在 `/` 之后会整条被丢弃** → 圆变黑块
+   （这个 bug 是"导出图里 LED 是个黑圆"暴露出来的，已加回归测试）。
+
+### 64.5 下一步
+
+D1：把设计器产物真正接进插件项目（替换手搓的 `panel.png`/`knob.png`），
+并补设计器的 D1 功能（安全边距/对齐吸附/图层显隐）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4152,6 +4198,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-26 | **box-designer D0**（E64）：设计器可用（零依赖 ES modules + 原生 SVG），复刻真实 Sparklin Drive 面板，导出 panel.png 720×1344 / knob 180×180；**契约首次被独立实现消费且无需改动**；记下"按钮 radius 必须盖住美术"与三个素材内联坑 |
 | 2026-10-26 | **全项目复盘 + 平台策略**（E63 + ADR-015）：链路五段全部完成（器件/MNA/实时/生成/界面），91 用例 / verify.sh 8 层；确立 **macOS 默认 + Windows/Linux 独立打包工具仓库**；逐一校对 9 份文档（新增 `crates/rustomp-gui/README.md`）；沉淀七条经验 |
 | 2026-10-26 | **S1d 联调：三个界面 bug**（E62）：① LED 不闪 = 生成的 `Ckt` 没实现 `activity()`（补二极管电流指标 + 网表指令 `activity_i=`，0.032 → 0.647）；② 踩钉无效 = 没有 bypass 参数（Engine 加 `set_bypass`、`bypass` 成为保留 id、下发 `[[ui.buttons]]`，干路偏差 0.00e0）；③ 旋钮边缘被切 = `decode_png` 提前把 alpha 与固定底色合成（改为保留 alpha 交给 GPU）。面板素材换成用户新给的 mm 制 SVG（knob 15mm / 3pdt 10.76mm / led 6.27mm） |
 | 2026-10-26 | **S1d：第一个带界面的插件**（E61）：素材坐标改毫米（60×112 mm、12 px/mm = 720×1344）；panel 由 Inkscape 渲染 legacy SVG，knob 程序生成（指针朝上=50%），拨杆复用 legacy 贴图；生成器在 gui=true 时补 `editor_state` 与 `pub mod panel`；手写只有 `editor.rs`（~100 行）。实测：validate_panel 通过、AU 报 CocoaUI、音频与无 GUI 版一致 |
