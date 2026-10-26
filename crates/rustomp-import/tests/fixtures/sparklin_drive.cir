@@ -1,7 +1,7 @@
 * Sparklin Drive（fakedist v2 网表）—— S1a 代码生成器的测试夹具
 * 来源：sparklin-drive-legacy/plugins/sparklin-drive/circuit/netlist/netlist.cir（2026-10-23 快照）
 * 仅新增下面两行 rustomp 指令（导入器读它们来定端口）：
-* @rustomp in=VS1 out=n_t27R newton=4
+* @rustomp in=VS1 out=n_t27R newton=8
 * @rustomp param RP1A gain pot max=500k
 * @rustomp param RP2B level pot max=500k invert
 * @rustomp param RP2A level pot max=500k
