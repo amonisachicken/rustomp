@@ -29,5 +29,8 @@ target/
 # 符号资产归档：已导入 rustomp-circuit-designer 仓库，框架仓库不留副本
 /gb4728-symbols-kit.7z
 
+# AB 对比音频（由 examples/abeven.rs 生成，可再生，不入库）
+/ab-signals/
+
 # 由 scripts/gen-bundler-toml.sh 从插件 rustomp.toml 生成
 /bundler.toml

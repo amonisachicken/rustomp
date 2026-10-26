@@ -322,3 +322,61 @@ Logic 的 Channel EQ Analyzer 是**对数轴 + 时域平滑**，适合判断"有
 把插件网表里的 `* @rustomp newton=4` 改成 `2`，重新生成 + 构建，同样跑这两个例程：
 方波的 f/8、f/16 会窜到 −10 dB 量级（LF 峰值从 −103 dB 升到 +10 dB 左右），
 这正是当时截图里那片"极低频隆起"的来源。
+
+---
+
+## 8. 偶次谐波对比信号（可直接听）
+
+§7 的结论里有一条很难"听出来验证"：**偶次谐波的相对差异有 1–12 dB，但绝对电平只有 −42…−68 dB**。
+为了让人耳也能判断，把两侧输出**只保留偶次谐波**重建出来，做成 WAV。
+
+### 8.1 复现
+
+```bash
+# 1) 两侧各自 dump 采集（1 kHz 方波，0.2 V，Gain/Level 50%，3 s 预热 + 1 s）
+AB_DUMP_DIR=/tmp/abdump cargo run -p rustomp-dsp --release --example abfft
+(cd ~/develop/sparklin-drive-legacy && AB_DUMP_DIR=/tmp/abdump \
+   cargo run -p sparklin-drive-circuit --release --example abfft)
+
+# 2) 重建 + 出 WAV
+cargo run -p rustomp-dsp --release --example abeven -- /tmp/abdump ab-signals
+```
+
+### 8.2 产出（48 kHz / 16-bit / 单声道，`ab-signals/`）
+
+| 文件 | 内容 | 增益 |
+|---|---|---|
+| `even_v2.wav` | v2 **只含偶次谐波**（h2…h22）的重建 | +30.8 dB / 峰值 −1 dBFS |
+| `even_legacy.wav` | legacy 同上，**与 even_v2 同一增益**（可直接比音量） | 同上 |
+| `even_diff.wav` | `even_v2 − even_legacy`：偶次谐波到底差在哪 | +38.2 dB |
+| `full_diff.wav` | 全带差值 `v2 − legacy`（所有差异的总和，参考） | +26.4 dB |
+| `even_abex.wav` | 三段各 1 s：**v2 偶次 → legacy 偶次 → 差值** | 见上 |
+
+### 8.3 数字
+
+| 量 | 值 |
+|---|---|
+| 原始输出 RMS | −7.9 dBFS |
+| **偶次谐波分量 RMS** | v2 **−39.4 dB** · legacy **−38.9 dB**（相差 0.5 dB） |
+| **偶次差值 RMS** | **−51.8 dB**（即：偶次谐波里真正不同的部分只占 −52 dB） |
+| 全带差值 RMS | −39.7 dB（主要是奇次阶梯那 0.2 dB 的系统性差异） |
+
+偶次谐波各自的绝对电平（`even_*.wav`，已放大 30.8 dB）：
+
+| | h2 | h4 | h6 | h8 | h10 |
+|---|---|---|---|---|---|
+| v2 | −7.2 | −12.9 | −17.0 | −21.0 | −25.9 |
+| legacy | −7.1 | −12.4 | −15.6 | −18.2 | −20.9 |
+
+→ 两条曲线几乎重合；差异从 h6 起逐渐变大（3–5 dB），但都在 −16 dBFS 以下那串"已经很小的分量"里。
+
+### 8.4 怎么听
+
+1. 先听 `even_v2.wav` / `even_legacy.wav`：这就是**偶次谐波本身**（2、4、6… kHz 的合成音），
+   两者音量被刻意设成同一增益，**听感差别应当很难分辨**；
+2. 再听 `even_diff.wav`：这是"两者偶次谐波之差"，电平被放大 38 dB 才听得见 ——
+   如果这个信号在你正常监听音量下**几乎不可闻**，那 §7 里那些 ±12 dB 的偶次差异就是**不可听的**；
+3. `even_abex.wav`：一遍听完 A / B / X 三段。
+
+> 注意：这些 WAV 都是**放大过的**。真实电平见 §8.3 —— 偶次谐波整体只有 −39 dBFS，
+> 差值只有 −52 dBFS。也就是说，**在原始插件输出里，偶次谐波的差异比底噪高不了多少**。

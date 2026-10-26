@@ -3532,6 +3532,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
+| 2026-10-25 | **偶次谐波对比音**（E54）：新增 `examples/abeven.rs`（FFT 置零非偶次 → IFFT 重建 → 最小 WAV 写入），两侧 `abfft` 加 `AB_DUMP_DIR` 波形 dump。数字：偶次分量 −39.4/−38.9 dBFS、**偶次差值仅 −51.8 dBFS**；产出 `ab-signals/{even_v2,even_legacy,even_diff,full_diff,even_abex}.wav`（不入库，可再生）| 
 | 2026-10-25 | **Rust FFT 复核 AB**（E53）：新增 `crates/rustomp-dsp/examples/abfft.rs`（框架侧台架，用入库夹具）；1 kHz 正弦/方波两侧全量对比：9–10 kHz 无隆起（h9 +0.22 dB、h10 −5 dB）、极低频 −103.7 dB 两边一致；真实差异仅奇次 +0.2 dB（THD +0.5 pp）、偶次在 −42…−68 dB 处相对差大但听不见。结论：可听范围内 ≤0.5 dB |
 | 2026-10-25 | **AB 测试复盘落盘**（E52）：新增 `docs/ab-test-sparklin-v2.md`（全过程时间线 + 四张 FFT 判读 + 量化对照 + 9 条经验 + 发布前清单）；沉淀四条规则：测试信号要分层（正弦查不出欠收敛）、验收要含「不该出现的分量」、参数端点是 bug 温床、数值实现层就是音色的一部分 |
 | 2026-10-25 | **修电位器端点静音**（E51）：`level=1` 时下臂 0 Ω、`gain=0` 时反馈电阻 0 Ω → `1/0=∞` → NaN → 引擎熔断静音。框架在唯一装配入口把电阻夹到 `MIN_RESISTANCE`(1 mΩ)；新增回归测试（8 个端点全部有限 + 音量单调）。教训：参数端点是 bug 温床，框架必须比使用者更保守 |

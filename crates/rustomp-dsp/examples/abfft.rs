@@ -16,6 +16,7 @@ include!("../tests/generated/sparklin_drive.rs");
 const FS: f64 = 48_000.0;
 const F0: f64 = 1_000.0;
 const AMP: f64 = 0.2;
+const PLUGIN_TAG: &str = "v2-mna";
 
 #[derive(Clone, Copy, PartialEq)]
 enum Sig {
@@ -133,5 +134,23 @@ fn main() {
     for sig in [Sig::Sine, Sig::Square] {
         let out = capture(sig);
         analyse("v2-mna", sig, &out);
+    }
+
+    // 可选：把采集到的 1 s 输出 dump 成 raw f64（供 `abeven` 做偶次谐波对比）
+    if let Ok(dir) = std::env::var("AB_DUMP_DIR") {
+        for sig in [Sig::Sine, Sig::Square] {
+            let out = capture(sig);
+            let name = format!(
+                "{dir}/{}_{}.f64",
+                PLUGIN_TAG,
+                if sig == Sig::Sine { "sine" } else { "square" }
+            );
+            let mut bytes = Vec::with_capacity(out.len() * 8);
+            for v in &out {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+            std::fs::write(&name, bytes).expect("dump 失败");
+            eprintln!("dumped {} ({} 点)", name, out.len());
+        }
     }
 }

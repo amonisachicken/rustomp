@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//!
+//! **偶次谐波对比台架**：把两个实现的输出按"只保留偶次谐波"重建，写成可听的 WAV。
+//!
+//! 用法：
+//!
+//! ```bash
+//! # 1) 两边各自 dump 采集结果（1 kHz 方波，0.2 V，Gain/Level 50%）
+//! AB_DUMP_DIR=/tmp/abdump cargo run -p rustomp-dsp --release --example abfft        # v2
+//! (cd ../sparklin-drive-legacy && AB_DUMP_DIR=/tmp/abdump \
+//!    cargo run -p sparklin-drive-circuit --release --example abfft)                 # legacy
+//!
+//! # 2) 重建 + 出 WAV
+//! cargo run -p rustomp-dsp --release --example abeven -- /tmp/abdump /tmp/abwav
+//! ```
+//!
+//! 产出（48 kHz / 16-bit / 单声道）：
+//!
+//! | 文件 | 内容 |
+//! |---|---|
+//! | `even_v2.wav` / `even_legacy.wav` | 各自**只含偶次谐波**（h2…h22）的重建信号，**同一增益**（可直接比音量） |
+//! | `even_diff.wav` | `even_v2 − even_legacy`，即"偶次谐波到底差在哪" |
+//! | `even_abex.wav` | 三段各 1 s：v2 偶次 → legacy 偶次 → 差值（便于一遍听完） |
+//! | `full_diff.wav` | 全带差值 `v2 − legacy`（参考：所有差异的总和） |
+//!
+//! 峰值归一化到 −1 dBFS，**实际施加的增益会打印出来**（这些信号本身只有约 −50 dBFS）。
+
+use rustfft::{num_complex::Complex, FftPlanner};
+use std::path::{Path, PathBuf};
+
+const FS: f64 = 48_000.0;
+const F0: f64 = 1_000.0;
+
+fn read_raw(path: &Path) -> Vec<f64> {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("读不到 {}: {e}", path.display()));
+    assert!(bytes.len() % 8 == 0, "{} 不是 f64 原始数据", path.display());
+    bytes
+        .chunks_exact(8)
+        .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
+        .collect()
+}
+
+/// 只保留 k·F0（k 为偶数）的频点，其余置零，再 IFFT 回时域。
+fn even_harmonics_only(x: &[f64]) -> Vec<f64> {
+    let n = x.len();
+    let mut buf: Vec<Complex<f64>> = x.iter().map(|v| Complex::new(*v, 0.0)).collect();
+    FftPlanner::new().plan_fft_forward(n).process(&mut buf);
+
+    let bin_of = |f: f64| (f / (FS / n as f64)).round() as usize;
+    let keep: Vec<bool> = (0..n)
+        .map(|k| {
+            let f = if k <= n / 2 {
+                k as f64 * FS / n as f64
+            } else {
+                (n - k) as f64 * FS / n as f64
+            };
+            let h = f / F0;
+            h >= 1.5 && (h.round() - h).abs() < 1e-6 && (h.round() as i64) % 2 == 0
+        })
+        .collect();
+    let _ = bin_of;
+
+    for (k, c) in buf.iter_mut().enumerate() {
+        if !keep[k] {
+            *c = Complex::new(0.0, 0.0);
+        }
+    }
+    FftPlanner::new().plan_fft_inverse(n).process(&mut buf);
+    buf.iter().map(|c| c.re / n as f64).collect()
+}
+
+fn rms(x: &[f64]) -> f64 {
+    (x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64).sqrt()
+}
+
+fn peak(x: &[f64]) -> f64 {
+    x.iter().fold(0.0f64, |a, v| a.max(v.abs()))
+}
+
+/// 最小 16-bit PCM WAV 写入（无依赖）。
+fn write_wav(path: &Path, samples: &[f64]) {
+    let n = samples.len() as u32;
+    let data_len = n * 2;
+    let mut out = Vec::with_capacity(44 + data_len as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&(FS as u32).to_le_bytes());
+    out.extend_from_slice(&((FS as u32) * 2).to_le_bytes()); // byte rate
+    out.extend_from_slice(&2u16.to_le_bytes()); // block align
+    out.extend_from_slice(&16u16.to_le_bytes()); // bits
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    for v in samples {
+        let s = (v.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    std::fs::write(path, out).unwrap_or_else(|e| panic!("写 {} 失败: {e}", path.display()));
+}
+
+fn db(v: f64, reference: f64) -> f64 {
+    20.0 * (v / reference).max(1e-15).log10()
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let dir = PathBuf::from(args.get(1).map(String::as_str).unwrap_or("/tmp/abdump"));
+    let out_dir = PathBuf::from(args.get(2).map(String::as_str).unwrap_or("/tmp/abwav"));
+    std::fs::create_dir_all(&out_dir).expect("建输出目录失败");
+
+    let v2 = read_raw(&dir.join("v2-mna_square.f64"));
+    let legacy = read_raw(&dir.join("legacy-wdf_square.f64"));
+    assert_eq!(v2.len(), legacy.len(), "两边采集长度不一致");
+
+    let ev2 = even_harmonics_only(&v2);
+    let eleg = even_harmonics_only(&legacy);
+    let ediff: Vec<f64> = ev2.iter().zip(&eleg).map(|(a, b)| a - b).collect();
+    let fdiff: Vec<f64> = v2.iter().zip(&legacy).map(|(a, b)| a - b).collect();
+
+    let db_full = db(rms(&v2), 1.0);
+    println!("原始输出 RMS: v2 {:.1} dBFS", db_full);
+    println!("  偶次谐波分量 RMS: v2 {:.1} dB  ·  legacy {:.1} dB（相对满刻度）",
+        db(rms(&ev2), 1.0), db(rms(&eleg), 1.0));
+    println!("  偶次差值 RMS: {:.1} dB  ·  全带差值 RMS: {:.1} dB",
+        db(rms(&ediff), 1.0), db(rms(&fdiff), 1.0));
+
+    // 两组偶次谐波用**同一增益**放大，保持相对音量；目标峰值 −1 dBFS
+    let g_even = 0.891 / peak(&ev2).max(peak(&eleg)).max(1e-12);
+    let scale = |x: &[f64], g: f64| -> Vec<f64> { x.iter().map(|v| v * g).collect() };
+
+    let g_diff = 0.891 / peak(&ediff).max(1e-12);
+    let g_full = 0.891 / peak(&fdiff).max(1e-12);
+
+    println!("  施加增益: 偶次 {:+.1} dB · 偶次差 {:+.1} dB · 全带差 {:+.1} dB",
+        db(g_even, 1.0), db(g_diff, 1.0), db(g_full, 1.0));
+
+    write_wav(&out_dir.join("even_v2.wav"), &scale(&ev2, g_even));
+    write_wav(&out_dir.join("even_legacy.wav"), &scale(&eleg, g_even));
+    write_wav(&out_dir.join("even_diff.wav"), &scale(&ediff, g_diff));
+    write_wav(&out_dir.join("full_diff.wav"), &scale(&fdiff, g_full));
+
+    // 三段拼接：v2 偶次 → legacy 偶次 → 差值（各 1 s，中间不淡入淡出，靠耳朵对齐）
+    let mut abex = Vec::with_capacity(v2.len() * 3);
+    abex.extend_from_slice(&scale(&ev2, g_even));
+    abex.extend_from_slice(&scale(&eleg, g_even));
+    abex.extend_from_slice(&scale(&ediff, g_diff));
+    write_wav(&out_dir.join("even_abex.wav"), &abex);
+
+    println!("\n已写入 {}:", out_dir.display());
+    for f in ["even_v2.wav", "even_legacy.wav", "even_diff.wav", "full_diff.wav", "even_abex.wav"] {
+        println!("  {}", out_dir.join(f).display());
+    }
+}
