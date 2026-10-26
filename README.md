@@ -14,7 +14,8 @@
 | **实时路径** | ✅ `step_fixed` + 固定电位节点 + 解析雅可比（2 次迭代 2.07 µs/样本） |
 | **代码生成** | ✅ **网表 → 可运行电路**（S1a/S1b）+ **`rustomp.toml` → 插件外壳**（S1c，含参数表/身份/导出宏） |
 | 示例插件 | ✅ `Sparklin Drive` 已完整交付并拆为独立仓库（`sparklin-drive-legacy`） |
-| 下一步 | 把 oracle 对拍铺进 CI 矩阵；补器件动态档（`Cje/Cjc`、`Cjo/tt`） |
+| **进 GUI 之前** | ✅ 清单全过（`docs/pre-gui-checklist.md`）：网表 → 电路 → 插件 → 安装 → AB 无可感差别 |
+| 下一步 | **GUI（S1d）**；器件动态档（`Cje/Cjc`、`Cjo/tt`）；CI 三平台矩阵 |
 
 > **闭环已打通**：面包板/原理图 → SPICE 网表 → 与 ngspice 对拍的 DSP → 插件。
 > 其中「原理图设计器」与「插件 GUI 设计器」将作为独立项目开发，本项目只保证契约（[接口说明](#与外部设计器的接口)）。
@@ -51,9 +52,9 @@
 |---|---|---|
 | **器件库** | `crates/rustomp-dsp/src/devices/` | 闭集器件模型（二极管/BJT/JFET/MOSFET/运放），参数与 SPICE 对齐 |
 | **电路装配** | `crates/rustomp-dsp/src/mna.rs` | 通用 MNA：器件 + 拓扑 → 可求解电路（牛顿、gmin 步进、伴随模型） |
-| **框架机制** | `crates/rustomp-dsp/src/{engine,oversample,circuit}.rs` | `Circuit` 契约、`Engine<C>`、4× 过采样、真旁通、NaN 熔断 |
+| **框架机制** | `crates/rustomp-dsp/src/{engine,oversample,circuit,branch}.rs` | `Circuit` 契约、`Engine<C>`、4× 过采样、真旁通、NaN 熔断、**分支切换** |
 | **SPICE 模型库** | `devices/` | 清洗后的 `devices.lib` + 手写子电路 + 对拍报告 |
-| **插件外壳** | `template/` + `scripts/new-plugin.sh` | nih-plug + egui + 单声道/立体声变体（下游项目生成到 `plugins/`） |
+| **插件外壳** | `template/` + `scripts/new-plugin.sh` + `rustomp-gen` | nih-plug 外壳（**无 GUI 阶段**）+ 单声道/立体声变体（下游项目生成到 `plugins/`） |
 
 `Sparklin Drive` 是第一个用这套框架做出来的插件，也是"怎么用这个框架"的活样板。
 
@@ -385,12 +386,15 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 - [x] **用 MNA 装配器重写 Sparklin Drive** ✅ 整机 THD 27.579% vs ngspice 27.5682%（+0.011 pp）、
       DC ≤0.27 mV、频响 ≤0.5 dB（`crates/rustomp-dsp/tests/sparklin_mna.rs`）
 - [x] 把 MNA 包成 `Circuit` 供实时使用 ✅ 2 次迭代 2072 ns/样本（192 kHz 单核 39.8%），THD +0.098 pp
-- [ ] 预计算稀疏 LU（预计把实时路径压到 ~1.3 µs/sample）
+- [x] 实时路径优化 ✅ **自适应牛顿迭代**（上限 8、残差 1e-6 提前退出）：实测平均 **2 次**，
+      比固定 8 次快 3.0×、输出差 −227 dB。~~预计算稀疏 LU~~ 已证明不是瓶颈（E57）
 - [x] **S1a：网表 → MNA 装配代码** ✅ `rustomp-import --mna`（生成电路 THD 与手写版逐位一致）
 - [x] **S1b：参数化 + 器件卡片** ✅ `param`/`switch` 指令 → 生成 `Params` + `Ckt`（`impl Circuit`）；
       `Q/J/M` 卡片映射；BJT 前级 Vb 差 2.2 µV
 - [x] **S1c：插件侧代码生成** ✅ `rustomp-gen`（参数表 / 身份 / `Plugin` 实现 + 导出宏），
       生成的项目能 `cargo build` 并导出 CLAP/VST3 入口；模板改为无 GUI 外壳
+- [x] **多分支（开关）** ✅ 框架 `Branch<A,B>`：两份完整电路 + 预热/交叉淡化；
+      Sparklin Drive 已有 Clip Mode（非对称 THD 27.58 % / 对称 h2 **0.000 %**）
 - [ ] S1d：界面（`[ui]` → `PanelSpec` + `gui` feature + 手写 `editor.rs`）
 - [ ] 把 oracle 对拍铺进 CI 矩阵（各平台 + 可选 ngspice）
 - [ ] 原理图设计器 / GUI 设计器（**独立项目**，本仓库只维护契约）
@@ -409,7 +413,8 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 | `docs/component-library.md` | **元件库精度规范**：档位定义、逐器件推荐、验收实验模板 |
 | `docs/circuit-import.md` | **电路导入与元件映射规范**：可插拔导入、映射流水线、引脚绑定、mapping.toml |
 | `docs/declarative-build.md` | **声明式构建规范**：代码生成 vs 打包两个平面、后端契约、多平台矩阵、S1–S5 路线 |
-| `docs/ab-test-sparklin-v2.md` | **AB 测试复盘**：v2 生成路径 vs legacy 手推实现；两个 bug 的定位过程、9 条经验、发布前验收清单 |
+| `docs/ab-test-sparklin-v2.md` | **AB 测试复盘**：v2 生成路径 vs legacy 手推实现；两个 bug 的定位过程、13 条经验、最终收敛数据 |
+| `docs/pre-gui-checklist.md` | **进 GUI 之前的清单**：器件/求解器/生成器/外壳/验证逐项状态 + GUI 阶段依赖的接口 |
 | `crates/rustomp-dsp/README.md` | DSP 核心：器件库、MNA 装配器、实时路径、对拍结果 |
 | `crates/rustomp-import/README.md` | 导入器 + 网表 → 装配代码生成（指令、产物、漂移守卫、更新流程） |
 | `devices/REPORT.md` | 器件模型的清洗报告（保留/丢弃了哪些参数、为什么） |
