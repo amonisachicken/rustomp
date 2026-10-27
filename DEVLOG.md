@@ -4586,6 +4586,71 @@ cargo --list | awk '{print $1}' | grep -qx nih-plug   # ← 在 set -o pipefail 
 
 ---
 
+## E76：新机上缺框架时给出克隆指引（2026-10-27）
+
+用户报告：在一台 **M1 MacBook Air** 上拉取仓库后成功构建出可用插件。
+接着提了一个很实际的诉求：**新机上如果只 clone 了插件仓，跑 `build.sh` 时要明确告诉他去克隆 rustomp，并给出链接。**
+
+### 76.1 原来的行为（不够好）
+
+| 场景 | 原来的提示 |
+|---|---|
+| 缺插件仓（打包工具） | ✅ 已经打印 clone 命令 |
+| **缺 rustomp 框架** | 只有一句 `没找到 rustomp 框架（只影响生成物漂移校验，不影响打包）` —— 既没链接，也**说错了**（打包工具靠框架里的 `plugin_meta.py` 读 `rustomp.toml`，缺了必然失败） |
+
+更糟的是 `check_generated()` 会**静默跳过**漂移守卫 —— 这正是 E74/E75 里
+"发布出去的是旧生成物"那类问题的入口。
+
+### 76.2 现在的行为
+
+```text
+$ ./scripts/build.sh            # 新机上：只有插件仓 + 打包工具
+  ✗ 找不到 rustomp 框架 —— 读 rustomp.toml、校验生成物都要用它
+
+  装一次即可（用它钉的 tag，与 Cargo.toml 一致）：
+    git clone --depth 1 --branch v0.1.0 https://github.com/amonisachicken/rustomp.git ~/develop/rustomp
+    export RUSTOMP_ROOT=~/develop/rustomp        # 建议写进 shell profile
+
+  或者放到本仓的**同级目录**（最省事，脚本会自动找到）：
+    git clone --depth 1 --branch v0.1.0 https://github.com/amonisachicken/rustomp.git ../rustomp
+
+  仓库：https://github.com/amonisachicken/rustomp
+```
+
+三个细节：
+
+1. **tag 自动取自本仓 `Cargo.toml`**（`tag = "..."`）——所以提示永远不会过期；
+2. **"放到同级目录"是最省事的路径**：脚本本来就会找 `../rustomp`，克隆完不用设任何环境变量；
+3. `check_generated()` 不再静默跳过，要跳过必须显式
+   `RUSTOMP_SKIP_DRIFT_CHECK=1`（且会打印警告）。
+
+打包工具的 `doctor.sh` 也同步给出同样的指引（直接跑 `pack.sh` 的人也能看到）。
+
+### 76.3 怎么验证的（模拟新机）
+
+```bash
+/tmp/sim-new/{sparklin-drive, rustomp-mac-plugin, fakehome}   # 没有 rustomp
+HOME=/tmp/sim-new/fakehome RUSTOMP_MAC_PLUGIN=/tmp/sim-new/rustomp-mac-plugin \
+  ./scripts/build.sh doctor
+```
+
+- `fakehome` 里只软链 `.cargo/.rustup`（否则 rustup 没有默认 toolchain 会干扰观察）；
+- 结果：打印上面的指引；
+- **照着指引做**（`git clone --branch v0.1.0 … ../rustomp`）后再跑 `doctor` → 立刻全绿
+  （`✓ rustomp 框架：/tmp/sim-new/rustomp`）。
+
+### 76.4 回归
+
+`./scripts/verify-isolation.sh --fast`（自动取各仓最新 tag）：
+
+```text
+✓ rustomp @ v0.1.0    ✓ rustomp-mac-plugin @ v0.1.4    ✓ sparklin-drive @ v0.1.4
+✓ build.sh 退出码 0（172s）   ✓ ARTIFACT 1 条   ✓ au_smoke   ✓ RMS 0.356170
+✓ 框架依赖来自 git tag（3 条）  ✓ 本机仓状态未变化
+```
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4876,6 +4941,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **新机指引**（E76）：缺框架时打印克隆命令（tag 自动取自 Cargo.toml）+ "放同级目录"最省事路径；漂移守卫不再静默跳过（`RUSTOMP_SKIP_DRIFT_CHECK=1` 才能跳）；packer doctor 同步。模拟新机验证 + 隔离回归（v0.1.0 + v0.1.4 + v0.1.4，172s） |
 | 2026-10-27 | **CI 真跑一次**（E75）：第一次是**假绿**（缺 cargo-nih-plug + `| tee` 吞掉失败 + 上传空目录只警告）→ 加 pipefail / if-no-files-found: error / 产物数量断言；再修 `pipefail` + `grep -q` 的 SIGPIPE 误报。最终 4m22s 真绿：6 个产物，下回本机 au_smoke 实测 RMS 0.356170 |
 | 2026-10-27 | **隔离工作区验证**（E74）：全新目录 clone 三仓（钉 tag）跑 build.sh，抓出两个"本机看不出来"的缺陷 —— ① tag v0.1.0 的 pack.sh 因全角变量 unbound（修复只留在工作区未提交）→ packer 打 v0.1.1；② identity.rs 生成物漂移（改 url 没重生成）→ 插件打 v0.1.2，并把 test 也加上 --check。第三轮通过：3 分 39 秒出 6 条 ARTIFACT、RMS 0.356170、依赖全为 git tag、本机仓零污染 |
 | 2026-10-27 | **收口：三仓全钉 tag + 参考插件即模板**（E73）：packer 打 v0.1.0、CI 钉 tag；sparklin-drive 新增 `MAKING-YOUR-OWN.md`（四步改造 + 发布清单 + 六个坑） |
