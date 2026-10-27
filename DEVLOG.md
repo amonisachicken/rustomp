@@ -5426,7 +5426,13 @@ cargo run -q -p rustomp-gen -- ../pretty-face
 
 `sandbox/CPM`：AU 那一步（clap-wrapper）在 `CMAKE_OSX_DEPLOYMENT_TARGET` 为空时会走
 `ghc_filesystem` 分支、需要联网拉 CPM，失败时报 `Unknown CMake command CPMAddPackage`。
-本次用 `MACOSX_DEPLOYMENT_TARGET=11.0` 绕过；打包工具里应该显式设一个默认值。
+本次用 `MACOSX_DEPLOYMENT_TARGET=11.0` 绕过。
+
+**已修（packer `62ab3aa`）**：`build-variant.sh` / `build-au.sh` 显式传
+`-DCMAKE_OSX_DEPLOYMENT_TARGET`（默认 11.0，可覆盖），`LSMinimumSystemVersion` 跟着它；
+顺手把 `cmake --build -j$(hw.ncpu)`（本机 20 路）改成 `RUSTOMP_BUILD_JOBS`（默认 4）。
+注意：CMake **缓存里留着空值**时，事后设同名环境变量无效 —— 必须传 `-D` 或删掉构建目录
+（脚本每次都会 `rm -rf build/au-*`，所以正常路径不会踩到）。
 
 ### 88.4 需要在用户侧确认的
 
