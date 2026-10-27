@@ -55,16 +55,27 @@ fn regenerate_designer(fixture: &str, source: &str) -> String {
 
 #[test]
 fn designer_project_is_up_to_date() {
-    let fixture = "tests/data/lowpass.design.json";
-    let golden = "../rustomp-dsp/tests/generated/lowpass.rs";
-    let fresh = regenerate_designer(fixture, "lowpass.design.json");
-    let repo = std::fs::read_to_string(golden).unwrap_or_default();
-    assert_eq!(
-        fresh, repo,
-        "{golden} 与重新生成的结果不一致。请重新生成：\n  \
-         RUSTOM_DESIGNER_SYMBOLS=<设计器>/symbols/symbols.json \
-         cargo run -q -p rustomp-import -- {fixture} --mna {golden}"
-    );
+    // (夹具, 生成物)：lowpass = 线性最小例；pretty-face = 锗管法兹（非线性/饱和区的回归现场）
+    for (fixture, golden) in [
+        (
+            "tests/data/lowpass.design.json",
+            "../rustomp-dsp/tests/generated/lowpass.rs",
+        ),
+        (
+            "tests/data/pretty-face.design.json",
+            "../rustomp-dsp/tests/generated/pretty_face.rs",
+        ),
+    ] {
+        let source = fixture.rsplit_once('/').unwrap().1;
+        let fresh = regenerate_designer(fixture, source);
+        let repo = std::fs::read_to_string(golden).unwrap_or_default();
+        assert_eq!(
+            fresh, repo,
+            "{golden} 与重新生成的结果不一致。请重新生成：\n  \
+             RUSTOM_DESIGNER_SYMBOLS=<设计器>/symbols/symbols.json \
+             cargo run -q -p rustomp-import -- {fixture} --mna {golden}"
+        );
+    }
 }
 
 #[test]

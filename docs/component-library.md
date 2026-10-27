@@ -289,7 +289,7 @@ could not find a valid modelname
 | 器件 | Rust 模型 | 对拍结果（`crates/rustomp-dsp/tests/devices.rs`） |
 |---|---|---|
 | `D_1N4148` / `D_1N34A` / `D_1N4007` | `devices::Diode`（静态 **D2**：`Is / N / Rs`） | **V-I 与 ngspice 完全一致（0.00%）**，覆盖 1 µA~10 mA 五个数量级 |
-| `BC549C` / `AC127` / `AC128` / `BC559C`(PNP) | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc`） | **Ic 与 Ib 均对拍**：AC127/AC128/BC559C ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下） |
+| `BC549C` / `AC127` / `AC128` / `BC559C`(PNP) | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc` + 大信号结电压限制） | **Ic 与 Ib 均对拍**：AC127/AC128/BC559C ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下）；**直流工作点与 ngspice 一位不差**（锗管法兹，`tests/designer_generated_fuzz.rs`） |
 | `1N5817`（肖特基） | `devices::Diode`（D2） | **0.00%**（1 µA~10 mA；Vf@1 mA=0.124 V、@10 mA=0.205 V） |
 | `LedRed` / `LedGreen` / `LedBlue` | `devices::Diode`（D2） | **0.00%**（1 µA~10 mA；Vf@20 mA ≈ 1.85 / 2.29 / 3.71 V） |
 | `J201` | `devices::Jfet`（静态 **D3**：Shichman-Hodges + `Rd/Rs`） | **转移 + 输出特性均 0.00%**（含三极管区 Vds=0.2/0.5 V） |
@@ -307,6 +307,12 @@ could not find a valid modelname
 > - **未实现**：`Nk`（BC549C 的 `Nk=0.6339`）、`IRB/RBM`、结电容 `Cje/Cjc/Tf/Tr`（后者属 C1/C2 档）；
 > - BC549C 在 `Ic≈4.6 mA` 处偏 +0.67%（其余 0.00~0.09%），推测与未建模的 `Nk` 有关，
 >   远低于 5% 门槛，暂不处理 —— **不为拟合而猜模型语义**。
+>
+> **大信号处理（E81，2026-10-27）**：结电压越过 `vcrit = vt·ln(vt/(√2·Is))` 后，
+> `exp` 改为**切线线性延续**（值与一阶导都连续）——与 SPICE 的 `pnjlim` 同一思路。
+> 这不是优化，是**正确性前提**：把 `exp` 硬钉一个上限会把导数钉成 0，牛顿拿不到方向，
+> 锗管（`Is=5µA` ⇒ `vcrit≈0.21 V`）的直流工作点会直接跑到 1e34 V。
+> 硅管 `vcrit≈0.74 V`，正常工作电压全在指数区，模型**逐位不变**（现有一切对拍数字不受影响）。
 >
 > 极性约定：`Bjt` 是**极性无关**的（同一套 NPN 公式）。PNP 使用时把
 > `(veb, vcb)` 传进去，并对返回电流取负 —— 与 SPICE 内部 `type = -1` 的处理一致（已对拍验证）。

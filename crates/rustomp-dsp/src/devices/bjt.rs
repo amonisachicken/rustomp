@@ -60,10 +60,29 @@ impl Default for Bjt {
     }
 }
 
-/// 指数函数：带上限保护，避免大信号时溢出成 `inf`。
+/// 结电压的指数函数：**超过 `vcrit` 后按切线线性延续**（值、一阶导都连续）。
+///
+/// 为什么不直接把 `exp` 钉个上限：硬截断会把**导数钉成 0**，牛顿的雅可比
+/// 立刻变成奇异矩阵（迭代原地打转，最后返回一个离谱的电流）。
+///
+/// 为什么必须是 `vcrit` 而不是一个固定上限：`vcrit = vt·ln(vt/(√2·is))` 是
+/// "电流开始不小时"的结电压（与 SPICE 同一定义）。硅管 `is≈1e-15` ⇒ vcrit≈0.74 V，
+/// 正常工作电压全在指数区，模型**逐位不变**；钽管 `is=5µ` ⇒ vcrit≈0.21 V，
+/// 牛顿稍一过冲就进了线性区 —— 而线性区的斜率（≈0.7 S）是有限的，能收敛。
 #[inline(always)]
-fn exp_cap(x: f64) -> f64 {
-    (x.min(80.0)).exp()
+fn exp_lim(v: f64, vt: f64, isat: f64) -> f64 {
+    if !(isat > 0.0) {
+        return (v / vt).exp();
+    }
+    let vcrit = vt * (vt / (std::f64::consts::SQRT_2 * isat)).ln();
+    if v <= vcrit {
+        (v / vt).exp()
+    } else {
+        // ec = exp(vcrit/vt) = vt/(√2·isat)；线性段斜率 = ec/vt（连续可导）
+        let ec = vcrit / vt;
+        let ec = ec.exp();
+        ec * (1.0 + (v - vcrit) / vt)
+    }
 }
 
 impl Bjt {
@@ -74,8 +93,8 @@ impl Bjt {
     pub fn intrinsic(&self, vbe: f64, vbc: f64) -> (f64, f64) {
         let vte = self.nf * VT;
         let vtc = self.nr * VT;
-        let e_be = exp_cap(vbe / vte);
-        let e_bc = exp_cap(vbc / vtc);
+        let e_be = exp_lim(vbe, vte, self.is);
+        let e_bc = exp_lim(vbc, vtc, self.is);
 
         // 基区电荷因子 qb（Early + 大电流塌陷）
         let c1 = 1.0 - vbc / self.vaf - vbe / self.var;
@@ -92,10 +111,10 @@ impl Bjt {
 
         // 传输电流与两个结电流
         let ict = self.is / qb * (e_be - e_bc);
-        let ibe =
-            self.is / self.bf * (e_be - 1.0) + self.ise * (exp_cap(vbe / (self.ne * VT)) - 1.0);
-        let ibc =
-            self.is / self.br * (e_bc - 1.0) + self.isc * (exp_cap(vbc / (self.nc * VT)) - 1.0);
+        let ibe = self.is / self.bf * (e_be - 1.0)
+            + self.ise * (exp_lim(vbe, self.ne * VT, self.ise) - 1.0);
+        let ibc = self.is / self.br * (e_bc - 1.0)
+            + self.isc * (exp_lim(vbc, self.nc * VT, self.isc) - 1.0);
 
         (ict - ibc, ibe + ibc)
     }
@@ -270,6 +289,59 @@ mod tests {
             "hFE={hfe:.1}, Bf={}",
             BC549C.bf
         );
+    }
+
+    /// **大信号下不能爆**：`exp` 必须有界且**导数不为零**。
+    ///
+    /// 这条守的是一个真实事故（DEVLOG E81）：`exp` 曾用 `min(80)` 硬截断 →
+    /// 导数被钉成 0 → `terminal()` 的内层牛顿拿不到方向 → 返回 1e17 A 级的电流 →
+    /// 锗管法兹（AC127）的直流工作点直接跑到 −1.6e34 V。
+    /// 现在按 `vcrit` 做切线延续（与 SPICE 同源的思路）。
+    #[test]
+    fn large_signal_stays_finite_and_monotone() {
+        let mut prev = f64::NEG_INFINITY;
+        for k in 0..=50 {
+            let vbe = -0.5 + 0.1 * k as f64; // −0.5 … 4.5 V
+            let (ic, ib) = AC127.terminal(vbe, vbe - 5.0); // Vce = 5 V
+            assert!(
+                ic.is_finite() && ib.is_finite(),
+                "vbe={vbe}: ic={ic:e} ib={ib:e}"
+            );
+            assert!(
+                ic.abs() < 10.0,
+                "vbe={vbe}: ic={ic:e} 明显不合理（应 ≤ 几安）"
+            );
+            assert!(ib.abs() < 1.0, "vbe={vbe}: ib={ib:e} 明显不合理");
+            assert!(
+                ic > prev,
+                "vbe={vbe}: ic={ic:e} 应随 Vbe 单调不减（上一步 {prev:e}）"
+            );
+            prev = ic;
+        }
+        // 参考量级：AC127（Is=5µ）在 Vbe=0.2V 时约 2 mA
+        let (ic, _) = AC127.terminal(0.2, 0.2 - 5.0);
+        assert!(
+            (1e-3..1e-2).contains(&ic),
+            "Vbe=0.2V 时 ic={ic:e} 应在 mA 量级"
+        );
+    }
+
+    /// 饱和区（B-C 结正偏）也要有界：Ge 管的 `Isc=5µA` 在深饱和时能反向灌电流，
+    /// 但量级必须是"毫安"，不能是天文数字。
+    #[test]
+    fn saturation_region_is_bounded() {
+        for k in 0..=10 {
+            let vbc = -0.5 + 0.1 * k as f64;
+            let (ic, ib) = AC127.terminal(0.2, vbc);
+            assert!(
+                ic.is_finite() && ib.is_finite(),
+                "vbc={vbc}: ic={ic:e} ib={ib:e}"
+            );
+            assert!(
+                ic.abs() < 0.1 && ib.abs() < 0.05,
+                "vbc={vbc}: ic={ic:e} ib={ib:e}"
+            );
+        }
     }
 
     /// 给定 Vce=5V、集电极电流目标，二分求 Vbe（测试用）

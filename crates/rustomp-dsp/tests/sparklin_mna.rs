@@ -475,6 +475,9 @@ fn realtime_path_matches_offline() {
     for iters in [1usize, 2, 3] {
         let mut c = SparklinMna::build(INNER_FS, Params::default());
         c.iters = iters;
+        // 这个基准量的是"**单次**迭代成本"：关掉救援通道（否则没收敛的样本会
+        // 自动多迭代几次，`1 次迭代` 就不再是 1 次了 —— 见 DEVLOG E81）
+        c.net.set_rescue_cap(iters);
         let n = (3.0 * INNER_FS) as usize;
         let tail = (0.02 * INNER_FS) as usize;
         let mut out = Vec::with_capacity(tail);
@@ -506,6 +509,10 @@ fn realtime_path_matches_offline() {
 /// CPU 实测：每个采样点耗时（192 kHz 内层速率）。
 ///
 /// 参照：legacy WDF 实现（手工把整个电路化到 1 个未知量）优化后是 **824 ns/样本**。
+///
+/// ⚠️ 这是**墙钟时间**，阈值 12 µs 只在机器空闲时有意义：后台索引/照片分析
+/// （`mds`、`mediaanalysisd`）能把同一份代码测慢 2 倍以上。怀疑环境时用
+/// `git stash` 对比基线，不要直接改阈值。
 #[test]
 fn realtime_cpu_cost() {
     use rustomp_dsp::Circuit;
@@ -514,6 +521,9 @@ fn realtime_cpu_cost() {
     for iters in [1usize, 2, 3] {
         let mut c = SparklinMna::build(INNER_FS, Params::default());
         c.iters = iters;
+        // 这个基准量的是"**单次**迭代成本"：关掉救援通道（否则没收敛的样本会
+        // 自动多迭代几次，`1 次迭代` 就不再是 1 次了 —— 见 DEVLOG E81）
+        c.net.set_rescue_cap(iters);
         let n = 200_000usize;
         for i in 0..10_000 {
             let x = 0.2 * (std::f64::consts::TAU * 1_000.0 * i as f64 / INNER_FS).sin();

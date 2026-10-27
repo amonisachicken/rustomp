@@ -568,6 +568,11 @@ pub struct Netlist<const N: usize> {
     pub fixed_tol: f64,
     /// 上一拍实际做了几次牛顿迭代（诊断用）
     pub last_iters: usize,
+    /// 实时路径的**硬上限**：没收敛时最多迭代到 `min(4×预算, 这个值)`。
+    ///
+    /// 默认 24。设成与预算相等就退回"严格跑满 `iters` 次"的老行为
+    /// （压测单次迭代成本时用，见 `tests/sparklin_mna.rs::realtime_cpu_cost`）。
+    pub rescue_cap: usize,
     /// 真正的未知量个数（= 节点未知量 + 电压源支路）。
     ///
     /// 生成器把固定电位节点排在**最大的几个下标**上，于是 LU 只需处理前 `unknowns` 行
@@ -597,6 +602,7 @@ impl<const N: usize> Netlist<N> {
             fixed: Vec::new(),
             fixed_tol: 1e-6,
             last_iters: 0,
+            rescue_cap: 24,
             unknowns: 0,
             v: [0.0; N],
             v_prev2: [0.0; N],
@@ -679,6 +685,12 @@ impl<const N: usize> Netlist<N> {
     pub fn fix_node(&mut self, node: usize, v: f64) -> usize {
         self.fixed.push((node, v));
         self.fixed.len() - 1
+    }
+
+    /// 设实时路径的迭代硬上限（默认 24）。与常规预算相等 = 关掉救援通道。
+    pub fn set_rescue_cap(&mut self, cap: usize) -> &mut Self {
+        self.rescue_cap = cap;
+        self
     }
 
     /// 修改第 `idx` 个固定节点的电位（输入激励用；比电压源支路少两个未知量）
@@ -881,7 +893,6 @@ impl<const N: usize> Netlist<N> {
         // stamp_linear 内部会 clear()，这里不需要额外清零
         self.stamp_linear(&mut base, &self.v, dt, false);
 
-        // 初值：线性外推（热启动）。温启动让 2 次迭代就够用。
         let tol = self.fixed_tol;
         // 初值：线性外推（热启动）。温启动让 2 次迭代就够用。
         let mut v = if self.has_prev2 {
@@ -909,8 +920,17 @@ impl<const N: usize> Netlist<N> {
                 v[node] = volt;
             }
         }
+        // **迭代预算 / 救援上限**：`iters` 是常规预算（稳态 2~3 次就收敛），
+        // 但它在"还没收敛"时不该是硬天花板 —— 锗管（`Is≈5µA`）的结在 0.12 V 就有
+        // ~0.7 S 的斜率，陡沿处 3 次迭代收敛不了。硬停在预算上会**把一个离谱的解
+        // 留给下一拍**（实测 n2 冲到 16 V、输出摆到 −0.68 V，而收敛解是 [−0.16, +0.10]），
+        // 之后越修越乱。所以留一条救援通道：最多 4 倍预算（且不超 24），
+        // 只有确实没收敛时才走到那里；稳态成本不变。
+        const RESCUE_FACTOR: usize = 4;
+        let budget = iters.max(1);
+        let cap = (budget * RESCUE_FACTOR).min(self.rescue_cap).max(budget);
         self.last_iters = 0;
-        for _ in 0..iters.max(1) {
+        for _ in 0..cap {
             self.last_iters += 1;
             let mut sys = base.clone();
             self.stamp_nonlinear(&mut sys, &v, dt, false);
@@ -925,9 +945,8 @@ impl<const N: usize> Netlist<N> {
                 max_dv = max_dv.max((v_new[i] - v[i]).abs() / (1.0 + v_new[i].abs()));
             }
             // **阻尼**：大跳变时减半（与 `newton()` 同一条规则）。
-            // 没有阻尼时，指数型器件（BJT 结）在硬驱动下会来回振荡且**永远不收**——
-            // 实测：一枚锗管法兹（设计器工程 pretty-face）在第 77 个样本开始发散到 1e25 V，
-            // 迭代次数从 3 加到 40 都没用；同样的电路走收敛路径（`step()`）就正常。
+            // 指数型器件（BJT 结）在硬驱动下会来回振荡：不解阻尼时，同样的电路
+            // 迭代次数加到 40 也不收敛，走带阻尼的 `step()` 则正常。
             if max_dv > 0.5 {
                 for i in 0..N {
                     v[i] = 0.5 * (v[i] + v_new[i]);
