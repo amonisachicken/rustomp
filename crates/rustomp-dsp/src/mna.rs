@@ -452,6 +452,8 @@ pub enum Element {
         /// 上一轮迭代的结电压 `[vbe, vbc]`（NPN 归一化空间）—— 结电压限幅（`pnjlim`）用。
         /// `stamp` 只有 `&self`，所以用 `Cell`（E85）
         lim: core::cell::Cell<[f64; 2]>,
+        /// 内层牛顿的上一轮解 `[vb, vc]`（热启动，E88）。同样用 `Cell`
+        inner: core::cell::Cell<[f64; 2]>,
     },
     /// JFET（N 沟道）
     Jfet {
@@ -509,6 +511,7 @@ impl Element {
             e,
             q,
             lim,
+            inner,
         } = self
         {
             let (qbe_prev, qbc_prev) = (q[0], q[1]);
@@ -529,7 +532,9 @@ impl Element {
             let vbe = Bjt::pnjlim(vbe_raw, lim_prev[0], vt_e, vcrit_e);
             let vbc = Bjt::pnjlim(vbc_raw, lim_prev[1], vt_c, vcrit_c);
             lim.set([vbe, vbc]);
-            let ev = model.eval(consts, vbe, vbc, dt_eff > 0.0);
+            let (ev, inner_new) =
+                model.eval_from(consts, vbe, vbc, dt_eff > 0.0, Some(inner.get()));
+            inner.set(inner_new);
 
             // 端电流（流入器件）：DC 部分 + 结电荷的位移电流
             let mut ic = s * ev.ic;
@@ -679,13 +684,15 @@ impl Element {
                 e,
                 q,
                 lim,
+                inner,
             } => {
                 let s = if *npn { 1.0 } else { -1.0 };
                 let (vc, vb, ve) = (v[*c], v[*b], v[*e]);
                 let (vbe, vbc) = (s * (vb - ve), s * (vb - vc));
-                let ev = model.eval(consts, vbe, vbc, true);
+                let (ev, inner_new) = model.eval_from(consts, vbe, vbc, true, Some(inner.get()));
                 *q = [ev.qbe, ev.qbc];
                 lim.set([vbe, vbc]);
+                inner.set(inner_new);
             }
             Element::OpAmp {
                 model, state, out, ..
@@ -773,7 +780,7 @@ impl<const N: usize> Netlist<N> {
             last_iters: 0,
             last_resid: f64::NAN,
             resid_tol: 1e-6,
-            rescue_cap: 32,
+            rescue_cap: 12,
             unknowns: 0,
             v: [0.0; N],
             v_prev2: [0.0; N],
@@ -817,6 +824,7 @@ impl<const N: usize> Netlist<N> {
             e,
             q: [0.0; 2],
             lim: core::cell::Cell::new([0.0; 2]),
+            inner: core::cell::Cell::new([0.0; 2]),
         })
     }
     pub fn jfet(&mut self, model: Jfet, d: usize, g: usize, s: usize) -> &mut Self {
@@ -861,7 +869,7 @@ impl<const N: usize> Netlist<N> {
         self.fixed.len() - 1
     }
 
-    /// 设实时路径的迭代硬上限（默认 32）。
+    /// 设实时路径的迭代硬上限（默认 **12**）。
     pub fn set_rescue_cap(&mut self, cap: usize) -> &mut Self {
         self.rescue_cap = cap;
         self
@@ -1200,9 +1208,10 @@ impl<const N: usize> Netlist<N> {
             if let Element::Capacitor { v_prev, .. } = e {
                 *v_prev = 0.0;
             }
-            if let Element::Bjt { q, lim, .. } = e {
+            if let Element::Bjt { q, lim, inner, .. } = e {
                 *q = [0.0; 2];
                 lim.set([0.0; 2]);
+                inner.set([0.0; 2]);
             }
             if let Element::OpAmp { state, pin, .. } = e {
                 state.reset();

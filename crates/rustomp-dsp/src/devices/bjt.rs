@@ -134,8 +134,72 @@ fn exp_lim(v: f64, vt: f64, isat: f64) -> f64 {
 ///
 /// `Bjt` 是纯数据（`const`），而 `ln` 不能在 `const` 里算 —— 所以这些量在**建元件时**
 /// 算一次（`Bjt::consts()`）。热路径不再每次调用都做 `ln`（E83）。
+/// 结（耗尽）电荷与电容：`(Q(v), C(v))` 一次算齐 —— 只有**一个** `powf`（E88）。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JunctionC {
+    cj: f64,
+    vj: f64,
+    mj: f64,
+    vf: f64,
+    /// `Cj·(1−Fc)^(−Mj)`：线性段在 `v = Fc·Vj` 处的电容
+    cz: f64,
+    /// 线性段的斜率系数：`Mj / (Vj·(1−Fc))`
+    slope: f64,
+    /// `Q(Fc·Vj)`
+    q_fc: f64,
+    /// `Cj·Vj/(1−Mj)`
+    qk: f64,
+}
+
+impl JunctionC {
+    fn new(cj: f64, vj: f64, mj: f64, fc: f64) -> Self {
+        if !(cj > 0.0) || !(vj > 0.0) {
+            return Self::default();
+        }
+        let fc = fc.clamp(0.0, 0.95);
+        let one_m_fc = 1.0 - fc;
+        let vf = fc * vj;
+        let cz = cj * one_m_fc.powf(-mj);
+        let qk = cj * vj / (1.0 - mj);
+        let q_fc = qk * (1.0 - one_m_fc.powf(1.0 - mj));
+        Self {
+            cj,
+            vj,
+            mj,
+            vf,
+            cz,
+            slope: mj / (vj * one_m_fc),
+            q_fc,
+            qk,
+        }
+    }
+
+    /// `(Q(v), dQ/dv)`；指数段一个 `powf`，线性段没有
+    #[inline(always)]
+    fn qc(&self, v: f64) -> (f64, f64) {
+        if self.cj == 0.0 {
+            return (0.0, 0.0);
+        }
+        if v < self.vf {
+            let arg = 1.0 - v / self.vj;
+            let sarg = arg.powf(-self.mj); // C/Cj
+            (self.qk * (1.0 - arg * sarg), self.cj * sarg)
+        } else {
+            let dv = v - self.vf;
+            (
+                self.q_fc + self.cz * dv * (1.0 + 0.5 * self.slope * dv),
+                self.cz * (1.0 + self.slope * dv),
+            )
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BjtConsts {
+    /// B-E 结的电荷/电容常量
+    jbe: JunctionC,
+    /// B-C 结
+    jbc: JunctionC,
     vt_e: f64,
     vcrit_e: f64,
     ec_e: f64,
@@ -155,6 +219,11 @@ pub struct BjtConsts {
 /// `ec = exp(vcrit/vt) = vt/(√2·Isat)` —— 直接算，不用再 `exp`。
 #[inline(always)]
 fn exp_lim_cd(v: f64, vt: f64, vcrit: f64, ec: f64) -> (f64, f64) {
+    // 极反偏（v < −40·VT）：e^v/vt < e^-40 ≈ 4e-18，电流与导数都可以按 0 处理。
+    // 省掉一次 `exp` —— 反偏结在电路里是常态（E88）。
+    if v * (1.0 / vt) < -40.0 {
+        return (0.0, 0.0);
+    }
     if v <= vcrit {
         let e = (v / vt).exp();
         (e, e / vt)
@@ -355,6 +424,8 @@ impl Bjt {
         let (vcrit_ise, ec_ise) = mk(vt_ise, self.ise);
         let (vcrit_isc, ec_isc) = mk(vt_isc, self.isc);
         BjtConsts {
+            jbe: JunctionC::new(self.cje, self.vje, self.mje, self.fc),
+            jbc: JunctionC::new(self.cjc, self.vjc, self.mjc, self.fc),
             vt_e,
             vcrit_e,
             ec_e,
@@ -377,26 +448,49 @@ impl Bjt {
     /// - 电荷与电流**共用**同一次本征求值（旧代码 `terminal` + `charges` 各算一遍）；
     /// - 雅可比是解析的（旧路径在 `multiport` 里做 6 次数值差分，一次迭代 7 次模型求值）。
     pub fn eval(&self, c: &BjtConsts, vbe: f64, vbc: f64, with_charge: bool) -> BjtEval {
+        self.eval_from(c, vbe, vbc, with_charge, None).0
+    }
+
+    /// 带**热启动**的版本：`start` 是上一次内层解（`[vb, vc]`），返回 `(结果, 新的内层解)`。
+    ///
+    /// 实时路径每次都拿上一轮迭代的内点当初值 —— 相邻两次迭代相距很近，
+    /// 内层牛顿常常 1 次就收敛（E88 之前固定用"结电压窗口"当初值，要 3~7 次）。
+    pub fn eval_from(
+        &self,
+        c: &BjtConsts,
+        vbe: f64,
+        vbc: f64,
+        with_charge: bool,
+        start: Option<[f64; 2]>,
+    ) -> (BjtEval, [f64; 2]) {
         // **窗口守卫**（E83）：牛顿在迭代中会把端电压推到离谱的地方（实测 `vbc≈+16 V` ——
         // 8.2 V 供电下物理上不可能）。那里解析解与"参考实现"会落到不同的根，新老路径
         // 不再一致，迭代容易卡住。所以超出窗口就退回参考实现（`terminal` + FD 雅可比，
         // 与 E83 之前的实现完全一致）：慢，但把"离谱区"的行为钉在原样。
         if vbc > 8.0 || vbc < -60.0 || vbe > 2.0 || vbe < -20.0 {
-            return self.eval_via_reference(vbe, vbc, with_charge);
+            return (self.eval_via_reference(vbe, vbc, with_charge), [vbe, vbc]);
         }
-        let ev = self.eval_mapped(c, vbe, vbc, with_charge);
-        if ev.converged {
-            return ev;
+        let (ev, inner) = self.eval_mapped(c, vbe, vbc, with_charge, start);
+        if ev.converged || self.rb == 0.0 && self.re == 0.0 && self.rc == 0.0 {
+            return (ev, inner);
         }
         // **兜底**：内层牛顿没收敛时，传播出来的雅可比不可信（隐函数定理要求残差为零）。
         // 此时用"映射后的函数"做数值差分 —— 慢，但**自洽**（旧实现一直是这么做的）。
         // 只在极端电压下发生，稳态路径不受影响。
         let h = 1e-6;
-        let p = self.eval_mapped(c, vbe + h, vbc, with_charge);
-        let m = self.eval_mapped(c, vbe - h, vbc, with_charge);
-        let q = self.eval_mapped(c, vbe, vbc + h, with_charge);
-        let r = self.eval_mapped(c, vbe, vbc - h, with_charge);
-        BjtEval {
+        let p = self
+            .eval_mapped(c, vbe + h, vbc, with_charge, Some(inner))
+            .0;
+        let m = self
+            .eval_mapped(c, vbe - h, vbc, with_charge, Some(inner))
+            .0;
+        let q = self
+            .eval_mapped(c, vbe, vbc + h, with_charge, Some(inner))
+            .0;
+        let r = self
+            .eval_mapped(c, vbe, vbc - h, with_charge, Some(inner))
+            .0;
+        let ev = BjtEval {
             dic_dvbe: (p.ic - m.ic) / (2.0 * h),
             dic_dvbc: (q.ic - r.ic) / (2.0 * h),
             dib_dvbe: (p.ib - m.ib) / (2.0 * h),
@@ -406,7 +500,8 @@ impl Bjt {
             dqbc_dvbe: (p.qbc - m.qbc) / (2.0 * h),
             dqbc_dvbc: (q.qbc - r.qbc) / (2.0 * h),
             ..ev
-        }
+        };
+        (ev, inner)
     }
 
     /// **参考实现**（慢路径，与 E83 之前逐位等价）：`terminal()` + 数值差分雅可比。
@@ -445,13 +540,23 @@ impl Bjt {
     }
 
     /// 端 → 本征的内层求解 + 雅可比传播（不收敛时返回 `converged = false`）
-    fn eval_mapped(&self, c: &BjtConsts, vbe: f64, vbc: f64, with_charge: bool) -> BjtEval {
+    fn eval_mapped(
+        &self,
+        c: &BjtConsts,
+        vbe: f64,
+        vbc: f64,
+        with_charge: bool,
+        start: Option<[f64; 2]>,
+    ) -> (BjtEval, [f64; 2]) {
         // rb/re/rc 全 0 时端电压就是结电压，免掉内层牛顿
         if self.rb == 0.0 && self.re == 0.0 && self.rc == 0.0 {
-            return self.intrinsic_eval(c, vbe, vbc, with_charge);
+            return (self.intrinsic_eval(c, vbe, vbc, with_charge), [vbe, vbc]);
         }
-        // 初值取"结电压的物理范围"（`|vcrit|` 附近）；极端端电压靠下面的线搜索走到底
-        let (mut vb, mut vc) = (vbe.clamp(-0.5, 0.6), vbc.clamp(-0.6, 0.6));
+        // 初值：优先**热启动**（上一次内层解）；没有就用"结电压的物理范围"
+        let (mut vb, mut vc) = match start {
+            Some([vb0, vc0]) if vb0.is_finite() && vc0.is_finite() => (vb0, vc0),
+            _ => (vbe.clamp(-0.5, 0.6), vbc.clamp(-0.6, 0.6)),
+        };
         let mut cur = self.intrinsic_eval(c, vb, vc, with_charge);
         let mut converged = false;
         // 内层牛顿：**带回溯线搜索**（不用固定步长上限）。
@@ -516,7 +621,7 @@ impl Bjt {
         }
         cur.converged = converged;
         if !converged {
-            return cur;
+            return (cur, [vb, vc]);
         }
         // 雅可比传播：dv_i/dv_term = J⁻¹
         let j11 = 1.0 + self.rb * cur.dib_dvbe + self.re * (cur.dic_dvbe + cur.dib_dvbe);
@@ -526,7 +631,7 @@ impl Bjt {
         let det = j11 * j22 - j12 * j21;
         if !(det.abs() > 1e-300) || !det.is_finite() {
             cur.converged = false;
-            return cur;
+            return (cur, [vb, vc]);
         }
         let prop = |dvb: f64, dvc: f64| -> (f64, f64) {
             (
@@ -538,17 +643,20 @@ impl Bjt {
         let (dib_dvbe, dib_dvbc) = prop(cur.dib_dvbe, cur.dib_dvbc);
         let (dqbe_dvbe, dqbe_dvbc) = prop(cur.dqbe_dvbe, cur.dqbe_dvbc);
         let (dqbc_dvbe, dqbc_dvbc) = prop(cur.dqbc_dvbe, cur.dqbc_dvbc);
-        BjtEval {
-            dic_dvbe,
-            dic_dvbc,
-            dib_dvbe,
-            dib_dvbc,
-            dqbe_dvbe,
-            dqbe_dvbc,
-            dqbc_dvbe,
-            dqbc_dvbc,
-            ..cur
-        }
+        (
+            BjtEval {
+                dic_dvbe,
+                dic_dvbc,
+                dib_dvbe,
+                dib_dvbc,
+                dqbe_dvbe,
+                dqbe_dvbc,
+                dqbc_dvbe,
+                dqbc_dvbc,
+                ..cur
+            },
+            [vb, vc],
+        )
     }
 
     /// 本征（不含 `Rb/Re/Rc`）：电流 + 电荷 + 解析雅可比
@@ -631,14 +739,13 @@ impl Bjt {
         if !with_charge {
             return ev;
         }
-        if self.cje > 0.0 {
-            ev.qbe += junction_charge(vbe, self.cje, self.vje, self.mje, self.fc);
-            ev.dqbe_dvbe += junction_cap(vbe, self.cje, self.vje, self.mje, self.fc);
-        }
-        if self.cjc > 0.0 {
-            ev.qbc += junction_charge(vbc, self.cjc, self.vjc, self.mjc, self.fc);
-            ev.dqbc_dvbc += junction_cap(vbc, self.cjc, self.vjc, self.mjc, self.fc);
-        }
+        // 结电荷 + 结电容（一次 powf；线性段连 powf 都不需要）
+        let (q_be, c_be) = c.jbe.qc(vbe);
+        let (q_bc, c_bc) = c.jbc.qc(vbc);
+        ev.qbe += q_be;
+        ev.dqbe_dvbe += c_be;
+        ev.qbc += q_bc;
+        ev.dqbc_dvbc += c_bc;
         if self.diffusion {
             // Tf_eff 对电压的导数忽略（Itf/Xtf 是高阶修正，只影响牛顿的收敛速度）
             let tf = if self.itf.is_finite() && self.itf > 0.0 {
