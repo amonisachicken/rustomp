@@ -1,72 +1,49 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# **标准构建入口**：出「单声道」和「立体声」两个独立插件（Waves 式）。
+# **构建 macOS 插件 = 调用外部打包工具**（本仓不再包含任何平台打包代码）。
 #
-#   ./scripts/build-all.sh                # Mono + Stereo（默认，推荐）
-#   ./scripts/build-all.sh --with-dual    # 额外再出一个同时支持两种布局的版本
+#   ./scripts/build-all.sh [插件目录] [--variant mono|stereo|dual]... [--format au|vst3|clap]...
 #
-# 为什么要分开发：见 DEVLOG ADR-008 / E14。
-# 宿主（Logic）在插入菜单里按通道条声道数过滤 AU；一个"同时支持 mono+stereo"
-# 的插件能不能被正确识别，取决于宿主对多布局的探测是否可靠 —— 实测不可靠。
-# 拆成两个单一布局的独立身份最稳，而且各自有独立 AU 码与缓存条目。
+# 为什么：打包与宿主兼容（clap-wrapper / CMake / 签名 / 缓存）是平台专属的，
+# 放进来会让框架被迫知道 Logic 的行为（DEVLOG E70、ADR-015、docs/ecosystem.md）。
+#
+# 需要的打包工具：
+#   git clone git@github.com:amonisachicken/rustomp-mac-plugin.git
+#   export RUSTOMP_MAC_PLUGIN=$HOME/develop/rustomp-mac-plugin
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
 
-WITH_DUAL=0
-for a in "$@"; do
-    case "$a" in
-        --with-dual) WITH_DUAL=1 ;;
-        *) echo "未知参数：$a"; exit 1 ;;
-    esac
-done
+PACKER="${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}"
+if [ ! -x "$PACKER/pack.sh" ]; then
+    cat >&2 <<EOF
+✗ 找不到 macOS 打包工具（$PACKER/pack.sh）
 
-echo "############ 0/2  重新生成插件代码 ############"
-# 生成物（params/bridge/panel/assets）来自 rustomp.toml；
-# 这里统一重生成一次，避免"改了 toml 但忘了跑生成器"用旧代码构建。
-GEN="./target/release/rustomp-gen"
-[ -x "$GEN" ] || cargo build -q --release -p rustomp-gen
-# 插件项目可以在仓外（RUSTOMP_GUEST / PLUGIN_DIR）；找不到就跳过这一步
-if dir="$("$ROOT/scripts/plugin-env.sh" --print-dir 2>/dev/null)"; then
-    echo "  → ${dir}"
-    "$GEN" "$dir" | tail -1
-else
-    for proj in "$ROOT"/plugins/*/rustomp.toml; do
-        [ -e "$proj" ] || continue
-        dir="$(dirname "$proj")"
-        echo "  → ${dir}"
-        "$GEN" "$dir" | tail -1
-    done
-fi
+框架只做 DSP / 代码生成 / 面板，打包在独立仓库里。装一次即可：
 
-echo "############ 1/2  单声道变体 ############"
-./scripts/build-variant.sh mono
+  git clone git@github.com:amonisachicken/rustomp-mac-plugin.git ~/develop/rustomp-mac-plugin
+  $PACKER/scripts/fetch-third-party.sh        # 首次：拉打包所需的第三方源码
+  export RUSTOMP_MAC_PLUGIN=~/develop/rustomp-mac-plugin
 
-echo
-echo "############ 2/2  立体声变体 ############"
-./scripts/build-variant.sh stereo
-
-if [ "$WITH_DUAL" = "1" ]; then
-    echo
-    echo "############ 附加：双布局版本（过渡用）############"
-    ./scripts/build-au.sh --skip-auval
-fi
-
-echo
-echo "==================== 安装结果 ===================="
-for d in "$HOME"/Library/Audio/Plug-Ins/Components/*.component; do
-    f="$d/Contents/Info.plist"
-    [ -f "$f" ] || continue
-    printf "  %-34s %s\n" "$(basename "$d" .component)" \
-        "$(plutil -extract AudioComponents.0.subtype raw "$f" 2>/dev/null)/HpEf"
-done
-cat <<'EOF'
-
-用法：
-  单声道音轨 → Rustomp Fuzz Mono
-  立体声音轨 → Rustomp Fuzz Stereo
-若 Logic 里仍不出现，先完全退出 Logic 再执行：
-  ./scripts/reset-logic-cache.sh
+然后重新运行：
+  ./scripts/build-all.sh [插件目录]
 EOF
+    exit 1
+fi
+
+# 插件目录：显式参数 > $RUSTOMP_GUEST > plugins/ 下唯一项目
+PASS_ARGS=("$@")
+if [ $# -gt 0 ] && [ -f "${1}/rustomp.toml" ]; then
+    PLUGIN_DIR="$1"
+    PASS_ARGS=("${@:2}")     # 第一个参数是插件目录，不要再往 pack.sh 传
+fi
+PLUGIN_DIR="${PLUGIN_DIR:-}"
+if [ -z "$PLUGIN_DIR" ] && [ -n "${RUSTOMP_GUEST:-}" ]; then PLUGIN_DIR="$RUSTOMP_GUEST"; fi
+if [ -z "$PLUGIN_DIR" ]; then
+    PLUGIN_DIR="$(RUSTOMP_ROOT="$ROOT" "$ROOT/scripts/plugin-env.sh" --print-dir 2>/dev/null || true)"
+fi
+[ -n "$PLUGIN_DIR" ] || { echo "✗ 请指定插件目录：./scripts/build-all.sh <插件目录>" >&2; exit 1; }
+
+export RUSTOMP_ROOT="$ROOT"
+exec "$PACKER/pack.sh" "$PLUGIN_DIR" ${PASS_ARGS[@]+"${PASS_ARGS[@]}"}

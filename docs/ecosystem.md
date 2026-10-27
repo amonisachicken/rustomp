@@ -138,8 +138,8 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 
 | # | 任务 | 完成标准 |
 |---|---|---|
-| **0** | 给 `rustomp` 打 tag `v0.1.0`；把契约 B 写成可执行测试（见 §6） | 测试在 CI 里跑；插件仓有东西可钉 |
-| **1** | 拆出 `rustomp-mac-plugin` | `rustomp` 里搜不到任何 macOS 打包词；`rustomp` 的 `verify.sh` 不再依赖 `patches/`；用它打出的 AU 与拆前**同一份源码**产物行为一致（RMS / au_smoke 通过） |
+| **0** | 给 `rustomp` 打 tag `v0.1.0`；把契约 B 写成可执行测试（见 §6） | ✅ **已完成**：`v0.1.0` 已推；`tests/packer_contract.sh` 已进 `verify.sh` |
+| **1** | 拆出 `rustomp-mac-plugin` | ✅ **已完成**（DEVLOG E71）：框架里平台词为 0（测试断言）；拆前/后 `au_smoke` + RMS 0.356170 一致 |
 | **2** | 独立发布 `sparklin-drive` | **全新 clone + `./build.sh`** 能出 AU/VST3/CLAP；CI 在干净 runner 上绿 |
 | **3** | `rustomp-circuit-designer` D0 | 符号库 + 网表生成 + 一键校验（`rustomp-import` + ngspice 偏差显示）；拖拽连线留 D1 |
 

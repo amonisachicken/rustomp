@@ -77,6 +77,7 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "fast" ]; then
   fi
 
   run_tier workspace "工作区测试（无 ngspice 也能跑）" cargo test --workspace --release
+  run_tier packer-contract "打包契约（ARTIFACT: / 框架无平台词）" ./tests/packer_contract.sh
 
   # 生成物漂移守卫：显式再跑一次 CLI 的 --check（与测试里的守卫互为双保险）
   run_tier drift-sparklin "生成物漂移（sparklin_drive）" \

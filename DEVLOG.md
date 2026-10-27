@@ -4248,6 +4248,68 @@ echo "bundler.toml → $OUT（$PLUGIN_NAME）"
 
 ---
 
+## E71：拆仓第 1 步 —— macOS 打包独立成 `rustomp-mac-plugin`（2026-10-27）
+
+框架里最后一块"平台专属"的东西搬走了。`rustomp` 现在只剩 DSP / 代码生成 / 面板契约。
+
+### 71.1 搬走了什么
+
+| 去 `rustomp-mac-plugin` | 说明 |
+|---|---|
+| `scripts/{build-variant,build-au,check-au,gen-bundler-toml,fetch-third-party,reset-logic-cache}.sh` | 打包流程 |
+| `cmake/CMakeLists.txt`、`patches/*.patch` | clap-wrapper → AUv2 与 AUv2 host classification 补丁 |
+| `tools/au-smoke/`（C）、`tools/clap-probe/` | macOS 专属验证工具 |
+| `third_party/`（12 MB 缓存） | clap-wrapper / CLAP SDK / AudioUnitSDK |
+
+`rustomp` 侧 `scripts/build-all.sh` 变成**瘦包装**：找不到打包工具就打印 clone 命令，绝不自己编。
+
+### 71.2 新增的两个东西
+
+1. **`pack.sh`（契约 B 的实现）**
+
+   ```bash
+   ./pack.sh <plugin_dir> [--variant mono|stereo|dual]... [--format au|vst3|clap]... [--no-install]
+   # 成功：逐行 ARTIFACT: <绝对路径>
+   ```
+
+2. **`tests/packer_contract.sh`（契约 B 的可执行测试）** —— 假插件 + 假 packer，验证三件事：
+
+   - 插件目录与其余参数**原样透传**（`--variant stereo --no-install` 都到得了 packer）；
+   - `ARTIFACT:` 行**原样透出**；
+   - **框架源码里不许出现平台专属词**（`clap-wrapper|codesign|CMakeLists|.component|Logic`，
+     只扫代码与脚本、跳过注释与文档）。
+
+   它已经进 `verify.sh` 的快速层。以后加 Windows/Linux 打包工具，就是"再多一个符合契约的脚本"。
+
+### 71.3 拆分时的三个适配点
+
+| 问题 | 处理 |
+|---|---|
+| 打包工具要读 `rustomp.toml`，但 `plugin_meta.py` 在框架里 | `plugin-env.sh` 改为从 `$RUSTOMP_ROOT` 取（自动探测 `<plugin_dir>/../rustomp`），失败时给明确提示 |
+| `bundler.toml` 该写在哪 | 写**插件项目根**（cargo-nih-plug 的 workspace 根），不是框架目录 |
+| `--no-install`（CI 只想要产物） | `build-variant.sh` 支持；`pack.sh` 透传 |
+
+另外给插件项目加了 `[requires]`（`framework/packer/designer`），`pack.sh` 启动时校验 `packer` 版本。
+
+### 71.4 验收（拆前 / 拆后对比）
+
+| 项 | 拆前 | 拆后 |
+|---|---|---|
+| 构建入口 | `rustomp/scripts/build-all.sh`（自己实现） | `rustomp/scripts/build-all.sh` → `rustomp-mac-plugin/pack.sh` |
+| 产物 | Sp02 / Sp03 | Sp02 / Sp03 **同一份源码** |
+| `au_smoke` | CocoaUI ✓ / RMS 0.356170 | CocoaUI ✓ / **RMS 0.356170** |
+| ARTIFACT 行 | — | 6 条（2 变体 × AU/VST3/CLAP） |
+| 框架里的平台词 | 一堆 | **0**（测试断言） |
+
+`doctor.sh` 在本机全绿：cargo 1.99.1、Xcode CLT、cmake 4.3.3、两个 rust target、框架、third_party。
+
+### 71.5 遗留
+
+- standalone 仍未实现（v0.2）；签名仍是 ad-hoc（对外分发要 Developer ID + 公证）；
+- `rustomp/template/` 仍留在框架里（生成新插件），但生成目标已改为仓外（E70）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4538,6 +4600,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **拆仓第 1 步：macOS 打包独立**（E71）：新增 rustomp-mac-plugin（pack.sh 契约 B + doctor.sh），框架侧 build-all.sh 变瘦包装；新增 tests/packer_contract.sh（ARTIFACT 透传 + 框架无平台词）并进 verify.sh；拆前/拆后 au_smoke 与 RMS 0.356170 完全一致 |
 | 2026-10-27 | **拆仓第 0 步：工作区自洽**（E70）：全新 clone 的 workspace 失败已修；发现 `cargo-nih-plug` 会 chdir 到**最顶层** `Cargo.toml` → **插件必须住在本仓之外**；插件移到 `../sparklin-drive`，`new-plugin.sh` 改为生成到 `$RUSTOMP_GUEST`；Sp02/Sp03 重建通过 |
 | 2026-10-27 | **真实下载件完整安装**（E68）：用户自绘设计（3 个导入 SVG）8 文件 zip → 装上 Sp02/Sp03；`rustomp-gen` 写 0 个文件（只改美术 → 只动 panel.png）；修掉 CLI 不认 `imported[]` 的 bug；RMS 逐位不变 |
 | 2026-10-27 | **用设计器导出的文件重做 GUI**（E67）：只拿 `ui.toml` + `panel.svg` 走完 6 步交接；LED/脚踏半径已改"由素材推导"（2.249→2.247、7.2→7.175）；补 `docs/06-export-runbook.md` |
