@@ -174,7 +174,11 @@ impl JunctionC {
         }
     }
 
-    /// `(Q(v), dQ/dv)`；指数段一个 `powf`，线性段没有
+    /// `(Q(v), dQ/dv)`；指数段一个 `exp/ln`，线性段没有
+    ///
+    /// **不要用 `powf`**（E89）：本机 `powf` 要 64 ns，而 `(−mj·ln arg)` 再 `exp`
+    /// 只要 ~10 ns（`powf` 走的是通用 `pow`，内部还要判整数/开方分支）。
+    /// 结电容只出现在雅可比里，1e-15 的相对误差完全无关紧要。
     #[inline(always)]
     fn qc(&self, v: f64) -> (f64, f64) {
         if self.cj == 0.0 {
@@ -182,7 +186,7 @@ impl JunctionC {
         }
         if v < self.vf {
             let arg = 1.0 - v / self.vj;
-            let sarg = arg.powf(-self.mj); // C/Cj
+            let sarg = (-self.mj * arg.ln()).exp(); // C/Cj
             (self.qk * (1.0 - arg * sarg), self.cj * sarg)
         } else {
             let dv = v - self.vf;
@@ -201,34 +205,56 @@ pub struct BjtConsts {
     /// B-C 结
     jbc: JunctionC,
     vt_e: f64,
+    /// `1/vt`（结电压 → 归一化指数的乘法版，省掉每拍的除法）
+    ivt_e: f64,
+    /// `LOG2E/vt`：`exp(x/vt) == (x·ivt_ln2).exp2()`，`exp2` 比 `exp` 快一倍
+    ivt_ln2_e: f64,
     vcrit_e: f64,
     ec_e: f64,
     vt_c: f64,
+    ivt_c: f64,
+    ivt_ln2_c: f64,
     vcrit_c: f64,
     ec_c: f64,
     vt_ise: f64,
+    ivt_ise: f64,
+    ivt_ln2_ise: f64,
     vcrit_ise: f64,
     ec_ise: f64,
     vt_isc: f64,
+    ivt_isc: f64,
+    ivt_ln2_isc: f64,
     vcrit_isc: f64,
     ec_isc: f64,
 }
 
+/// 内层牛顿（`Rb/Re/Rc` 的端 → 本征求解）的**相对**残差收敛容差。
+///
+/// **不要试着放宽它**（E90 实测）：看着像"白算"（外层自己只收敛到 1e-6），
+/// 但内层解同时决定**直流工作点**走的路径 —— 放宽到 1e-7 时，
+/// `designer_generated_fuzz::直流工作点与_ngspice_一致` 会从 0.10 V 跳到 1.37 V
+/// （同一张网表的另一个解支）。它属于正确性参数，不是性能参数。
+const INNER_TOL: f64 = 1e-10;
+
 /// 结电压超过 `vcrit` 后按切线线性延续（值 + 一阶导都连续）。
 ///
 /// `ec = exp(vcrit/vt) = vt/(√2·Isat)` —— 直接算，不用再 `exp`。
+///
+/// **热路径**（E89）：除法换成乘 `1/vt`，`exp` 换成 `exp2`（`exp2` 是 libm 里
+/// 唯一被高度优化过的（3.9 ns vs 8.0 ns），而 `exp(x) == exp2(x·LOG2E)`）。
 #[inline(always)]
-fn exp_lim_cd(v: f64, vt: f64, vcrit: f64, ec: f64) -> (f64, f64) {
+fn exp_lim_cd(v: f64, ivt: f64, ivt_ln2: f64, vcrit: f64, ec: f64) -> (f64, f64) {
     // 极反偏（v < −40·VT）：e^v/vt < e^-40 ≈ 4e-18，电流与导数都可以按 0 处理。
     // 省掉一次 `exp` —— 反偏结在电路里是常态（E88）。
-    if v * (1.0 / vt) < -40.0 {
+    let x = v * ivt;
+    if x < -40.0 {
         return (0.0, 0.0);
     }
     if v <= vcrit {
-        let e = (v / vt).exp();
-        (e, e / vt)
+        let e = (v * ivt_ln2).exp2();
+        (e, e * ivt)
     } else {
-        (ec * (1.0 + (v - vcrit) / vt), ec / vt)
+        (ec * (1.0 + (v - vcrit) * ivt), ec * ivt)
     }
 }
 
@@ -423,19 +449,28 @@ impl Bjt {
         let (vcrit_c, ec_c) = mk(vt_c, self.is);
         let (vcrit_ise, ec_ise) = mk(vt_ise, self.ise);
         let (vcrit_isc, ec_isc) = mk(vt_isc, self.isc);
+        const LOG2E: f64 = std::f64::consts::LOG2_E;
         BjtConsts {
             jbe: JunctionC::new(self.cje, self.vje, self.mje, self.fc),
             jbc: JunctionC::new(self.cjc, self.vjc, self.mjc, self.fc),
             vt_e,
+            ivt_e: 1.0 / vt_e,
+            ivt_ln2_e: LOG2E / vt_e,
             vcrit_e,
             ec_e,
             vt_c,
+            ivt_c: 1.0 / vt_c,
+            ivt_ln2_c: LOG2E / vt_c,
             vcrit_c,
             ec_c,
             vt_ise,
+            ivt_ise: 1.0 / vt_ise,
+            ivt_ln2_ise: LOG2E / vt_ise,
             vcrit_ise,
             ec_ise,
             vt_isc,
+            ivt_isc: 1.0 / vt_isc,
+            ivt_ln2_isc: LOG2E / vt_isc,
             vcrit_isc,
             ec_isc,
         }
@@ -577,7 +612,7 @@ impl Bjt {
                 + vbe.abs().max(vbc.abs())
                 + (cur.ib.abs() * self.rb)
                 + (cur.ic.abs() * self.rc);
-            if f1.abs() < 1e-10 * scale && f2.abs() < 1e-10 * scale {
+            if f1.abs() < INNER_TOL * scale && f2.abs() < INNER_TOL * scale {
                 converged = true;
                 break;
             }
@@ -589,8 +624,10 @@ impl Bjt {
             if !(det.abs() > 1e-300) || !det.is_finite() {
                 break;
             }
-            let dvb = (j22 * f1 - j12 * f2) / det;
-            let dvc = (-j21 * f1 + j11 * f2) / det;
+            // 一次倒数代替两次除法（本机除法 ~10 ns，倒数+乘 ~2 ns；E90）
+            let inv_det = 1.0 / det;
+            let dvb = (j22 * f1 - j12 * f2) * inv_det;
+            let dvc = (-j21 * f1 + j11 * f2) * inv_det;
             if !dvb.is_finite() || !dvc.is_finite() {
                 break;
             }
@@ -633,10 +670,12 @@ impl Bjt {
             cur.converged = false;
             return (cur, [vb, vc]);
         }
+        // 一次 `1/det`，四个导数都用乘法（8 次除法 → 1 次，E90）
+        let inv_det = 1.0 / det;
         let prop = |dvb: f64, dvc: f64| -> (f64, f64) {
             (
-                (dvb * j22 - dvc * j21) / det,
-                (-dvb * j12 + dvc * j11) / det,
+                (dvb * j22 - dvc * j21) * inv_det,
+                (-dvb * j12 + dvc * j11) * inv_det,
             )
         };
         let (dic_dvbe, dic_dvbc) = prop(cur.dic_dvbe, cur.dic_dvbc);
@@ -661,8 +700,8 @@ impl Bjt {
 
     /// 本征（不含 `Rb/Re/Rc`）：电流 + 电荷 + 解析雅可比
     fn intrinsic_eval(&self, c: &BjtConsts, vbe: f64, vbc: f64, with_charge: bool) -> BjtEval {
-        let (e_be, de_be) = exp_lim_cd(vbe, c.vt_e, c.vcrit_e, c.ec_e);
-        let (e_bc, de_bc) = exp_lim_cd(vbc, c.vt_c, c.vcrit_c, c.ec_c);
+        let (e_be, de_be) = exp_lim_cd(vbe, c.ivt_e, c.ivt_ln2_e, c.vcrit_e, c.ec_e);
+        let (e_bc, de_bc) = exp_lim_cd(vbc, c.ivt_c, c.ivt_ln2_c, c.vcrit_c, c.ec_c);
 
         // 基区电荷因子 qb = 0.5·q1·sqrt(1+4q2)
         let c1 = 1.0 - vbc / self.vaf - vbe / self.var;
@@ -685,7 +724,8 @@ impl Bjt {
         }
         let s = (1.0 + 4.0 * q2).max(0.0).sqrt();
         let (ds_dvbe, ds_dvbc) = if s > 0.0 {
-            (2.0 * dq2_dvbe / s, 2.0 * dq2_dvbc / s)
+            let inv_s = 2.0 / s;
+            (dq2_dvbe * inv_s, dq2_dvbc * inv_s)
         } else {
             (0.0, 0.0)
         };
@@ -696,19 +736,23 @@ impl Bjt {
         let dqb_dvbc = 0.5 * (dq1_dvbc * one_plus_s + q1 * ds_dvbc);
 
         // 传输电流与两个结注入电流
+        //
+        // **除法是热路径里的第二大开销**（本机 ~10 ns/次，`exp2` 才 4 ns）：
+        // 这里把「`/qb` 两次 + `/qb2` 两次」收成「一次 `1/qb` + 乘法」。
         let diff = e_be - e_bc;
-        let ict = self.is / qb * diff;
-        let qb2 = qb * qb;
-        let d_ict_dvbe = self.is * (de_be * qb - diff * dqb_dvbe) / qb2;
-        let d_ict_dvbc = self.is * (-de_bc * qb - diff * dqb_dvbc) / qb2;
+        let inv_qb = 1.0 / qb;
+        let inv_qb2 = inv_qb * inv_qb;
+        let ict = self.is * inv_qb * diff;
+        let d_ict_dvbe = self.is * (de_be * qb - diff * dqb_dvbe) * inv_qb2;
+        let d_ict_dvbc = self.is * (-de_bc * qb - diff * dqb_dvbc) * inv_qb2;
 
         let (e_ise, de_ise) = if self.ise > 0.0 {
-            exp_lim_cd(vbe, c.vt_ise, c.vcrit_ise, c.ec_ise)
+            exp_lim_cd(vbe, c.ivt_ise, c.ivt_ln2_ise, c.vcrit_ise, c.ec_ise)
         } else {
             (0.0, 0.0)
         };
         let (e_isc, de_isc) = if self.isc > 0.0 {
-            exp_lim_cd(vbc, c.vt_isc, c.vcrit_isc, c.ec_isc)
+            exp_lim_cd(vbc, c.ivt_isc, c.ivt_ln2_isc, c.vcrit_isc, c.ec_isc)
         } else {
             (0.0, 0.0)
         };
@@ -754,17 +798,17 @@ impl Bjt {
             } else {
                 self.tf
             };
-            let qf = tf * ict / qb;
+            let qf = tf * ict * inv_qb;
             if qf > 0.0 {
                 ev.qbe += qf;
-                ev.dqbe_dvbe += tf * (d_ict_dvbe * qb - ict * dqb_dvbe) / qb2;
-                ev.dqbe_dvbc += tf * (d_ict_dvbc * qb - ict * dqb_dvbc) / qb2;
+                ev.dqbe_dvbe += tf * (d_ict_dvbe * qb - ict * dqb_dvbe) * inv_qb2;
+                ev.dqbe_dvbc += tf * (d_ict_dvbc * qb - ict * dqb_dvbc) * inv_qb2;
             }
-            let qr = self.tr * (-ict) / qb;
+            let qr = self.tr * (-ict) * inv_qb;
             if qr > 0.0 {
                 ev.qbc += qr;
-                ev.dqbc_dvbe += self.tr * (-d_ict_dvbe * qb + ict * dqb_dvbe) / qb2;
-                ev.dqbc_dvbc += self.tr * (-d_ict_dvbc * qb + ict * dqb_dvbc) / qb2;
+                ev.dqbc_dvbe += self.tr * (-d_ict_dvbe * qb + ict * dqb_dvbe) * inv_qb2;
+                ev.dqbc_dvbc += self.tr * (-d_ict_dvbc * qb + ict * dqb_dvbc) * inv_qb2;
             }
         }
         ev

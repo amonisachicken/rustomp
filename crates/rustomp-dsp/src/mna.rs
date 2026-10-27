@@ -454,6 +454,10 @@ pub enum Element {
         lim: core::cell::Cell<[f64; 2]>,
         /// 内层牛顿的上一轮解 `[vb, vc]`（热启动，E88）。同样用 `Cell`
         inner: core::cell::Cell<[f64; 2]>,
+        /// 上一轮 `stamp` 在**限幅后的结电压**上算出的结电荷 `[Qbe, Qbc]`。
+        /// 收敛后的 `commit` 若发现装配点与提交点重合（绝大多数拍），直接复用 ——
+        /// 每拍省掉一次完整的 BJT 求值（≈ 250 ns，占实时路径 18%，E90）
+        q_stamp: core::cell::Cell<[f64; 2]>,
     },
     /// JFET（N 沟道）
     Jfet {
@@ -512,6 +516,7 @@ impl Element {
             q,
             lim,
             inner,
+            q_stamp,
         } = self
         {
             let (qbe_prev, qbc_prev) = (q[0], q[1]);
@@ -535,6 +540,7 @@ impl Element {
             let (ev, inner_new) =
                 model.eval_from(consts, vbe, vbc, dt_eff > 0.0, Some(inner.get()));
             inner.set(inner_new);
+            q_stamp.set([ev.qbe, ev.qbc]);
 
             // 端电流（流入器件）：DC 部分 + 结电荷的位移电流
             let mut ic = s * ev.ic;
@@ -685,14 +691,24 @@ impl Element {
                 q,
                 lim,
                 inner,
+                q_stamp,
+                ..
             } => {
                 let s = if *npn { 1.0 } else { -1.0 };
                 let (vc, vb, ve) = (v[*c], v[*b], v[*e]);
                 let (vbe, vbc) = (s * (vb - ve), s * (vb - vc));
-                let (ev, inner_new) = model.eval_from(consts, vbe, vbc, true, Some(inner.get()));
-                *q = [ev.qbe, ev.qbc];
-                lim.set([vbe, vbc]);
-                inner.set(inner_new);
+                // **装配点就是提交点**（最后一轮 `stamp` 正好落在最终解上，除非被
+                // pnjlim 限幅过）→ 电荷直接复用，省掉一次完整求值（E90）。
+                if lim.get() == [vbe, vbc] {
+                    *q = q_stamp.get();
+                } else {
+                    let (ev, inner_new) =
+                        model.eval_from(consts, vbe, vbc, true, Some(inner.get()));
+                    *q = [ev.qbe, ev.qbc];
+                    inner.set(inner_new);
+                    lim.set([vbe, vbc]);
+                    q_stamp.set([ev.qbe, ev.qbc]);
+                }
             }
             Element::OpAmp {
                 model, state, out, ..
@@ -780,7 +796,7 @@ impl<const N: usize> Netlist<N> {
             last_iters: 0,
             last_resid: f64::NAN,
             resid_tol: 1e-6,
-            rescue_cap: 12,
+            rescue_cap: 24,
             unknowns: 0,
             v: [0.0; N],
             v_prev2: [0.0; N],
@@ -825,6 +841,7 @@ impl<const N: usize> Netlist<N> {
             q: [0.0; 2],
             lim: core::cell::Cell::new([0.0; 2]),
             inner: core::cell::Cell::new([0.0; 2]),
+            q_stamp: core::cell::Cell::new([0.0; 2]),
         })
     }
     pub fn jfet(&mut self, model: Jfet, d: usize, g: usize, s: usize) -> &mut Self {
@@ -869,7 +886,7 @@ impl<const N: usize> Netlist<N> {
         self.fixed.len() - 1
     }
 
-    /// 设实时路径的迭代硬上限（默认 **12**）。
+    /// 设实时路径的迭代硬上限（默认 **24**）。
     pub fn set_rescue_cap(&mut self, cap: usize) -> &mut Self {
         self.rescue_cap = cap;
         self
@@ -1126,6 +1143,8 @@ impl<const N: usize> Netlist<N> {
             net.stamp_nonlinear(&mut probe, v, dt, false);
             probe.residual_norm(v, net.solve_len())
         };
+        // 注：试过"干净牛顿步免残差复检"（未限幅 + 未阻尼就跳过复检，能省 ~20%），
+        // 但本类电路在硬削波下 `pnjlim` 几乎每拍都触发，收益实测为 0 —— 没有采用。
         for _ in 0..cap {
             self.last_iters += 1;
             let mut sys = base.clone();
@@ -1167,11 +1186,26 @@ impl<const N: usize> Netlist<N> {
             resid = check_residual(self, &v, &base);
         }
         self.last_resid = resid;
-        self.v_prev2 = self.v;
-        self.has_prev2 = true;
-        self.v = v;
-        for e in &mut self.elems {
-            e.commit(&self.v, dt, false);
+        // **兜底：不收敛就"丢掉这一拍"**（E90）。
+        // 之前这里无条件把最后一轮迭代的解提交进状态 —— 一旦某一拍落进发散区
+        // （实测 `pretty-face` 的 p1≈0.2…0.28 低电平处，残差停在 0.4），
+        // 坏状态会**自我维持**：之后每一拍都从坏点热启动，12 次迭代全跑满也回不来，
+        // 输出变成 ~2 kHz 的孤立尖峰串（−10 dBFS 量级），听感就是持续的"噼啪"爆音。
+        // 现在：残差还离谱就保留上一拍的状态（电容/结电荷/运放都不动），下一拍重来。
+        // 代价是这一拍输出"保持"上一拍的电压（比爆音好得多），而且只在极端点发生。
+        let accept =
+            self.resid_tol <= 0.0 || (resid.is_finite() && resid <= self.resid_tol * 1e3);
+        if accept {
+            self.v_prev2 = self.v;
+            self.has_prev2 = true;
+            self.v = v;
+            for e in &mut self.elems {
+                e.commit(&self.v, dt, false);
+            }
+        } else {
+            // 保持旧状态：把 `v_prev2` 也压平，下一拍不要从"外推"起步
+            self.v_prev2 = self.v;
+            self.has_prev2 = false;
         }
         self.v
     }
@@ -1208,10 +1242,14 @@ impl<const N: usize> Netlist<N> {
             if let Element::Capacitor { v_prev, .. } = e {
                 *v_prev = 0.0;
             }
-            if let Element::Bjt { q, lim, inner, .. } = e {
+            if let Element::Bjt {
+                q, lim, inner, q_stamp, ..
+            } = e
+            {
                 *q = [0.0; 2];
                 lim.set([0.0; 2]);
                 inner.set([0.0; 2]);
+                q_stamp.set([0.0; 2]);
             }
             if let Element::OpAmp { state, pin, .. } = e {
                 state.reset();

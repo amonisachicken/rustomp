@@ -33,6 +33,14 @@ pub struct Engine<C: Circuit> {
     /// 活动指示包络（0..1，给 GUI 的 LED）
     activity_env: f32,
     activity_decay: f64,
+    /// **还没吃到过宿主的参数**（`new`/`reset`/采样率变化之后为 true）。
+    ///
+    /// 为什么需要它（E90）：`C::new()` 用 `Params::default()` 解了直流工作点，
+    /// 而宿主在第一次 `process` 前就会把工程里存的参数打进来。若两者相差较多
+    /// （电位器拧到 25% 之类），牛顿要从"错误偏置"迁移过去 —— 实测要多花 ~20 次
+    /// 迭代，甚至有落进发散区、此后全靠兜底的风险。所以第一口参数到达时
+    /// **重解一次工作点**（代价：一次 `solve_dc`，只发生在加载/复位时）。
+    fresh: bool,
 }
 
 impl<C: Circuit> Engine<C> {
@@ -49,6 +57,7 @@ impl<C: Circuit> Engine<C> {
             mix_coef: 0.0,
             activity_env: 0.0,
             activity_decay: 0.0,
+            fresh: true,
         };
         e.set_sample_rate(fs);
         e
@@ -80,6 +89,11 @@ impl<C: Circuit> Engine<C> {
     pub fn set_params(&mut self, p: C::Params) {
         self.params = p;
         self.dsp.set_params(p);
+        if self.fresh {
+            // 第一次拿到真参数：把直流工作点按**真参数**重解一遍（见 `fresh` 的说明）
+            self.fresh = false;
+            self.dsp.reset();
+        }
     }
 
     /// 活动/削波指示电平（0..1），供 GUI 使用
@@ -99,6 +113,7 @@ impl<C: Circuit> Engine<C> {
         self.mix = 1.0;
         self.mix_target = 1.0;
         self.activity_env = 0.0;
+        self.fresh = true;
     }
 
     /// 插件应向上报的延迟（基带样本）。
