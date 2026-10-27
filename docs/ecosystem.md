@@ -160,6 +160,20 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 
 有了它，"加一个 Windows/Linux 打包工具"就是**加一个符合契约的脚本**，而不是改框架。
 
+### 6.1 发布前固定动作：隔离验证
+
+```bash
+./scripts/verify-isolation.sh            # 用各仓最新 semver tag，全新目录，跑真实构建
+./scripts/verify-isolation.sh --fast     # 只出 mono 的 AU（约 3 分钟）
+./scripts/verify-isolation.sh --keep     # 失败时保留工作区排查
+```
+
+它检查：三仓能 clone 到 → `build.sh` 退出码 → `ARTIFACT` 行数与落点 → `au_smoke` + RMS 一致 →
+**依赖全部来自 git tag** → 本机仓没被改动。
+
+> 存在的理由很具体：DEVLOG E74 里两个缺陷（坏的 `pack.sh`、`engine/identity.rs` 漂移）
+> 都是"本机能跑、tag 是坏的"。**「本机能跑」证明不了「tag 能用」。**
+
 ---
 
 ## 7. 已知风险

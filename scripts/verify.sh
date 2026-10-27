@@ -117,6 +117,11 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "oracle" ]; then
   fi
 fi
 
+# ---------------------------------------------------------------- 隔离验证（手动）
+# 不在 verify.sh 里自动跑：它要网络 + 约 4 分钟 + 全新 target。
+# 发布前手动执行一次：  ./scripts/verify-isolation.sh
+# （见 docs/ecosystem.md §6.1；DEVLOG E74 说明为什么必须做）
+
 # ---------------------------------------------------------------- 报告
 status_word() { if [ "$FAILED" = "0" ]; then echo "✅ 全过"; else echo "❌ 有失败"; fi; }
 
