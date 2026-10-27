@@ -4425,6 +4425,79 @@ CI 里的 `PACKER_TAG` 从 `master` 改成 `v0.1.0`。现在**三个仓全部钉
 
 ---
 
+## E74：隔离工作区验证 —— 抓出两个"本机看不出来"的缺陷（2026-10-27）
+
+目标：**不依赖本机任何已有状态**，从 GitHub 拉三个仓到全新目录，跑 `./scripts/build.sh`。
+
+做法：`~/develop/.iso-verify-<HHMM>/{rustomp, rustomp-mac-plugin, sparklin-drive}`，
+三个仓都 `clone --depth 1 --branch <tag>`，显式
+`RUSTOMP_ROOT=$ISO/rustomp RUSTOMP_MAC_PLUGIN=$ISO/rustomp-mac-plugin`。
+
+**第一轮直接失败，而且失败得很有价值。**
+
+### 74.1 缺陷一：tag `v0.1.0` 里的 `pack.sh` 是坏的
+
+```text
+pack.sh: line 40: PLUGIN_DIR: unbound variable
+```
+
+原因是 bash 把**全角字符**算进了变量名：`"...（已有 $PLUGIN_DIR）"` → 变量名成了 `PLUGIN_DIR）`。
+本机之所以没炸，是因为修复只留在**工作区没提交**，而 tag 打在了修复之前。
+
+→ 提交修复（6 处 `${VAR}` + `PLUGIN_DIR` 冲突判断），打 **`v0.1.1`**（不改写已发布 tag）。
+
+> 教训：**"本机能跑"不等于"tag 能用"**。tag 必须在一个干净 checkout 里验证过才算数。
+
+### 74.2 缺陷二：`identity.rs` 生成物漂移
+
+第二轮：`rustomp-gen --check` 直接 fail：
+
+```text
+以下生成物与 rustomp.toml 不一致：
+  ✗ plugin/src/generated/identity.rs
+```
+
+原因是我上一轮把 `rustomp.toml` 的 `url` 改成本仓，却**忘了重新生成**；
+本机因为之前跑过 `build.sh`（内含 `--check`）所以是绿的，干净 checkout 里就露馅了。
+
+→ 重新生成；并把 **`build.sh test` 也加上 `check_generated`**
+（否则"测试绿、发布出去的是旧生成物"这种情况拦不住）。打 **`v0.1.2`**。
+
+### 74.3 第三轮：通过
+
+```text
+$ ./scripts/build.sh --no-install
+==> 环境体检        ✓ 11 项
+==> 校验生成物      ✓ 7 个文件一致
+==> [1/5] 构建 Sparklin Drive Mono（通用二进制，feature=mono）
+...
+ARTIFACT: $ISO/rustomp-mac-plugin/build/au-mono/Sparklin Drive Mono.component
+ARTIFACT: $ISO/sparklin-drive/target/bundled/Sparklin Drive Mono.vst3
+ARTIFACT: $ISO/sparklin-drive/target/bundled/Sparklin Drive Mono.clap
+ARTIFACT: $ISO/rustomp-mac-plugin/build/au-stereo/Sparklin Drive Stereo.component
+ARTIFACT: $ISO/sparklin-drive/target/bundled/Sparklin Drive Stereo.vst3
+ARTIFACT: $ISO/sparklin-drive/target/bundled/Sparklin Drive Stereo.clap
+```
+
+| 检查项 | 结果 |
+|---|---|
+| 用时 | **3 分 39 秒**（全新 target 冷编译 + 两次 clap-wrapper CMake） |
+| `au_smoke` | 两个变体都 CocoaUI ✓、RMS **0.356170** |
+| 产物位置 | 全在隔离目录内（`$ISO/...`） |
+| 依赖来源 | `rustomp-dsp/gui/oracle = git+…rustomp?tag=v0.1.0#29cbb12a`、`nih_plug = git+…rev=de42101` —— **无任何 path 依赖** |
+| 本机三个仓 | 验证前后都 `未提交改动 0 个`（没被污染） |
+| 隔离目录体积 | 683 MB（其中 `sparklin-drive` 572 MB 是 target/） |
+
+### 74.4 结论与后续
+
+1. **隔离验证要成为发布前的固定动作**（"本机能跑"证明不了 tag 可用）；
+2. `v0.1.0`（packer）与 `v0.1.1`（插件）保留但**标记为不可用**，当前可用组合 =
+   `rustomp v0.1.0` + `rustomp-mac-plugin v0.1.1` + `sparklin-drive v0.1.2`；
+3. CI（`.github/workflows/build.yml`）已经是"三仓 checkout + 干净 runner"，
+   与这次手动隔离验证等价 —— 但它还没跑过一次（仓库刚建），下次 push 时会验证。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4715,6 +4788,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **隔离工作区验证**（E74）：全新目录 clone 三仓（钉 tag）跑 build.sh，抓出两个"本机看不出来"的缺陷 —— ① tag v0.1.0 的 pack.sh 因全角变量 unbound（修复只留在工作区未提交）→ packer 打 v0.1.1；② identity.rs 生成物漂移（改 url 没重生成）→ 插件打 v0.1.2，并把 test 也加上 --check。第三轮通过：3 分 39 秒出 6 条 ARTIFACT、RMS 0.356170、依赖全为 git tag、本机仓零污染 |
 | 2026-10-27 | **收口：三仓全钉 tag + 参考插件即模板**（E73）：packer 打 v0.1.0、CI 钉 tag；sparklin-drive 新增 `MAKING-YOUR-OWN.md`（四步改造 + 发布清单 + 六个坑） |
 | 2026-10-27 | **拆仓第 2 步：参考插件独立发布**（E72）：sparklin-drive 仓（依赖钉 rustomp tag `v0.1.0`）；`scripts/build.sh` 四子命令（含构建前 `rustomp-gen --check`）；CI 三仓 checkout；**全新 clone → 一条命令 → 6 条 ARTIFACT**，RMS 0.356170 不变 |
 | 2026-10-27 | **拆仓第 1 步：macOS 打包独立**（E71）：新增 rustomp-mac-plugin（pack.sh 契约 B + doctor.sh），框架侧 build-all.sh 变瘦包装；新增 tests/packer_contract.sh（ARTIFACT 透传 + 框架无平台词）并进 verify.sh；拆前/拆后 au_smoke 与 RMS 0.356170 完全一致 |
