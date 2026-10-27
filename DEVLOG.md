@@ -4392,6 +4392,39 @@ ARTIFACT: /private/tmp/sd-fresh/target/bundled/Sparklin Drive Stereo.clap
 
 ---
 
+## E73：两个收口决定 —— 打包工具打 tag / 参考插件即模板（2026-10-27）
+
+### 73.1 `rustomp-mac-plugin` 也打了 `v0.1.0`
+
+CI 里的 `PACKER_TAG` 从 `master` 改成 `v0.1.0`。现在**三个仓全部钉 tag**：
+
+| 仓 | tag | 谁钉它 |
+|---|---|---|
+| `rustomp` | `v0.1.0` | 插件仓的 `Cargo.toml`（git 依赖） |
+| `rustomp-mac-plugin` | `v0.1.0` | 插件仓 CI 的 `PACKER_TAG` |
+| `sparklin-drive` | `v0.1.0` | 使用者自己 |
+
+于是"任何人都能复现一次构建"这件事**在仓与仓之间成立**，不只在本机。
+
+### 73.2 `sparklin-drive` 兼任模板：新增 `MAKING-YOUR-OWN.md`
+
+比维护第二份模板可靠 —— 模板最容易腐烂，而参考插件天天在 CI 里跑。
+
+文档结构（按动手顺序）：先跑通再改 → 改身份 → 换电路 → 换面板 → 改参数表 →
+发布检查清单 → 六个易踩的坑 → 延伸阅读。
+
+两处值得强调的内容：
+
+1. **AU 四字符码 / VST3 id 发布后不可改**：宿主按 `(manufacturer, subtype)` 认插件，
+   改了等于换了一个插件，用户的工程与自动化全部失效。所以这一步必须在第一次发布前定稿；
+2. **"插件放进别的 Rust 项目目录里会炸"** 写进了坑列表（E70 踩过的那个
+   `cargo-nih-plug` chdir 到最顶层 `Cargo.toml` 的问题）。
+
+另外把 `Cargo.toml` 的 `repository` 与 `rustomp.toml` 的 `url` 指向了本仓
+（之前还指着 rustomp —— 复制粘贴模板时的典型残留）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4682,6 +4715,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **收口：三仓全钉 tag + 参考插件即模板**（E73）：packer 打 v0.1.0、CI 钉 tag；sparklin-drive 新增 `MAKING-YOUR-OWN.md`（四步改造 + 发布清单 + 六个坑） |
 | 2026-10-27 | **拆仓第 2 步：参考插件独立发布**（E72）：sparklin-drive 仓（依赖钉 rustomp tag `v0.1.0`）；`scripts/build.sh` 四子命令（含构建前 `rustomp-gen --check`）；CI 三仓 checkout；**全新 clone → 一条命令 → 6 条 ARTIFACT**，RMS 0.356170 不变 |
 | 2026-10-27 | **拆仓第 1 步：macOS 打包独立**（E71）：新增 rustomp-mac-plugin（pack.sh 契约 B + doctor.sh），框架侧 build-all.sh 变瘦包装；新增 tests/packer_contract.sh（ARTIFACT 透传 + 框架无平台词）并进 verify.sh；拆前/拆后 au_smoke 与 RMS 0.356170 完全一致 |
 | 2026-10-27 | **拆仓第 0 步：工作区自洽**（E70）：全新 clone 的 workspace 失败已修；发现 `cargo-nih-plug` 会 chdir 到**最顶层** `Cargo.toml` → **插件必须住在本仓之外**；插件移到 `../sparklin-drive`，`new-plugin.sh` 改为生成到 `$RUSTOMP_GUEST`；Sp02/Sp03 重建通过 |
