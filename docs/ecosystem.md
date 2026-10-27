@@ -145,6 +145,8 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 
 **拆仓期纪律：只搬不改。** 需要改契约（如 `[requires]`）就在第 0 步做掉。
 
+> 逐文件搬运清单、验证命令与操作顺序见 **`docs/split-plan.md`**。
+
 ---
 
 ## 6. 契约 B 的可执行测试（第 0 步的产物）

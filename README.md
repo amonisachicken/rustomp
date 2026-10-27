@@ -444,6 +444,7 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 |---|---|
 | **`DEVLOG.md`** | 开发日志（**最重要**）：每个决策、实测数据、踩坑与修复 |
 | `sparklin-drive-legacy` 仓库 | 参考实现（完整插件 + 电路解读 + 基线数据） |
+| **`docs/split-plan.md`** | **拆仓执行清单**：每个文件从哪来/到哪去、验证命令、明天的操作顺序 |
 | **`docs/ecosystem.md`** | **生态与仓库边界**：6 个仓谁负责什么、3 个跨仓契约、版本约束、拆分顺序与风险 |
 | `docs/component-library.md` | **元件库精度规范**：档位定义、逐器件推荐、验收实验模板 |
 | `docs/circuit-import.md` | **电路导入与元件映射规范**：可插拔导入、映射流水线、引脚绑定、mapping.toml |
