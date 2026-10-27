@@ -4498,6 +4498,94 @@ ARTIFACT: $ISO/sparklin-drive/target/bundled/Sparklin Drive Stereo.clap
 
 ---
 
+## E75：CI 真跑一次 —— 抓出三处"绿着但其实没干活"（2026-10-27）
+
+`sparklin-drive` 的 workflow 建好后从没真跑过。点了一次 `workflow_dispatch`，
+第一次的结果是 **`✓ success`** —— 但它是**假的**。
+
+### 75.1 假绿的三层原因
+
+| # | 现象 | 根因 |
+|---|---|---|
+| 1 | 构建在 `[1/5]` 就挂：`error: no such command: nih-plug` | runner 上没有 `cargo-nih-plug`（本机早就装了，所以 doctor 也漏检） |
+| 2 | 构建失败，但 **step 仍然绿** | `./scripts/build.sh … \| tee /tmp/build.log` —— 退出码是 `tee` 的，失败被吞 |
+| 3 | 上传步骤只吐警告 | `No files were found with the provided path: …/dist` 不算失败（`if-no-files-found` 默认 `warn`） |
+
+三处都是"**看起来通过了，其实什么都没产出**"的典型。
+
+### 75.2 修法
+
+```diff
++      - name: cargo-nih-plug
++        run: cargo install --git https://github.com/robbert-vdh/nih-plug.git --rev de42101 cargo-nih-plug --locked
+...
+       - name: Build
+-        run: ./scripts/build.sh --no-install | tee /tmp/build.log
++        run: |
++          set -o pipefail            # 关键
++          ./scripts/build.sh --no-install 2>&1 | tee /tmp/build.log
+...
+       - uses: actions/upload-artifact@v4
+         with:
++          if-no-files-found: error
+```
+
+收集产物的步骤也加了断言：数量 < 1 直接 `exit 1`。
+
+打包工具侧（v0.1.2）同步补齐：`doctor.sh` 检查 `cargo-nih-plug`、`pack.sh` 版本改为
+`git describe`、新增 `deps.lock`（集中钉住 nih-plug rev / cargo-nih-plug 安装命令 / 第三方 commit）。
+
+### 75.3 第二个坑：`pipefail` + `grep -q` 的 SIGPIPE
+
+修完第一层后，CI 报 `✗ 没有 cargo-nih-plug`，但 install 步骤日志里明明写着
+`Installed package cargo-nih-plug`。原因是 doctor 的探测方式：
+
+```bash
+cargo --list | awk '{print $1}' | grep -qx nih-plug   # ← 在 set -o pipefail 下会误报
+```
+
+`grep -q` 匹配成功就退出 → 上游 `awk` 收到 SIGPIPE（141）→ 整条管道非 0。
+本机命令少、awk 早就写完了，所以**只在 CI 复现**。
+
+修法：不用管道 —— `command -v cargo-nih-plug` 优先，退路用 `case "$(cargo --list)" in *nih-plug*)`。
+
+> 这条和 E70 的"全角字符算进变量名"是一类东西：**bash 的细节会挑环境发作**。
+> 结论还是那句：本机能跑 ≠ 能用，必须在干净环境里跑一遍。
+
+### 75.4 最终结果
+
+```text
+✓ macos in 4m22s
+  Doctor ✓ 11 项（含 cargo-nih-plug）
+  Test   ✓ 7 个用例
+  Build  完成：Mono / Stereo，RMS 0.356170
+  Collect artifacts  收集到 6 个产物
+  Upload ✓ sparklin-drive-macos（.component ×2 / .vst3 ×2 / .clap ×2）
+```
+
+把 CI 的产物下回本机，用 `au_smoke` 实测：
+
+| 产物 | 结果 |
+|---|---|
+| `Sparklin Drive Mono.component` | CocoaUI ✓、RMS **0.356170** |
+| `Sparklin Drive Stereo.component` | CocoaUI ✓、RMS **0.356170** |
+
+也就是：**GitHub 的机器打出来的 AU，和本机的逐位一致**。
+
+### 75.5 顺带：隔离验证脚本
+
+`rustomp/scripts/verify-isolation.sh`（E74 的手动过程脚本化）：
+
+```bash
+./scripts/verify-isolation.sh          # 自动取各仓最新 tag，全新目录跑真实构建
+./scripts/verify-isolation.sh --fast   # 只出 mono AU（约 3 分钟）
+```
+
+检查 6 项：三仓可 clone / 退出码 / ARTIFACT 行数与落点 / au_smoke + RMS / 依赖全来自 git tag /
+**本机仓未被改动**。已写进 `docs/ecosystem.md` §6.1 作为发布前固定动作。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4788,6 +4876,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **CI 真跑一次**（E75）：第一次是**假绿**（缺 cargo-nih-plug + `| tee` 吞掉失败 + 上传空目录只警告）→ 加 pipefail / if-no-files-found: error / 产物数量断言；再修 `pipefail` + `grep -q` 的 SIGPIPE 误报。最终 4m22s 真绿：6 个产物，下回本机 au_smoke 实测 RMS 0.356170 |
 | 2026-10-27 | **隔离工作区验证**（E74）：全新目录 clone 三仓（钉 tag）跑 build.sh，抓出两个"本机看不出来"的缺陷 —— ① tag v0.1.0 的 pack.sh 因全角变量 unbound（修复只留在工作区未提交）→ packer 打 v0.1.1；② identity.rs 生成物漂移（改 url 没重生成）→ 插件打 v0.1.2，并把 test 也加上 --check。第三轮通过：3 分 39 秒出 6 条 ARTIFACT、RMS 0.356170、依赖全为 git tag、本机仓零污染 |
 | 2026-10-27 | **收口：三仓全钉 tag + 参考插件即模板**（E73）：packer 打 v0.1.0、CI 钉 tag；sparklin-drive 新增 `MAKING-YOUR-OWN.md`（四步改造 + 发布清单 + 六个坑） |
 | 2026-10-27 | **拆仓第 2 步：参考插件独立发布**（E72）：sparklin-drive 仓（依赖钉 rustomp tag `v0.1.0`）；`scripts/build.sh` 四子命令（含构建前 `rustomp-gen --check`）；CI 三仓 checkout；**全新 clone → 一条命令 → 6 条 ARTIFACT**，RMS 0.356170 不变 |
