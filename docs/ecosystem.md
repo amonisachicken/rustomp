@@ -200,7 +200,7 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 | 素材/美术 | 建议在插件仓显式声明（同 GPL 或 CC BY-SA），避免 fork 时的犹豫 |
 | **tag 约定** | 每个仓发布即打 tag；下游**一律钉 tag**，不钉 `master`。**tag 必须在干净 checkout 里验证过才算数**（DEVLOG E74 就是没验证导致 v0.1.0 是坏的） |
 | **依赖布局** | 三个仓**必须同级**（`some-dir/{rustomp,rustomp-mac-plugin,sparklin-drive}`）——脚本按此自动发现，不假设任何绝对路径 |
-| **当前可用组合** | `rustomp v0.1.0` + `rustomp-mac-plugin v0.1.5` + `sparklin-drive v0.1.6` |（更早的 packer `v0.1.0`/`v0.1.1`/`v0.1.2` 与插件 `v0.1.0`–`v0.1.2` 请勿使用） |
+| **当前可用组合** | `rustomp v0.1.0` + `rustomp-mac-plugin v0.1.5` + `sparklin-drive v0.1.7` |（更早的 packer `v0.1.0`/`v0.1.1`/`v0.1.2` 与插件 `v0.1.0`–`v0.1.2` 请勿使用） |
 | **CI 必须真跑过** | 第一次 CI 是"假绿"（缺 cargo-nih-plug + `\| tee` 吞掉失败 + 上传空目录只警告），见 DEVLOG E75。判据：**产物数量 ≥1 且能下载** |
 
 ---

@@ -4781,6 +4781,65 @@ CI 验证的就是用户本地的同一种布局。
 
 ---
 
+## E79：把"依赖与获取方式"摆到 README 最前面（2026-10-27）
+
+两次隔离验证暴露出一个规律：**卡住新人的从来不是代码，是"我该装什么"。**
+所以把依赖从 `BUILDING.md`（第二份文档）提到 `README.md` 的**第一屏**。
+
+### 79.1 README 现在的顺序
+
+```text
+# Sparklin Drive                    ← 一句话 + 管线图
+## 依赖与获取方式（先读这段）          ← 新增，紧跟标题
+   ### 目录布局（三个仓同级 + 为什么不需要环境变量）
+   ### 一次装齐（三段命令，tag 分别写在哪）
+   ### 系统依赖（7 行表：为什么需要 / 怎么查 / 怎么装）
+   ### 自查（./scripts/build.sh doctor）
+## 快速开始                          ← 依赖齐了之后的一条命令
+## 这不是"贴模拟味的建模"，是算电路
+...
+```
+
+依赖表里每一行都带"**为什么需要**"，因为"装 X 有什么用"比"装 X"更能促成人动手：
+
+| 依赖 | 为什么需要 |
+|---|---|
+| 两个 rust target | universal 二进制（Intel + Apple Silicon） |
+| Xcode 命令行工具 | 链接系统框架、`codesign`、`plutil` |
+| cmake | 把 CLAP 包成 AUv2（clap-wrapper） |
+| python3 ≥ 3.11 | 读 `rustomp.toml`（`tomllib`） |
+| cargo-nih-plug | `cargo nih-plug` 子命令（打 bundle） |
+
+`cargo-nih-plug` 那行特意写了 `--rev de42101`，并在下面注明**必须与打包工具的 `deps.lock` 一致**。
+
+### 79.2 BUILDING.md：补"版本要配套"
+
+三个组件各钉各的版本，最容易错配，所以单独一张表说清"版本写在哪"：
+
+| 组件 | 版本写在哪 |
+|---|---|
+| 框架 `rustomp` | 本仓 `Cargo.toml` 的 `tag = "v0.1.0"` |
+| 打包工具 | 本仓 `rustomp.toml` 的 `[requires] packer_tag = "v0.1.5"` |
+| `cargo-nih-plug` | 打包工具的 `deps.lock`（rev `de42101`） |
+
+同时把 `~/develop/...` 这类绝对路径全删了（产物路径改成 `<同级目录>/rustomp-mac-plugin/...`），
+常见问题补两条：`no such command: nih-plug`、`requires.packer 版本不匹配`。
+
+### 79.3 MAKING-YOUR-OWN.md：fork 之后必须改 CI
+
+"拿它当模板"这条路上最隐蔽的一步是 **CI 里的 `repository:` 还指着原作者**。
+已写进发布检查清单，并补了 `[requires]` 三个字段的说明、以及"忘了 `fetch-third-party.sh`"这个坑。
+
+### 79.4 校验
+
+- 三份 md 的**本地链接全部有效**（脚本扫过 `[text](target)`）；
+- 没有 `~/develop` 之类绝对路径；
+- `./scripts/build.sh doctor` 仍全绿（文档改动不影响构建路径）。
+
+`sparklin-drive` 打 `v0.1.7`（README 116 → 167 行、BUILDING 120 → 145、MAKING-YOUR-OWN 161 → 182）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -5071,6 +5130,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **文档防呆**（E79）：README 顶部新增「依赖与获取方式」（布局/三段命令/7 行系统依赖表/自查）；BUILDING 补"三仓版本配套"表与两条常见问题；MAKING-YOUR-OWN 补 fork 后要改 CI repository。插件打 v0.1.7；三份 md 链接全部有效、无绝对路径 |
 | 2026-10-27 | **第二次隔离验证：专测依赖引导**（E78）：从"只有插件仓"起步，照提示一路补齐框架与打包工具 → 6 条 ARTIFACT、RMS 0.356170、零环境变量。顺手修掉"cd 后相对路径失效"与"硬编码 packer tag"（新增 `[requires] packer_tag`，插件打 v0.1.6） |
 | 2026-10-27 | **依赖位置统一为同级目录**（E77）：删掉 `~/develop` 之类绝对路径假设与 `$HOME/develop` 兜底；提示改为"目录树 + 一条 cd 命令"；CI 与 verify-isolation 都不再设环境变量。隔离回归 `v0.1.0 + v0.1.5 + v0.1.5`（179s，RMS 0.356170） |
 | 2026-10-27 | **新机指引**（E76）：缺框架时打印克隆命令（tag 自动取自 Cargo.toml）+ "放同级目录"最省事路径；漂移守卫不再静默跳过（`RUSTOMP_SKIP_DRIFT_CHECK=1` 才能跳）；packer doctor 同步。模拟新机验证 + 隔离回归（v0.1.0 + v0.1.4 + v0.1.4，172s） |
