@@ -7,14 +7,14 @@
 //! 因为"倍数"是音质/CPU 的取舍，属于插件侧决策，不属于电路。
 
 use crate::circuit::Circuit;
-use crate::oversample::{Oversampler, Oversampler2x, Oversampler4x};
+use crate::oversample::Oversampler;
 
 /// 默认过采样器。开 `oversample-2x` feature 时全局改成 2×（省一半 CPU）。
 #[cfg(not(feature = "oversample-2x"))]
-pub type DefaultOversampler = Oversampler4x;
+pub type DefaultOversampler = crate::oversample::Oversampler4x;
 /// 默认过采样器（`feature = "oversample-2x"`）。
 #[cfg(feature = "oversample-2x")]
-pub type DefaultOversampler = Oversampler2x;
+pub type DefaultOversampler = crate::oversample::Oversampler2x;
 
 /// 内部样本缓冲的最大长度（= 支持的最大倍数）。
 pub const MAX_FACTOR: usize = 4;
