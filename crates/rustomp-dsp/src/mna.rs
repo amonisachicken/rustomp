@@ -1193,8 +1193,7 @@ impl<const N: usize> Netlist<N> {
         // 输出变成 ~2 kHz 的孤立尖峰串（−10 dBFS 量级），听感就是持续的"噼啪"爆音。
         // 现在：残差还离谱就保留上一拍的状态（电容/结电荷/运放都不动），下一拍重来。
         // 代价是这一拍输出"保持"上一拍的电压（比爆音好得多），而且只在极端点发生。
-        let accept =
-            self.resid_tol <= 0.0 || (resid.is_finite() && resid <= self.resid_tol * 1e3);
+        let accept = self.resid_tol <= 0.0 || (resid.is_finite() && resid <= self.resid_tol * 1e3);
         if accept {
             self.v_prev2 = self.v;
             self.has_prev2 = true;
@@ -1243,7 +1242,11 @@ impl<const N: usize> Netlist<N> {
                 *v_prev = 0.0;
             }
             if let Element::Bjt {
-                q, lim, inner, q_stamp, ..
+                q,
+                lim,
+                inner,
+                q_stamp,
+                ..
             } = e
             {
                 *q = [0.0; 2];

@@ -1,29 +1,40 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 把「任意电路 + 4 倍过采样 + true-bypass + 活动指示」打包成插件可用的引擎。
+//! 把「任意电路 + 多相过采样 + true-bypass + 活动指示」打包成插件可用的引擎。
 //!
-//! 对电路一无所知：只要求实现 [`Circuit`]。
+//! 对电路一无所知：只要求实现 [`Circuit`]。过采样器是**类型参数**
+//! （默认 [`Oversampler4x`]，可换 [`Oversampler2x`] —— 见 E91），
+//! 因为"倍数"是音质/CPU 的取舍，属于插件侧决策，不属于电路。
 
 use crate::circuit::Circuit;
-use crate::oversample::Oversampler4x;
+use crate::oversample::{Oversampler, Oversampler2x, Oversampler4x};
 
-/// 过采样倍数。
-pub const OVERSAMPLING: usize = 4;
+/// 默认过采样器。开 `oversample-2x` feature 时全局改成 2×（省一半 CPU）。
+#[cfg(not(feature = "oversample-2x"))]
+pub type DefaultOversampler = Oversampler4x;
+/// 默认过采样器（`feature = "oversample-2x"`）。
+#[cfg(feature = "oversample-2x")]
+pub type DefaultOversampler = Oversampler2x;
+
+/// 内部样本缓冲的最大长度（= 支持的最大倍数）。
+pub const MAX_FACTOR: usize = 4;
+
+/// 干路延迟线的最大长度（够任何倍数的 `latency_samples()` 用）。
+const MAX_DRY: usize = 64;
 
 /// 输出电平保护阈值（远超任何可能的合法信号）
 const GUARD_LIMIT: f64 = 100.0;
 
-/// 与过采样链路等长的干路延迟（bypass 时用，保证与湿路相位对齐）
-const DRY_LEN: usize = Oversampler4x::latency_samples() as usize;
-
 /// 单声道处理引擎。
-pub struct Engine<C: Circuit> {
+pub struct Engine<C: Circuit, O: Oversampler = DefaultOversampler> {
     dsp: C,
-    os: Oversampler4x,
+    os: O,
     fs: f64,
     params: C::Params,
     /// 干路延迟线（与湿路对齐，避免 bypass 切换时的梳状滤波）
-    dry: [f64; DRY_LEN],
+    dry: [f64; MAX_DRY],
+    /// 干路实际长度 = `O::LATENCY`（按倍数选择）
+    dry_len: usize,
     dry_pos: usize,
     /// bypass 交叉淡化量：0 = 干，1 = 湿
     mix: f64,
@@ -43,14 +54,15 @@ pub struct Engine<C: Circuit> {
     fresh: bool,
 }
 
-impl<C: Circuit> Engine<C> {
+impl<C: Circuit, O: Oversampler> Engine<C, O> {
     pub fn new(fs: f64) -> Self {
         let mut e = Self {
-            dsp: C::new(fs * OVERSAMPLING as f64),
-            os: Oversampler4x::new(),
+            dsp: C::new(fs * O::FACTOR as f64),
+            os: O::new_oversampler(),
             fs,
             params: C::Params::default(),
-            dry: [0.0; DRY_LEN],
+            dry: [0.0; MAX_DRY],
+            dry_len: (O::LATENCY as usize).max(1),
             dry_pos: 0,
             mix: 1.0,
             mix_target: 1.0,
@@ -65,8 +77,8 @@ impl<C: Circuit> Engine<C> {
 
     pub fn set_sample_rate(&mut self, fs: f64) {
         self.fs = fs;
-        self.dsp.set_sample_rate(fs * OVERSAMPLING as f64);
-        self.os = Oversampler4x::new();
+        self.dsp.set_sample_rate(fs * O::FACTOR as f64);
+        self.os = O::new_oversampler();
         // bypass 切换 5 ms 交叉淡化；指示释放 ~150 ms
         self.mix_coef = 1.0 - (-1.0 / (0.005 * fs)).exp();
         self.activity_decay = (-1.0 / (0.15 * fs)).exp();
@@ -107,8 +119,8 @@ impl<C: Circuit> Engine<C> {
 
     pub fn reset(&mut self) {
         self.dsp.reset();
-        self.os = Oversampler4x::new();
-        self.dry = [0.0; DRY_LEN];
+        self.os = O::new_oversampler();
+        self.dry = [0.0; MAX_DRY];
         self.dry_pos = 0;
         self.mix = 1.0;
         self.mix_target = 1.0;
@@ -116,9 +128,15 @@ impl<C: Circuit> Engine<C> {
         self.fresh = true;
     }
 
-    /// 插件应向上报的延迟（基带样本）。
+    /// 插件应向上报的延迟（基带样本）。**与过采样倍数无关地保持稳定**
+    /// （4× 与 2× 都报 15，见 [`crate::oversample`] 的表格）。
     pub const fn latency_samples() -> u32 {
-        Oversampler4x::latency_samples()
+        O::LATENCY
+    }
+
+    /// 当前过采样倍数（诊断/日志用）。
+    pub const fn oversampling() -> usize {
+        O::FACTOR
     }
 
     /// 处理一个基带样本。
@@ -127,12 +145,16 @@ impl<C: Circuit> Engine<C> {
     /// 并本样本输出静音。绝不让一个坏样本变成永久自激。
     #[inline]
     pub fn process(&mut self, x: f64) -> f64 {
-        let mut up = [0.0f64; OVERSAMPLING];
-        self.os.upsample(x, &mut up);
-        for v in up.iter_mut() {
-            *v = self.dsp.process(*v);
+        let mut up = [0.0f64; MAX_FACTOR];
+        let n = O::FACTOR;
+        {
+            let inner = &mut up[..n];
+            self.os.upsample(x, inner);
+            for v in inner.iter_mut() {
+                *v = self.dsp.process(*v);
+            }
         }
-        let wet = self.os.downsample(&up);
+        let wet = self.os.downsample(&up[..n]);
         if !wet.is_finite() || wet.abs() > GUARD_LIMIT {
             self.reset();
             return 0.0;
@@ -141,7 +163,7 @@ impl<C: Circuit> Engine<C> {
         // 干路（延迟对齐后取）
         let dry = self.dry[self.dry_pos];
         self.dry[self.dry_pos] = x;
-        self.dry_pos = (self.dry_pos + 1) % DRY_LEN;
+        self.dry_pos = (self.dry_pos + 1) % self.dry_len;
 
         // true-bypass：向目标靠拢（5 ms 交叉淡化），电路仍在运行
         self.mix += (self.mix_target - self.mix) * self.mix_coef;

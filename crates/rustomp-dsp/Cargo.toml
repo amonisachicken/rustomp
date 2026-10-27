@@ -12,3 +12,9 @@ repository.workspace = true
 rustomp-oracle = { path = "../rustomp-oracle" }
 # 只给 `examples/abfft.rs`（AB 谱台架）用
 rustfft = "6"
+
+[features]
+default = []
+# 把默认过采样倍数从 4× 降到 2×：实时路径的电路步数减半（≈ −50% CPU），
+# 代价是非线性产生的高次谐波折叠变多（高音区最先听出来，见 DEVLOG E91）。
+oversample-2x = []
