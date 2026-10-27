@@ -3,8 +3,10 @@
 > 状态：**S1a/S1b/S1c 已实现**（2026-10-26）—— `SpiceNetlist` 导入器 + 闭集映射 +
 > 网表→装配代码生成 + 多分支（开关=两份完整电路），并已在真插件上跑通（Sparklin Drive v2）。
 > 映射分层里目前只落地了「精确命中 / 报错」两级，别名、项目映射、类别兜底、参数直通仍是待做项（§3）。
+> **2026-10-27：首选设计器改为 `rustomp-circuit-designer`** —— 它的工程文件 `.design.json`
+> 可以直接导入（`CircuitDesigner` 导入器），breadspice 的 `.bread` 退为次选（§1/§2/§10）。
 > 相关：`DEVLOG.md` E32 / ADR-013、E44 / E45；`docs/component-library.md`、`docs/declarative-build.md`
-> 上游：用户提供的 LTspice 风格器件模型；原理图设计器（规划中，见 §10）；`plugins/` 下的下游插件项目
+> 上游：用户提供的 LTspice 风格器件模型；**rustomp-circuit-designer**（首选，见 §10）；`plugins/` 下的下游插件项目
 
 ---
 
@@ -14,24 +16,34 @@
 
 ```rust
 pub trait Importer {
-    fn id(&self) -> &'static str;                            // 例如 "breadspice"
+    fn id(&self) -> &'static str;                            // 例如 "circuit-designer"
     fn matches(&self, path: &Path, content: &str) -> bool;   // 扩展名 + 内容嗅探
     fn import(&self, path: &Path, content: &str) -> Result<ImportedCircuit, ImportError>;
 }
 
 pub fn registry() -> Vec<Box<dyn Importer>> {   // 顺序即优先级
-    vec![Box::new(BreadSpice), Box::new(SpiceNetlist)]
+    vec![
+        Box::new(CircuitDesigner),   // 首选设计器的工程文件（.design.json）
+        Box::new(BreadSpice),        // 次选：面包板工程（.bread）
+        Box::new(SpiceNetlist),      // 兜底：任何 SPICE 网表（.cir/.net/.sp）
+    ]
 }
 ```
 
 新增一种格式 = **实现一个结构体 + 在 `registry()` 加一行**。框架其余部分不需要改动。
 
-现成的两个实现：
+现成的三个实现：
 
 | 导入器 | 处理 | 状态 |
 |---|---|---|
-| `BreadSpice` | `.bread`（面包板） | ✅ |
-| `SpiceNetlist` | `.cir` / `.net` / `.sp` / `.spice`（含内容嗅探） | ✅（E44） |
+| **`CircuitDesigner`** | **`.design.json`**（rustomp-circuit-designer 工程）—— 首选 | ✅（2026-10-27） |
+| `BreadSpice` | `.bread`（面包板）—— 次选 | ✅ |
+| `SpiceNetlist` | `.cir` / `.net` / `.sp` / `.spice`（含内容嗅探）—— 兜底 | ✅（E44） |
+
+> `CircuitDesigner` 的**引脚几何不在本仓**：它运行时读设计器仓库的 `symbols/symbols.json`
+> （`RUSTOM_DESIGNER_SYMBOLS=<path>` 可指定；默认从工程文件向上找、再看当前目录、
+> 最后找同级的 `../rustomp-circuit-designer/`）。找不到就**报错并列出找过的路径**，不猜。
+> 这样“同一个量只有一个来源”——设计器改了符号几何，本仓不需要跟着改代码。
 
 ### 1.1 每种导入器必须产出什么
 
@@ -48,12 +60,14 @@ pub fn registry() -> Vec<Box<dyn Importer>> {   // 顺序即优先级
 
 | 格式 | 本质 | 工作量 | 说明 |
 |---|---|---|---|
-| **`SpiceNetlist`**（`.net` / `.cir` / `.sp`） | 网表：一行一个器件 + 节点 | 小 | ✅ **已实现**（E44）。覆盖 LTspice（*View → SPICE Netlist*）、KiCad、ngspice、Qucs 等导出 |
-| `LtspiceAsc`（`.asc`） | 原理图：SYMBOL / WIRE / FLAG + 坐标 | 大 | 连通性要靠**导线坐标重合**推断，还要处理旋转/镜像与 `.lib` 引用；作为后续便利格式 |
-| `BreadSpice`（`.bread`） | 面包板：元件 + 插孔 id | 已完成 | 几何规则归并 net |
+| **`CircuitDesigner`**（`.design.json`） | 首选设计器（rustomp-circuit-designer）的**工程文件**：元件 + 导线（mm 坐标）+ 符号名 | 已完成（2026-10-27） | 几何规则照搬设计器（引脚变换 / T 型接点 / 接网络的最小坐标命名）；引脚几何**运行时读设计器的 `symbols.json`**（唯一事实来源）；与本仓对拍：读工程文件得到的网表必须与设计器导出的 `.cir` **逐行相同** |
+| **`SpiceNetlist`**（`.net` / `.cir` / `.sp`） | 网表：一行一个器件 + 节点 | 小 | ✅ **已实现**（E44）。覆盖 LTspice（*View → SPICE Netlist*）、KiCad、ngspice、Qucs 等导出；设计器的导出物也是这个格式 |
+| `LtspiceAsc`（`.asc`） | 原理图：SYMBOL / WIRE / FLAG + 坐标 | 大 | 连通性要靠**导线坐标重合**推断，还要处理旋转/镜像与 `.lib` 引用；**优先级低**（已有首选设计器） |
+| `BreadSpice`（`.bread`） | 面包板：元件 + 插孔 id | 已完成 | 次选：几何规则归并 net；旧工程继续可用 |
 | 其它（EasyEDA / KiCad .kicad_sch / …） | — | 各自 | 按同一 trait 接入 |
 
-> 结论：**先把 `SpiceNetlist` 做掉**，它覆盖的软件最多、歧义最少。
+> 结论：**首选设计器直接交工程文件**（`.design.json`），其余一概可先变成 `.cir` 再进来 ——
+> 网表层永远是兜底通道。
 
 ---
 
@@ -171,7 +185,12 @@ params_passthrough = false   # power user 档，默认关闭
 导入的终点不是"生成一份 SPICE"，而是**生成能跑的 Rust 电路**：
 
 ```bash
-cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check] [--output-node N]
+# 首选：直接吃设计器的工程文件（2026-10-27 起）
+RUSTOM_DESIGNER_SYMBOLS=../rustomp-circuit-designer/symbols/symbols.json \
+  cargo run -q -p rustomp-import -- <工程.design.json> --mna <输出.rs> [--check] [--input 名] [--output-node N]
+
+# 通用：任何 SPICE 网表（含设计器导出的 .cir）
+cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check] [--input 名] [--output-node N]
 ```
 
 网表里用注释写指令（导入器把 `* @rustomp …` 收进 `notes`，由 codegen 解析）：
@@ -184,6 +203,21 @@ cargo run -q -p rustomp-import -- <网表.cir> --mna <输出.rs> [--check] [--ou
 * @rustomp newton=8                                 # 每样本牛顿迭代次数**上限**（默认 3，残差够了就提前停）
 * @rustomp activity_i=50u                           # LED 活动量的参考电流（**只驱动 GUI**，不影响 DSP）
 ```
+
+**`in=` 可以是元件名，也可以是节点名**（两者都有真实用户）：
+
+| 写法 | 谁在用 | 含义 |
+|---|---|---|
+| `in=VS1` | breadspice 时代的网表 | 那个电压源的正端节点就是输入 |
+| `in=IN` | **rustomp-circuit-designer** | 网表是**纯拓扑**（激励不画进网表），`IN` 节点由 `process(x)` 每拍写入 |
+
+> 早期实现只认元件名，于是设计器的图会退化成 "无输入端口（纯直流电路）" ——
+> 生成的 `Ckt` **直接忽略输入**（`process(x)` 里 `let _ = x;`）。这是一个沉默错误：
+> 编译、运行、都不报错，只是没声音。现在两种都认，且在 notes 里明确写出结论。
+
+**`param` 的元素名必须是网表里的元件名**（`RP1A`/`RP1B`），不是位号（`P1A`）。
+设计器 2026-10-27 之前写的是位号，本仓为了不断旧网表，加了一层兼容 ——
+找不到 `P1A` 时会去试 `RP1A` 并在 notes 里提醒。
 
 > **`switch` 已是 legacy**（设计器决策 D-005）：开关改成"每个状态一份**完整网表**"，
 > 由插件层的 `rustomp_dsp::Branch<A,B>` 选择 + 预热 5 ms / 淡化 10 ms。Sparklin Drive 现在是
@@ -207,6 +241,7 @@ codegen 顺手做的拓扑处理（都在 `mna_codegen.rs` 里，**有测试**�
 1. **导线合并**：`≤ 0.01 Ω` 视为理想导线（breadspice 的连线是 `0.001 Ω`），并查集并节点；
 2. **自环跳过**：电位器"短接的那一半"（`RP1B a a 250k`）对电路无影响；
 3. **激励分类**：纯 DC 源 → 固定电位节点（不占未知量）；`SIN/AC/PULSE` 源 → 输入端口；
+   显式 `in=<节点>` 时把该节点当成输入端口（标为固定电位，排在未知量之后）；
 4. **闭集型号映射**：`1N4148/1N34A/1N4007/1N5817/LedRed/LedGreen/LedBLUE/BC549C/BC559C/AC127/AC128/J201/2N7000/OP07A`。
 
 ### 6.5.1 漂移守卫
@@ -215,6 +250,8 @@ codegen 顺手做的拓扑处理（都在 `mna_codegen.rs` 里，**有测试**�
 
 ```
 crates/rustomp-import/tests/codegen.rs::all_generated_files_are_up_to_date
+crates/rustomp-import/tests/codegen.rs::designer_project_is_up_to_date   ← 设计器工程 → 生成物
+crates/rustomp-import/tests/designer.rs::与设计器导出的网表逐行一致
 ```
 
 配套 `--check`（只比对不写），可直接进 CI。
@@ -258,20 +295,53 @@ pub enum Resolved {
 
 ---
 
-## 10. 与外部设计器的接口（规划中）
+## 10. 与外部设计器的接口（**首选设计器已就位**，2026-10-27）
 
-用户将分别开发 **原理图设计器**（画图 → 出网表）与 **插件 GUI 设计器**。
-本项目不实现这两者，只保证**契约稳定**：
+### 10.1 首选：`rustomp-circuit-designer`
 
-| 设计器 | 契约（本项目负责） | 方向 |
-|---|---|---|
-| **原理图设计器** | 输出 **SPICE 网表** + `* @rustomp` 指令（端口/电位器/开关） | 设计器 → `.cir` → `rustomp-import --mna` |
-| 插件 GUI 设计器 | 输出 `rustomp.toml` 的 `[ui]` 段（`rustomp_gui::PanelSpec`）+ 素材 PNG | 设计器 → `rustomp.toml` → `build.rs` 生成面板 |
+本仓生态里原理图就由它画。它的**工程文件 `.design.json` 直接进 `rustomp-import`**：
 
-约束（对设计器的要求）：
+```
+ rustomp-circuit-designer            rustomp-import                插件
+ ────────────────────────            ──────────────                ────
+ 画图 → 保存 .design.json  ───────►  CircuitDesigner 导入器
+                                     （读设计器的 symbols.json）
+                                          │
+                                     mna_codegen
+                                          ▼
+                                    src/generated/circuit.rs
+                                          │
+                                          ▼
+                                    Engine<Ckt> 出声
+
+（导出物 `.cir` 也仍然可用：走 SpiceNetlist 导入器，结果与本路**逐行相同**）
+```
+
+契约要点（两边同时记档：本文件 ↔ 设计器 `docs/05-netlist-contract.md`）：
+
+| 项 | 约定 |
+|---|---|
+| 端口 | `* @rustomp in=<节点> out=<节点>`（**节点名**，不是元件名） |
+| 电位器 | `* @rustomp param RP1A <字段> pot max=<值> [invert]`（**网表元件名**，不是位号 `P1A`） |
+| 网表形态 | 一张图一份 `.cir`（开关不进网表，D-007）；导出的网表是**纯拓扑**，无激励源 |
+| 型号 | 落在闭集表里，否则导入即报错（不静默替换） |
+| 几何 | 引脚坐标以设计器的 `symbols/symbols.json` 为准，本仓不复制一份 |
+| 漂移守卫 | `tests/designer.rs`：工程文件 → 网表必须与设计器自己导出的 `.cir` **逐行相同** |
+
+### 10.2 次选：breadspice（`.bread`）
+
+面包板工程仍可导入（`BreadSpice` 导入器），但不再推荐作为“画原理图”的默认路径：
+它的产物是面包板布局，跨项目复用/评审都不如一张原理图清楚。
+
+### 10.3 插件 GUI 设计器
+
+输出 `rustomp.toml` 的 `[ui]` 段（`rustomp_gui::PanelSpec`）+ 素材 PNG：
+设计器 → `rustomp.toml` → `build.rs` 生成面板。
+
+### 10.4 三条硬要求（对任何设计器）
 
 - **端口必须显式标注**（`in=` / `out=`）：我们不猜"哪个节点是输出"；
-- **可调元件必须显式声明**（`param` / `switch`）：我们不从"250k+250k"里反推电位器；
+- **可调元件必须显式声明**（`param`）：我们不从"250k+250k"里反推电位器；
 - 型号落在**闭集表**里；不在表里会在导入时就报错，不会悄悄替换。
 
 这三条是刻意的：**生成的电路会直接进插件发布路径**，任何靠猜的默认值都可能变成噪音。
@@ -282,3 +352,4 @@ pub enum Resolved {
 |---|---|
 | 2026-10-23 | 建立本文档：确认可插拔导入器、格式优先级（先网表后 `.asc`）、映射分层流水线（B+E 常规、C 防呆、D 为 power user）、引脚按名绑定 |
 | 2026-10-23 | **S1a/S1b 落地**：`SpiceNetlist` 导入器、闭集型号映射（未命中硬失败）、`* @rustomp` 指令（端口/电位器/开关）、网表 → `Netlist`+`Params`+`impl Circuit` 的代码生成、漂移守卫；映射分层只做 1+6 级；新增 §10 外部设计器接口 |
+| 2026-10-27 | **首选设计器切换**：新增 `CircuitDesigner` 导入器（`.design.json` 直读，几何规则与设计器一致，引脚几何读设计器的 `symbols.json`）；`registry()` 优先级 = 工程文件 > `.bread` > `.cir`；`in=` 支持**节点名**（设计器写法）并修掉“无输入端口”退化；`param` 元素名修正为网表元件名（`RP1A`）；新增 `--input`；新增对拍测试 `tests/designer.rs` 与漂移守卫 `designer_project_is_up_to_date`；§2/§6.5/§10 重写 |

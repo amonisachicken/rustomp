@@ -30,7 +30,7 @@
                           └───────────────────┘
 
 另有独立仓（不在本图数据流上）：
-- rustomp-circuit-designer  原理图 → .cir 网表（未开工）
+- rustomp-circuit-designer  **首选**原理图设计器：原理图 → `.design.json` 工程（可直读）/ `.cir` 网表
 - sparklin-drive-legacy     冻结归档：手推实现 + 基线数据（只读参考）
 ```
 
@@ -41,7 +41,7 @@
 | **rustomp-win-plugin** / **linux** | 各自平台的打包与宿主验证（未开工） | 同上 |
 | **sparklin-drive** | 一个**完整可构建**的参考插件：电路网表、生成物、面板产物、`build.sh` | 框架代码（只通过 tag 依赖） |
 | **rustomp-box-designer** | 面板编辑 → `ui.toml` + 素材 PNG（零依赖浏览器端） | DSP、插件身份 |
-| **rustomp-circuit-designer** | 原理图 → 网表 `.cir` + 指令 | 生成 Rust、打包 |
+| **rustomp-circuit-designer** | 原理图 → 工程文件 `.design.json`（**首选**，可直接导入）/ `.cir` 网表 + 指令 | 生成 Rust、打包 |
 | **sparklin-drive-legacy** | 冻结的历史基线（WDF 手推实现 + AB 数据） | 一切活跃开发 |
 
 ---

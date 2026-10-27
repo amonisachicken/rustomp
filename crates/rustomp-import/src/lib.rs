@@ -5,7 +5,7 @@
 //! 设计：**先归一化到一份中间表示（IR），再由 IR 派生产物** ——
 //!
 //! ```text
-//!  .bread / EasyEDA / KiCad / SPICE ...
+//!  .design.json / .bread / .cir / KiCad / SPICE ...
 //!        │  Importer（可插拔）
 //!        ▼
 //!   ImportedCircuit  ← 中间表示：元件 + 节点 + 值 + 模型
@@ -14,15 +14,20 @@
 //!        └── to_json()      → 给其它工具消费
 //! ```
 //!
+//! 首选设计器是 **rustomp-circuit-designer**：它的工程文件 `.design.json`
+//! 可以直接导入（[`CircuitDesigner`]），不必先手工导出 `.cir`。
+//!
 //! 这样每新增一种格式，只需要实现一个 [`Importer`]，下游全部复用。
 
 use std::path::Path;
 
 mod breadspice;
+pub mod designer;
 pub mod mna_codegen;
 pub mod spice;
 
 pub use breadspice::BreadSpice;
+pub use designer::CircuitDesigner;
 pub use spice::SpiceNetlist;
 
 // ---------------------------------------------------------------- 中间表示
@@ -110,13 +115,15 @@ impl ImportedCircuit {
                 (None, v) if !v.is_empty() => v.to_string(),
                 _ => String::new(),
             };
-            out.push_str(&format!(
-                "{}{} {} {}\n",
-                e.kind.spice_prefix(),
-                e.name,
-                nodes,
-                tail
-            ));
+            // 名字里**已经带前缀**（`C1`、`XU1`）时不要重复写：IR 从各种导入器来，
+            // 网表侧的名字一律是完整的器件名（SPICE 靠首字母区分器件类型）。
+            let prefix = e.kind.spice_prefix();
+            let head = if e.name.to_ascii_uppercase().starts_with(prefix) {
+                e.name.clone()
+            } else {
+                format!("{prefix}{}", e.name)
+            };
+            out.push_str(&format!("{head} {} {}\n", nodes, tail));
         }
         out
     }
@@ -233,9 +240,16 @@ pub trait Importer {
 }
 
 /// 已注册的导入器（新增格式只需在这里加一行）。
-/// 按内容自动选择导入器（顺序即优先级）。
+/// 按内容自动选择导入器（**顺序即优先级**）。
+///
+/// 顺序的理由：专职设计器的工程文件优先（它能给出比网表更多的上下文），
+/// 其次是面包板工程，最后才是通用 SPICE 网表（覆盖面最广、最不需要特判）。
 pub fn registry() -> Vec<Box<dyn Importer>> {
-    vec![Box::new(BreadSpice), Box::new(SpiceNetlist)]
+    vec![
+        Box::new(CircuitDesigner),
+        Box::new(BreadSpice),
+        Box::new(SpiceNetlist),
+    ]
 }
 
 /// 从字符串导入（测试/工具用；扩展名用 `name` 决定）。
@@ -347,9 +361,9 @@ mod tests {
         // 电位器 50% → 两段 250k
         assert!(spice.contains("RP1A n_t10L n_t1L 250k"), "{spice}");
         assert!(spice.contains("RP2B n_t27R n_t24R 250k"), "{spice}");
-        // 三只二极管的方向保留
-        assert!(spice.contains("DD1 n_t1L n_t10L 1N4148"), "{spice}");
-        assert!(spice.contains("DD3 n_t10L n_t5L 1N4148"), "{spice}");
+        // 三只二极管的方向保留（名字已带前缀 `D`，不再重复成 `DD1`）
+        assert!(spice.contains("D1 n_t1L n_t10L 1N4148"), "{spice}");
+        assert!(spice.contains("D3 n_t10L n_t5L 1N4148"), "{spice}");
         // 接地网映射到节点 0
         assert!(spice.contains("VB1 n_rail_Lp 0 9"), "{spice}");
         // 骨架里应包含元件表

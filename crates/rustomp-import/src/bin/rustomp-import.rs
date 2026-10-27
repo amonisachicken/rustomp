@@ -2,12 +2,17 @@
 //! 外部电路导入 CLI。
 //!
 //! 用法：
-//!   rustomp-import <input.bread>                  # 只打印摘要
+//!   rustomp-import <input>                       # 只打印摘要（自动识别格式）
 //!   rustomp-import <input> --spice out.cir        # 输出 SPICE 元件行
 //!   rustomp-import <input> --skeleton out.rs      # 输出 Rust 电路骨架
 //!   rustomp-import <input> --json out.json        # 输出中间表示
-//!   rustomp-import netlist.cir --mna out.rs       # 生成 MNA 装配代码（S1a）
+//!   rustomp-import <input> --mna out.rs           # 生成 MNA 装配代码（S1a）
 //!   rustomp-import netlist.cir --mna out.rs --check   # 只比对，不写入（CI 防漂移）
+//!
+//! 支持的格式：
+//!   `.design.json`  rustomp-circuit-designer 工程（**首选设计器**）
+//!   `.bread`        breadspice 面包板工程
+//!   `.cir`/`.net`/`.sp`/`.spice`  任意 SPICE 网表
 
 use std::path::PathBuf;
 
@@ -15,7 +20,8 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "用法: {} <input> [--spice f] [--skeleton f] [--json f]",
+            "用法: {} <input> [--spice f] [--skeleton f] [--json f]\n\
+             \x20      [--mna f [--check]] [--input 源名或节点名] [--output-node 节点名]",
             args[0]
         );
         std::process::exit(1);
@@ -27,6 +33,7 @@ fn main() {
     let mut mna: Option<PathBuf> = None;
     let mut check = false;
     let mut output_node: Option<String> = None;
+    let mut input_node: Option<String> = None;
     let mut i = 2;
     while i < args.len() {
         if args[i] == "--check" {
@@ -43,6 +50,7 @@ fn main() {
             "--json" => json = Some(PathBuf::from(&args[i + 1])),
             "--mna" => mna = Some(PathBuf::from(&args[i + 1])),
             "--output-node" => output_node = Some(args[i + 1].clone()),
+            "--input" => input_node = Some(args[i + 1].clone()),
             other => {
                 eprintln!("未知参数 {other}");
                 std::process::exit(1);
@@ -82,7 +90,7 @@ fn main() {
     }
     if let Some(p) = mna {
         let opts = rustomp_import::mna_codegen::Options {
-            input: None,
+            input: input_node.clone(),
             output: output_node,
             // 只写文件名：生成物的头部要稳定（不随调用时的相对路径变化）
             source: input

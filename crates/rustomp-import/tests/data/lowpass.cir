@@ -1,0 +1,6 @@
+* lowpass —— 由 rustomp-circuit-designer 生成
+* @rustomp in=IN out=OUT
+
+C1 OUT 0 100n
+R1 IN OUT 10k
+.end

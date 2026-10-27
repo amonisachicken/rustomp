@@ -34,6 +34,39 @@ fn regenerate(fixture: &str, source: &str) -> String {
     generate(&circuit, &opts).expect("生成失败").code
 }
 
+/// 设计器工程文件（`.design.json`）→ 生成物。
+///
+/// 用快照的 `symbols.json`（而不是本机那份）：守卫必须能独自跑，不依赖设计器仓库在不在。
+fn regenerate_designer(fixture: &str, source: &str) -> String {
+    let table = rustomp_import::designer::SymbolTable::from_json(include_str!(
+        "data/designer-symbols.json"
+    ))
+    .expect("symbols.json 快照解析失败");
+    let content = std::fs::read_to_string(fixture).expect("读不到设计器工程夹具");
+    let circuit = rustomp_import::designer::import_with_table(Path::new(fixture), &content, &table)
+        .expect("导入设计器工程失败");
+    let opts = Options {
+        input: None,
+        output: None,
+        source: source.into(),
+    };
+    generate(&circuit, &opts).expect("生成失败").code
+}
+
+#[test]
+fn designer_project_is_up_to_date() {
+    let fixture = "tests/data/lowpass.design.json";
+    let golden = "../rustomp-dsp/tests/generated/lowpass.rs";
+    let fresh = regenerate_designer(fixture, "lowpass.design.json");
+    let repo = std::fs::read_to_string(golden).unwrap_or_default();
+    assert_eq!(
+        fresh, repo,
+        "{golden} 与重新生成的结果不一致。请重新生成：\n  \
+         RUSTOM_DESIGNER_SYMBOLS=<设计器>/symbols/symbols.json \
+         cargo run -q -p rustomp-import -- {fixture} --mna {golden}"
+    );
+}
+
 #[test]
 fn all_generated_files_are_up_to_date() {
     for (fixture, golden, source) in CASES {

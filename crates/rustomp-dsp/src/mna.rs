@@ -777,6 +777,15 @@ impl<const N: usize> Netlist<N> {
         self.v
     }
 
+    /// 把固定电位节点（电源轨 / 输入）的已知值写回解向量。
+    fn fill_fixed(&self, v: &mut [f64; N]) {
+        for &(node, volt) in &self.fixed {
+            if node != GND && node < N {
+                v[node] = volt;
+            }
+        }
+    }
+
     fn solve_dc_once(&mut self) -> [f64; N] {
         let mut sys = Mna::<N>::new();
         let mut v = self.v;
@@ -795,11 +804,27 @@ impl<const N: usize> Netlist<N> {
 
     /// 内层牛顿迭代：给定线性化点 `v0`，迭代到收敛或超限。
     fn newton(&self, sys: &mut Mna<N>, mut v: [f64; N], dt: f64, dc: bool) -> Option<[f64; N]> {
+        // 固定电位节点（电源轨 / 输入）不在 LU 的行里：`solve_len` 给它们的槽位永远是 0。
+        // **必须把已知电位补回解向量**：电容的 `v_prev`、非线性器件的线性化点
+        // 都直接读 `v[]`；不补的话它们会把 8.2 V 的电源轨当成 0 V，
+        // 瞬态第一拍就开始发散（实测 6e19 V）。
+        let mut is_fixed = [false; N];
+        for &(node, _) in &self.fixed {
+            if node != GND && node < N {
+                is_fixed[node] = true;
+            }
+        }
+        self.fill_fixed(&mut v);
         for _ in 0..self.max_iter {
             self.stamp_all(sys, &v, dt, dc);
-            let v_new = sys.solve_len(self.solve_len());
+            let mut v_new = sys.solve_len(self.solve_len());
+            self.fill_fixed(&mut v_new);
             let mut max_dv: f64 = 0.0;
             for i in 0..N {
+                // 固定节点的“变化”不是误差（它是外部给定的），不参与收敛/阻尼判断
+                if is_fixed[i] {
+                    continue;
+                }
                 let d = (v_new[i] - v[i]).abs();
                 max_dv = max_dv.max(d / (1.0 + v_new[i].abs()));
             }
@@ -808,6 +833,7 @@ impl<const N: usize> Netlist<N> {
                 for i in 0..N {
                     v[i] = 0.5 * (v[i] + v_new[i]);
                 }
+                self.fill_fixed(&mut v);
             } else {
                 v = v_new;
             }
@@ -857,21 +883,40 @@ impl<const N: usize> Netlist<N> {
 
         // 初值：线性外推（热启动）。温启动让 2 次迭代就够用。
         let tol = self.fixed_tol;
+        // 初值：线性外推（热启动）。温启动让 2 次迭代就够用。
         let mut v = if self.has_prev2 {
             let mut guess = [0.0; N];
+            let mut jump: f64 = 0.0;
             for i in 0..N {
                 guess[i] = 2.0 * self.v[i] - self.v_prev2[i];
+                jump = jump.max((guess[i] - self.v[i]).abs() / (1.0 + self.v[i].abs()));
             }
-            guess
+            // **外推只在信号平稳时有用**：遇到陡沿（例如管子从截止冲进饱和）外推会给出
+            // 一个远离解的点，固定次数的牛顿从那里出发会直接发散。
+            // 实测：设计器工程 pretty-face 在第 77 个样本炸到 1e25 V（迭代加到 40 也没用），
+            // 跳变超过 10% 就退回上一拍解即可。稳态下外推仍然生效，性能不变。
+            if jump > 0.1 {
+                self.v
+            } else {
+                guess
+            }
         } else {
             self.v
         };
+        // 固定节点不外推（它们的值由外部给定）
+        for &(node, volt) in &self.fixed {
+            if node != GND && node < N {
+                v[node] = volt;
+            }
+        }
         self.last_iters = 0;
         for _ in 0..iters.max(1) {
             self.last_iters += 1;
             let mut sys = base.clone();
             self.stamp_nonlinear(&mut sys, &v, dt, false);
-            let v_new = sys.solve_len(self.solve_len());
+            let mut v_new = sys.solve_len(self.solve_len());
+            // 固定节点不在 LU 行里，解里是 0 —— 补回已知值（电容历史 / 下一拍线性化要用）
+            self.fill_fixed(&mut v_new);
             // **自适应提前退出**：残差够小就不再迭代。
             // 这一步很关键：固定 4 次在硬驱动下差 0.76 dB，固定 8 次又太贵；
             // 用"两次迭代之间的最大相对变化"当判据，稳态常见 4~5 次、难算时自动补到 8 次。
@@ -879,7 +924,18 @@ impl<const N: usize> Netlist<N> {
             for i in 0..N {
                 max_dv = max_dv.max((v_new[i] - v[i]).abs() / (1.0 + v_new[i].abs()));
             }
-            v = v_new;
+            // **阻尼**：大跳变时减半（与 `newton()` 同一条规则）。
+            // 没有阻尼时，指数型器件（BJT 结）在硬驱动下会来回振荡且**永远不收**——
+            // 实测：一枚锗管法兹（设计器工程 pretty-face）在第 77 个样本开始发散到 1e25 V，
+            // 迭代次数从 3 加到 40 都没用；同样的电路走收敛路径（`step()`）就正常。
+            if max_dv > 0.5 {
+                for i in 0..N {
+                    v[i] = 0.5 * (v[i] + v_new[i]);
+                }
+                self.fill_fixed(&mut v);
+            } else {
+                v = v_new;
+            }
             if tol > 0.0 && max_dv < tol {
                 break;
             }

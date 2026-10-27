@@ -279,6 +279,58 @@ fn check_field(name: &str) -> Result<String, String> {
     }
 }
 
+// ---------------------------------------------------------------- 输入端口解析
+
+/// 把 `in=<名>` 解析成**节点名**。
+///
+/// 两种写法都支持，因为两代设计器的习惯不同：
+/// - **元件名**（breadspice 时代）：`* @rustomp in=VS1` —— 取那个电压源的正端节点；
+/// - **节点名**（rustomp-circuit-designer）：`* @rustomp in=IN` —— 网表是纯拓扑，
+///   没有激励源，输入节点由 `process(x)` 每拍写入。
+fn resolve_input_name(
+    circuit: &ImportedCircuit,
+    name: &str,
+    canon: &impl Fn(&str) -> String,
+) -> Result<String, String> {
+    if let Some(e) = circuit.elements.iter().find(|e| e.name == name) {
+        if e.kind != ElementKind::VoltageSource {
+            return Err(format!(
+                "`in={name}` 命中元件 {}，但它不是电压源（输入端口必须是电压源或节点）",
+                e.name
+            ));
+        }
+        return Ok(e.nodes[0].clone());
+    }
+
+    let target = canon(name);
+    if target == "0" {
+        return Err(format!("`in={name}` 被合并到地（0），不能当输入端口"));
+    }
+    let known = circuit
+        .elements
+        .iter()
+        .flat_map(|e| e.nodes.iter())
+        .any(|n| canon(n) == target);
+    if known {
+        return Ok(name.to_string());
+    }
+
+    let sources = circuit
+        .elements
+        .iter()
+        .filter(|e| e.kind == ElementKind::VoltageSource)
+        .map(|e| e.name.clone())
+        .collect::<Vec<_>>();
+    Err(format!(
+        "`in={name}` 既不是元件名也不是节点名（电压源：{}）",
+        if sources.is_empty() {
+            "无".to_string()
+        } else {
+            sources.join("、")
+        }
+    ))
+}
+
 // ---------------------------------------------------------------- 并查集
 
 /// 每条运放子电路占一条电压源支路（生成前就要知道，用于排布节点编号）。
@@ -336,7 +388,24 @@ impl Union {
 /// 把网表 IR 生成为 MNA 装配代码。
 pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, String> {
     let mut notes = Vec::new();
-    let dirs = parse_directives(&circuit.notes)?;
+    let mut dirs = parse_directives(&circuit.notes)?;
+
+    // 兼容老写法：`param` 里的元素名应是**网表里的元件名**（`RP1A`），
+    // 但 rustomp-circuit-designer 早期版本写的是位号（`P1A`）。
+    // 直接报错会让已经导出的网表全部失效，所以这里只补一层“加 R 前缀”的兼容。
+    for p in &mut dirs.pots {
+        if circuit.elements.iter().any(|e| e.name == p.elem) {
+            continue;
+        }
+        let candidate = format!("R{}", p.elem);
+        if circuit.elements.iter().any(|e| e.name == candidate) {
+            notes.push(format!(
+                "`param {}` 对应的是电阻 {}（老格式：指令里写的是位号）",
+                p.elem, candidate
+            ));
+            p.elem = candidate;
+        }
+    }
 
     // ---- 1) 导线合并 ----
     let mut union = Union::new();
@@ -393,6 +462,17 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
             fixed_names.insert(canon(&e.nodes[0]));
         }
     }
+    // 显式指定的输入节点**也算固定电位节点**：它由 `process(x)` 每拍写入
+    // （`build()` 里 `fix_node(IN, 0.0)`）。如果不把它排到未知量之后，
+    // LU 里就会出现一行全零的“未知量” → 解发散（实测 6e19 V）。
+    let explicit_input = opts.input.clone().or_else(|| dirs.input.clone());
+    let input_name: Option<String> = match &explicit_input {
+        Some(n) => Some(resolve_input_name(&circuit, n, &canon)?),
+        None => None,
+    };
+    if let Some(n) = &input_name {
+        fixed_names.insert(canon(n));
+    }
     for s in &dirs.switches {
         let _ = s;
     }
@@ -418,8 +498,18 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     };
 
     // ---- 3) 激励：DC 源 → 固定节点；SIN/AC 源 → 输入端口 ----
+    //
+    // 输入端口有三种来源，优先级从高到低：
+    //   ① `--input <名>`（CLI，测试/工具用）
+    //   ② 网表里的 `* @rustomp in=<名>`
+    //   ③ 自动：唯一一个 SIN/AC/PULSE 源
+    //
+    // **`in=` 既可以是元件名，也可以是节点名**。后者是 rustomp-circuit-designer 的写法：
+    // 设计器导出的网表是一张**纯拓扑**（激励不画进网表，由 DSP 每拍注入），
+    // 所以它只能写 `in=IN`。早期实现只认元件名，于是设计器的图会退化成
+    // “无输入端口（纯直流电路）”—— 生成的 `Ckt` 直接忽略输入。
     let mut fixed_nodes: Vec<(usize, f64, String)> = Vec::new();
-    let mut input_node: Option<(usize, String)> = None;
+    let mut signal_sources: Vec<(usize, String)> = Vec::new();
     for e in &circuit.elements {
         if e.kind != ElementKind::VoltageSource {
             continue;
@@ -434,30 +524,42 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         let is_signal = lower.contains("sin") || lower.contains("ac ") || lower.contains("pulse");
         let node = idx(&e.nodes[0]);
         if is_signal {
-            if let Some((_, name)) = &input_node {
-                return Err(format!(
-                    "发现多个信号源（{} 和 {}）：请用 `* @rustomp in=<源名>` 指定输入",
-                    name, e.name
-                ));
-            }
-            input_node = Some((node, e.name.clone()));
-            notes.push(format!("{} 作为输入端口（节点 {}）", e.name, e.nodes[0]));
+            signal_sources.push((node, e.name.clone()));
         } else {
             let dc = parse_value(e.value.split_whitespace().last().unwrap_or(""))
                 .ok_or_else(|| format!("{}：读不出直流电压 `{}`", e.name, e.value))?;
             fixed_nodes.push((node, dc, e.name.clone()));
         }
     }
-    if let Some(name) = &opts.input {
-        let node = circuit
-            .elements
-            .iter()
-            .find(|e| &e.name == name)
-            .map(|e| idx(&e.nodes[0]))
-            .ok_or_else(|| format!("找不到输入源 {name}"))?;
-        fixed_nodes.retain(|(n, _, _)| *n != node);
-        input_node = Some((node, name.clone()));
-    }
+
+    let input_node: Option<(usize, String)> = match &explicit_input {
+        Some(name) => {
+            let node = idx(input_name.as_ref().expect("显式输入已解析成节点名"));
+            fixed_nodes.retain(|(n, _, _)| *n != node);
+            notes.push(format!(
+                "`in={name}` → 输入端口节点 {node}（由 process(x) 每拍写入）"
+            ));
+            Some((node, name.clone()))
+        }
+        None => match signal_sources.len() {
+            0 => None,
+            1 => {
+                let (node, name) = &signal_sources[0];
+                notes.push(format!("{name} 作为输入端口（节点下标 {node}）"));
+                Some((*node, name.clone()))
+            }
+            _ => {
+                let list = signal_sources
+                    .iter()
+                    .map(|(_, n)| n.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、");
+                return Err(format!(
+                    "发现多个信号源（{list}）：请用 `* @rustomp in=<源名或节点名>` 指定输入"
+                ));
+            }
+        },
+    };
     let has_input = input_node.is_some();
 
     // ---- 4) 输出端口 ----

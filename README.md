@@ -198,14 +198,22 @@ cargo test -p my-drive-circuit --release --test oracle
 要接入**你自己的电路**：
 
 1. `./scripts/new-plugin.sh "My Circuit"` 生成同构项目；
-2. 用 [breadspice](https://github.com/amonisachicken/breadspice) 画面包板，把 `.bread`
-   放进 `<项目>/circuit/netlist/`，跑上面第 1、2 步拿到基线；
+2. 用 **[rustomp-circuit-designer](https://github.com/amonisachicken/rustomp-circuit-designer)**
+   （**首选**）画图，把工程文件 `.design.json` 直接交给生成器：
+
+   ```bash
+   RUSTOM_DESIGNER_SYMBOLS=../rustomp-circuit-designer/symbols/symbols.json \
+     cargo run -q -p rustomp-import -- <项目>/circuit/<设计>.design.json \
+     --mna <项目>/src/generated/circuit.rs
+   ```
+
+   也可以先导出 `.cir` 再喂（同一条链），或继续用
+   [breadspice](https://github.com/amonisachicken/breadspice) 的 `.bread`（次选）；
 3. 在 `<项目>/circuit/src/` 里实现 `rustomp_dsp::Circuit`
    （线性用梯形伴随模型 / 非线性用一维牛顿；参考
    `sparklin-drive-legacy` 仓库的 `circuit/src/fakedist.rs`）；
-   也可以**完全不手写**：网表加几行 `* @rustomp in=/out=/param/switch` 指令，
-   `cargo run -p rustomp-import -- <网表.cir> --mna <项目>/src/generated/circuit.rs`
-   就直接得到 `Netlist` + `Params` + `impl Circuit`（见 `crates/rustomp-import/README.md`）；
+   **或者完全不手写**：走上面第 2 步的 `--mna`，直接得到
+   `Netlist` + `Params` + `impl Circuit`（见 `crates/rustomp-import/README.md`）；
 4. 写对拍测试把 h2–h9 锁住（参考示例的 `baseline.rs` 与 `oracle.rs`）；
 5. 在 `<项目>/plugin/src/lib.rs` 里挂参数，在 `rustomp.toml` 的 `[ui]` 里挂控件。
 
@@ -322,14 +330,22 @@ rustomp（框架 + macOS 打包脚本 + 平台契约）
 
 ## 与外部设计器的接口
 
-用户会分别开发两个**独立**的设计器；本项目刻意只给契约，不内置它们：
+原理图由 **[rustomp-circuit-designer](https://github.com/amonisachicken/rustomp-circuit-designer)**
+（**首选设计器**）画；面板由单独的 GUI 设计器出。本项目不内置它们，只保证**契约**：
 
 ```text
- 原理图设计器 ──(网表 .cir + @rustomp 指令)──► rustomp-import --mna ──► src/generated/circuit.rs
-                                                                              │
- 面板设计器 ──(rustomp.toml 的 [ui] + PNG)──► plugin_meta.py ──► panel.rs ─────┴──► 插件 crate
+ rustomp-circuit-designer ──(.design.json 工程文件)──┐
+                        └─（或导出 .cir 网表）───────┤
+ breadspice（次选）──────(.bread)───────────────────┴─► rustomp-import --mna ──► src/generated/circuit.rs
+                                                                                        │
+ 面板设计器 ──(rustomp.toml 的 [ui] + PNG)──► plugin_meta.py ──► panel.rs ───────────────┴──► 插件 crate
 ```
 
+> 首选设计器的工程文件**可以直接导入**（`CircuitDesigner` 导入器，2026-10-27）：
+> 它运行时读设计器的 `symbols/symbols.json` 拿引脚几何，
+> 并用设计器导出的 `.cir` 做**逐行对拍**（`crates/rustomp-import/tests/designer.rs`）。
+> 面包板工程 `.bread` 仍支持，但不再推荐作为画原理图的默认路径。
+>
 > 面板链路：`[ui]`（毫米坐标）→ `PanelSpec`（`const`，漏素材在编译期就报错）→ `rustomp_gui::draw`。
 > 契约见 `crates/rustomp-gui/README.md`。
 
@@ -337,8 +353,8 @@ rustomp（框架 + macOS 打包脚本 + 平台契约）
 
 | 要求 | 原因 |
 |---|---|
-| 端口**显式标注**（`in=` / `out=`） | 绝不猜"哪个节点是输出" |
-| 可调元件**显式声明**（`param`） | 不从 `250k + 250k` 反推电位器；开关按 D-005 拆成多份完整网表 |
+| 端口**显式标注**（`in=` / `out=`） | 绝不猜"哪个节点是输出"；`in=` 写节点名时表示"纯输入端口" |
+| 可调元件**显式声明**（`param`） | 不从 `250k + 250k` 反推电位器；元素名必须写网表元件名（`RP1A`） |
 | 型号落在**闭集表**里 | 未命中在导入阶段就报错，而不是上线后才发现换了器件 |
 
 > 为什么设计器不直接生成 Rust：**网表是可被 ngspice 验证的中间格式**，
@@ -444,7 +460,8 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
       Sparklin Drive v2 已带面板（毫米坐标、12 px/mm、旋钮整图旋转、3PDT 踩钉、LED 活动量）
 - [x] 把 oracle 对拍铺进 CI（macOS，缺 ngspice 即失败）
 - [ ] **图形设计器**（`rustomp-box-designer`，独立仓库）：面板 → `[ui]` + 素材，本仓库只维护契约
-- [ ] **原理图设计器**（`rustomp-circuit-designer`，独立仓库）：原理图 → 网表
+- [x] **原理图设计器** ✅ `rustomp-circuit-designer`（独立仓库，**首选**）：原理图 → 网表；
+      工程文件 `.design.json` 已可直接导入（2026-10-27），取代 breadspice 成为默认路径
 - [ ] Windows/Linux 打包工具（`rustomp-win-plugin` / `rustomp-linux-plugin`，独立仓库，ADR-015）
 - [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
 - [ ] 电位器 A/C taper；预设与状态管理；安装包（pkg）+ 签名公证

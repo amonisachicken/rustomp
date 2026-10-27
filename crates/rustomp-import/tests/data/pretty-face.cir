@@ -1,0 +1,24 @@
+* pretty-face —— 由 rustomp-circuit-designer 生成
+* @rustomp in=IN out=OUT
+* @rustomp param RP1A p1 pot max=2k
+* @rustomp param RP1B p1 pot max=2k invert
+* @rustomp param RP2A p2 pot max=100k
+* @rustomp param RP2B p2 pot max=100k invert
+
+C1 n1 n2 100p
+C2 n2 n4 100p
+C3 n6 0 22u
+C4 n7 n5 100n
+C5 IN n1 2u
+RP1A 0 n6 1k
+RP1B n6 n3 1k
+RP2A 0 OUT 50k
+RP2B OUT n7 50k
+Q1 n2 n1 0 AC127
+Q2 n4 n2 n3 AC127
+R1 VCC n2 33k
+R2 n5 n4 8.2k
+R3 VCC n5 560
+R4 n1 n3 47k
+V1 VCC 0 DC 8.2
+.end
