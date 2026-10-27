@@ -5323,6 +5323,61 @@ rustomp-circuit-designer 工程（.design.json）
 
 ---
 
+## E87：M-D 成立 —— 设计器画的电路进了真插件、真的出声（2026-10-27）
+
+M-D 的定义：**生成的 `Ckt` 直接进插件（`Engine<Ckt>`）并在宿主里出声**。
+这一步把 E81~E86 的成果一次性用在"发得出去的东西"上。
+
+### 87.1 做法（全程没写一行电路代码）
+
+```bash
+# 1) 用模板起一个插件项目（自带 workspace，和框架同构）
+./scripts/new-plugin.sh "Pretty Face"          # → ../pretty-face
+
+# 2) 设计器工程直接生成电路（不走 .cir 导出）
+RUSTOM_DESIGNER_SYMBOLS=../rustomp-circuit-designer/symbols/symbols.json   cargo run -q -p rustomp-import -- design/pretty-face.design.json     --mna circuit/src/generated/circuit.rs
+
+# 3) rustomp.toml 里声明映射：gain → Params.p1（P1 电位器）、level → Params.p2（P2）
+cargo run -q -p rustomp-gen -- ../pretty-face
+
+# 4) 测试 + 打包
+(cd ../pretty-face && cargo test --release)
+./scripts/build-all.sh ../pretty-face --format clap --variant mono --no-install
+```
+
+### 87.2 结果
+
+| 验证 | 结果 |
+|---|---|
+| 插件内 `Engine<Ckt>` 冒烟（48 kHz，0.1 V / 1 kHz） | 稳态峰值 **0.143 V**、**THD 60.5 %**（与 M-C 的 60.53% 一致） |
+| 电位器四个角（0/1 组合） | 都出声、不发散 |
+| 延迟 | 15 样本（未变） |
+| 打包 | `Pretty Face Mono.clap` / `.vst3` 生成 |
+| **AU 自检（真 bundle、真渲染）** | 渲染 512 帧：**非有限值 0**、RMS **0.132**、"1kHz 正弦已通过电路" |
+
+> 插件项目在 `../pretty-face`（独立仓，已 `git init` + 首次提交）：`design/` 存设计器工程、
+> `circuit/netlist/` 存设计器导出的 `.cir`、`circuit/src/generated/` 是生成物（入库 + 可复核）。
+
+### 87.3 一条架构边界（用户明确）
+
+> **设计器只管吃进布局、吐出网表，不应该知道后续 DSP 环节。**
+
+所以"对拍结果显示在设计器界面里"这件事**不做**：THD 对拍留在 rustomp（`mc_closed_loop_*` 测试），
+设计器一侧保持"画图 → `.cir`/`.design.json`"的纯上游角色。设计器仓库已记 D-020。
+
+### 87.4 里程碑
+
+| | 状态 |
+|---|---|
+| M-A 图 → `.cir` → ngspice | ✅ |
+| M-B 图 → `--mna` → 可编译 `Ckt` | ✅ |
+| M-C 生成代码 THD 与 ngspice 一致 | ✅ 0 / 0.000 / 0.39 pp |
+| **M-D 进插件出声** | ✅ **本轮**：CLAP/VST3 产物 + AU 自检通过（RMS 0.132、无 NaN） |
+
+剩下的"在 Logic 里手动弹一下"是人的验收动作（装上插件即可，跟框架无关）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
