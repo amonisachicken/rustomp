@@ -131,22 +131,35 @@ DEVLOG.md               开发日志：每个决策、实验数据、踩过的�
 
 ## 快速开始（macOS）
 
-前置：Rust 工具链、CMake、Homebrew 的 `bison` / `readline`（AU 包装与 ngspice 需要）。
+本仓**只做框架**：器件 / MNA / 实时路径 / 代码生成 / 面板契约。
+**打包在独立仓库** [rustomp-mac-plugin](https://github.com/amonisachicken/rustomp-mac-plugin)（契约见 `docs/ecosystem.md`）。
 
 ```bash
-# 1) 拉取第三方源码（clap-wrapper / clap / AudioUnitSDK，固定 commit 并自动打补丁）
-./scripts/fetch-third-party.sh
-
-# 2) 构建 + 安装（Mono + Stereo 两个 AU，同时产出 VST3 / CLAP）
-./scripts/build-all.sh
+# 0) 让框架能编译（插件项目不在本仓，见 DEVLOG E70）
+cargo test --workspace            # 不需要 ngspice；不需要任何插件
 ```
-
-产物安装到 `~/Library/Audio/Plug-Ins/{Components,VST3,CLAP}/`。
 
 ```bash
-./scripts/check-au.sh          # 自检：通道能力 / 渲染 / Logic 缓存记录
-./scripts/reset-logic-cache.sh # Logic 里看不到插件时：退出 Logic 后清缓存
+# 1) 一次性：拉打包工具与它的第三方源码
+git clone git@github.com:amonisachicken/rustomp-mac-plugin.git ~/develop/rustomp-mac-plugin
+~/develop/rustomp-mac-plugin/scripts/fetch-third-party.sh
+~/develop/rustomp-mac-plugin/scripts/doctor.sh        # 体检：cargo / Xcode CLT / rust targets / 主题
+
+# 2) 构建 + 安装一个插件项目（插件住在**框架之外**，例如 ../sparklin-drive）
+export RUSTOMP_MAC_PLUGIN=~/develop/rustomp-mac-plugin
+./scripts/build-all.sh ~/develop/sparklin-drive       # → AU/VST3/CLAP，装到 ~/Library/Audio/Plug-Ins/
 ```
+
+`./scripts/build-all.sh` 是**瘦包装**：它把插件目录交给 `rustomp-mac-plugin/pack.sh`，
+只认 `ARTIFACT: <路径>` 这一行输出（契约 B）。找不到打包工具时它会打印 clone 命令，绝不自己编。
+
+```bash
+~/develop/rustomp-mac-plugin/scripts/check-au.sh          # AU 自检
+~/develop/rustomp-mac-plugin/scripts/reset-logic-cache.sh # Logic 看不到插件时清缓存
+```
+
+> **插件项目必须住在本仓之外**：`cargo-nih-plug` 会向上找**最顶层**的 `Cargo.toml` 当 workspace 根，
+> 插件嵌在 `rustomp/plugins/` 里会被拉到框架根 → `cannot specify features for packages outside of workspace`。
 
 ---
 
