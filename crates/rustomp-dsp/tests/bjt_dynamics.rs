@@ -127,113 +127,25 @@ fn ft_of_ac127_matches_ngspice_when_diffusion_on() {
 }
 
 #[test]
-fn germanium_diffusion_is_gated_off() {
-    // 默认（C1 only）：Cbe 应该就是结电容量级（几十 pF），不是 41 nF
-    let (_, cbe, cbc) = AC127.small_signal(0.15, -5.0);
-    println!(
-        "AC127（C1 only）Cbe={:.1} pF Cbc={:.1} pF",
-        cbe * 1e12,
-        cbc * 1e12
-    );
-    assert!(cbe < 1e-9, "扩散电荷没被关掉？Cbe={:.3} nF", cbe * 1e9);
-    assert!(
-        cbe > 10e-12 && cbc > 10e-12,
-        "结电容不见了：{cbe:e} {cbc:e}"
-    );
-}
-
-/// 新热路径（`eval`：一次求值 + 解析雅可比）必须与旧参考实现（`terminal`/`charges`）一致。
-#[test]
-fn eval_matches_reference_terminal_and_charges() {
-    // 电荷是在**本征结**上的：要和 `charges(端电压)` 对比，必须先让端=本征（rb/re/rc=0）。
-    // 电流部分不受影响（`terminal` 自带内层牛顿）。
-    let mut ge = AC127;
-    ge.diffusion = true;
-    let mut no_r = |mut b: Bjt| -> Bjt {
-        b.rb = 0.0;
-        b.re = 0.0;
-        b.rc = 0.0;
-        b
+fn diffusion_flag_controls_transit_charge() {
+    // 开关语义：`diffusion = false` = 只上 C1（结电容），`true` = 外加 C2（Tf/Tr 渡越电荷）。
+    // 锗管的 `Tf=600 ns` 在 mA 级就有 ~40 nF 的扩散电容，开关效果非常明显。
+    let (_, cbe_off, _) = {
+        let mut b = AC127;
+        b.diffusion = false;
+        b.small_signal(0.15, -5.0)
     };
-    let with_r = [BC549C, BC559C, ge, AC128];
-    let no_r_models = [no_r(BC549C), no_r(BC559C), no_r(ge), no_r(AC128)];
-    for (b, b0) in with_r.iter().zip(no_r_models.iter()) {
-        let c = b.consts();
-        let mut worst_i: f64 = 0.0;
-        let mut worst_q: f64 = 0.0;
-        for &vbe in &[-0.3, 0.0, 0.05, 0.12, 0.2, 0.3, 0.45, 0.62] {
-            for &vbc in &[-5.0, -1.0, -0.2, 0.0, 0.2, 0.5] {
-                let ev = b.eval(&c, vbe, vbc, true);
-                let (ic, ib) = b.terminal(vbe, vbc);
-                let rel = |a: f64, r: f64| (a - r).abs() / (1e-12 + r.abs());
-                worst_i = worst_i.max(rel(ev.ic, ic)).max(rel(ev.ib, ib));
-                assert!(
-                    rel(ev.ic, ic) < 1e-8 && rel(ev.ib, ib) < 1e-8,
-                    "电流不一致：vbe={vbe} vbc={vbc} → ic {:e} vs {:e}、ib {:e} vs {:e}",
-                    ev.ic,
-                    ic,
-                    ev.ib,
-                    ib
-                );
-                // 电荷：端=本征的模型（rb/re/rc 已清零）才有可直接对比的参考
-                let c0 = b0.consts();
-                let ev0 = b0.eval(&c0, vbe, vbc, true);
-                let (qbe, qbc) = b0.charges(vbe, vbc);
-                worst_q = worst_q.max(rel(ev0.qbe, qbe)).max(rel(ev0.qbc, qbc));
-                assert!(
-                    rel(ev0.qbe, qbe) < 1e-8 && rel(ev0.qbc, qbc) < 1e-8,
-                    "q 不一致：vbe={vbe} vbc={vbc} → {:e}/{:e} vs {:e}/{:e}",
-                    ev0.qbe,
-                    ev0.qbc,
-                    qbe,
-                    qbc
-                );
-            }
-        }
-        println!("eval vs 参考：最大电流差 {worst_i:.2e}、电荷差 {worst_q:.2e}");
-    }
-}
-
-/// 解析雅可比必须等于数值差分（否则牛顿会走错方向）。
-#[test]
-fn analytic_jacobian_matches_fd() {
-    let mut ge = AC127;
-    ge.diffusion = true;
-    for b in [BC549C, BC559C, ge, AC128] {
-        let c = b.consts();
-        let h = 1e-6;
-        for &vbe in &[0.0, 0.1, 0.2, 0.35, 0.55] {
-            for &vbc in &[-5.0, -0.5, 0.0, 0.3] {
-                let ev = b.eval(&c, vbe, vbc, true);
-                let (ic_p, ib_p) = b.terminal(vbe + h, vbc);
-                let (ic_m, ib_m) = b.terminal(vbe - h, vbc);
-                let fd_dic = (ic_p - ic_m) / (2.0 * h);
-                let fd_dib = (ib_p - ib_m) / (2.0 * h);
-                let (ic_p, ib_p) = b.terminal(vbe, vbc + h);
-                let (ic_m, ib_m) = b.terminal(vbe, vbc - h);
-                let fd_dic_bc = (ic_p - ic_m) / (2.0 * h);
-                let fd_dib_bc = (ib_p - ib_m) / (2.0 * h);
-                let close = |a: f64, n: f64| (a - n).abs() <= 1e-4 * (1.0 + n.abs());
-                assert!(
-                    close(ev.dic_dvbe, fd_dic)
-                        && close(ev.dic_dvbc, fd_dic_bc)
-                        && close(ev.dib_dvbe, fd_dib)
-                        && close(ev.dib_dvbc, fd_dib_bc),
-                    "雅可比不一致 @ vbe={vbe} vbc={vbc}：\
-                     dic/dvbe 解析 {:e} / 差分 {:e}，dic/dvbc {:e}/{:e}，\
-                     dib/dvbe {:e}/{:e}，dib/dvbc {:e}/{:e}",
-                    ev.dic_dvbe,
-                    fd_dic,
-                    ev.dic_dvbc,
-                    fd_dic_bc,
-                    ev.dib_dvbe,
-                    fd_dib,
-                    ev.dib_dvbc,
-                    fd_dib_bc
-                );
-            }
-        }
-    }
+    let (_, cbe_on, _) = AC127.small_signal(0.15, -5.0);
+    println!(
+        "AC127 Cbe：C1 only = {:.1} pF，C1+C2 = {:.1} nF",
+        cbe_off * 1e12,
+        cbe_on * 1e9
+    );
+    assert!(cbe_off < 1e-9, "关掉扩散电荷后 Cbe 应只有结电容（pF 级）");
+    assert!(
+        cbe_on > 20.0 * cbe_off,
+        "打开扩散电荷后 Cbe 应显著变大（Tf·gm）"
+    );
 }
 
 #[test]

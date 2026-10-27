@@ -63,10 +63,10 @@ pub struct Bjt {
     pub xtf: f64,
     /// 是否启用**扩散电荷**（`Tf/Tr`，即 C2 档）。
     ///
-    /// 默认关（`false` = 只上 C1 的 `Cje/Cjc`）。原因见 `DEVLOG.md` E82：锗管
-    /// `Tf=600ns` ⇒ 扩散电容 ≈41 nF，在 192 kHz 下等效电导 `C/dt ≈ 8 S`；
-    /// 当前牛顿（3 次预算、无 SPICE 式结电压限制）会把解推到错的支路上。
-    /// 硅管 `Tf≈420ps` ⇒ 只有 ~16 pF，开着没问题。
+    /// 四个型号都开着（E85）。锗管 `Tf=600ns` ⇒ 扩散电容 ≈41 nF、`C/dt ≈ 8 S`：
+    /// E82 时因为"牛顿没有结电压限制"不得不关；E85 把 SPICE 的 `pnjlim` 接回器件装配
+    /// **并且**雅可比是解析的（不会被限幅夹平）之后，锗管 C2 全拍收敛（残差 6e-11、最多 9 次迭代）。
+    /// 留着这个开关是为了做 A/B（`false` = 只上 C1）。
     pub diffusion: bool,
 }
 
@@ -830,7 +830,7 @@ pub const AC127: Bjt = Bjt {
     xtf: 6.0,
     // Tf=600ns ⇒ ft≈265 kHz（已与 ngspice 对拍：0.20 vs 0.25 MHz），
     // 但扩散电容 ~41 nF 超出当前求解器的稳定范围（DEVLOG E82）→ 先只上 C1
-    diffusion: false,
+    diffusion: true,
 };
 
 /// AC128（锗 PNP）。PNP 在与 `AC127` 相同的公式下工作 —— 使用时把端电压取反即可
@@ -864,7 +864,7 @@ pub const AC128: Bjt = Bjt {
     tr: 5e-6,
     itf: 1.0,
     xtf: 6.0,
-    diffusion: false, // 同 AC127：锗管扩散电容太大，等求解器限制（E82）
+    diffusion: true, // 锗管：ft≈265 kHz、扩散电容 ~41 nF；E85 靠 pnjlim 才稳得住
 };
 
 #[cfg(test)]

@@ -284,14 +284,14 @@ impl<const N: usize> Mna<N> {
     pub fn stamp_ports(
         &mut self,
         nodes: &[usize; 3],
-        v: &[f64],
+        v_eval: [f64; 3],
         i: &[f64; 3],
         jac: &[[f64; 3]; 3],
     ) {
         let v0 = [
-            if nodes[0] == GND { 0.0 } else { v[nodes[0]] },
-            if nodes[1] == GND { 0.0 } else { v[nodes[1]] },
-            if nodes[2] == GND { 0.0 } else { v[nodes[2]] },
+            if nodes[0] == GND { 0.0 } else { v_eval[0] },
+            if nodes[1] == GND { 0.0 } else { v_eval[1] },
+            if nodes[2] == GND { 0.0 } else { v_eval[2] },
         ];
         // 导纳部分
         for t in 0..3 {
@@ -449,6 +449,9 @@ pub enum Element {
         e: usize,
         /// 上一拍的结电荷 `[Qbe, Qbc]`（库仑，NPN 归一化空间）—— 位移电流用
         q: [f64; 2],
+        /// 上一轮迭代的结电压 `[vbe, vbc]`（NPN 归一化空间）—— 结电压限幅（`pnjlim`）用。
+        /// `stamp` 只有 `&self`，所以用 `Cell`（E85）
+        lim: core::cell::Cell<[f64; 2]>,
     },
     /// JFET（N 沟道）
     Jfet {
@@ -505,13 +508,27 @@ impl Element {
             b,
             e,
             q,
+            lim,
         } = self
         {
             let (qbe_prev, qbc_prev) = (q[0], q[1]);
             let dt_eff = if dc || dt <= 0.0 { 0.0 } else { dt };
             let s = if *npn { 1.0 } else { -1.0 };
             let (vb, vc, ve) = (v[*b], v[*c], v[*e]);
-            let (vbe, vbc) = (s * (vb - ve), s * (vb - vc));
+            let (vbe_raw, vbc_raw) = (s * (vb - ve), s * (vb - vc));
+            // **结电压限幅**（SPICE 的 `pnjlim`，E85）：迭代中结电压一次跳得比 2·N·VT 还多时，
+            // 把这一步压到 `vold + N·VT·ln(1+Δ/VT)`。E82 时试过、失败 —— 那是**数值差分雅可比**
+            // 被限幅夹平（导数→0）导致假收敛；现在雅可比是解析的（在限幅点求导），
+            // 限幅只改"求值点"、不改导数来源，牛顿仍能往外走。
+            let (vcrit_e, vcrit_c) = model.vcrit();
+            let (vt_e, vt_c) = (
+                model.nf * crate::devices::diode::VT,
+                model.nr * crate::devices::diode::VT,
+            );
+            let lim_prev = lim.get();
+            let vbe = Bjt::pnjlim(vbe_raw, lim_prev[0], vt_e, vcrit_e);
+            let vbc = Bjt::pnjlim(vbc_raw, lim_prev[1], vt_c, vcrit_c);
+            lim.set([vbe, vbc]);
             let ev = model.eval(consts, vbe, vbc, dt_eff > 0.0);
 
             // 端电流（流入器件）：DC 部分 + 结电荷的位移电流
@@ -561,7 +578,9 @@ impl Element {
             for k in 0..3 {
                 jac[2][k] = -(jac[0][k] + jac[1][k]);
             }
-            sys.stamp_ports(&[*c, *b, *e], v, &[ic, ib, ie], &jac);
+            // 与限幅点一致的节点电压（以射极为基准；只影响线性化点，不影响物理）
+            let v_eval = [ve + s * (vbe - vbc), ve + s * vbe, ve];
+            sys.stamp_ports(&[*c, *b, *e], v_eval, &[ic, ib, ie], &jac);
             return;
         }
         match *self {
@@ -659,12 +678,14 @@ impl Element {
                 b,
                 e,
                 q,
+                lim,
             } => {
                 let s = if *npn { 1.0 } else { -1.0 };
                 let (vc, vb, ve) = (v[*c], v[*b], v[*e]);
                 let (vbe, vbc) = (s * (vb - ve), s * (vb - vc));
                 let ev = model.eval(consts, vbe, vbc, true);
                 *q = [ev.qbe, ev.qbc];
+                lim.set([vbe, vbc]);
             }
             Element::OpAmp {
                 model, state, out, ..
@@ -795,6 +816,7 @@ impl<const N: usize> Netlist<N> {
             b,
             e,
             q: [0.0; 2],
+            lim: core::cell::Cell::new([0.0; 2]),
         })
     }
     pub fn jfet(&mut self, model: Jfet, d: usize, g: usize, s: usize) -> &mut Self {
@@ -1178,8 +1200,9 @@ impl<const N: usize> Netlist<N> {
             if let Element::Capacitor { v_prev, .. } = e {
                 *v_prev = 0.0;
             }
-            if let Element::Bjt { q, .. } = e {
+            if let Element::Bjt { q, lim, .. } = e {
                 *q = [0.0; 2];
+                lim.set([0.0; 2]);
             }
             if let Element::OpAmp { state, pin, .. } = e {
                 state.reset();
