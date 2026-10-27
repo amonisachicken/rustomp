@@ -380,6 +380,8 @@ pub enum Element {
         c: usize,
         b: usize,
         e: usize,
+        /// 上一拍的结电荷 `[Qbe, Qbc]`（库仑，NPN 归一化空间）—— 位移电流用
+        q: [f64; 2],
     },
     /// JFET（N 沟道）
     Jfet {
@@ -423,7 +425,44 @@ impl Element {
     /// `dc = true` 时运放按**连续极限**装配（增益 `A0`、无离散极点），这样
     /// 解出的就是真正的工作点；`dc = false` 时按离散更新式（含 `v_out_prev`）。
     pub fn stamp<const N: usize>(&self, sys: &mut Mna<N>, v: &[f64], dt: f64, dc: bool) {
+        // ---- BJT：动态档的位移电流（结电荷）----
+        // 其余元件仍是 `match *self`（Element 可 Copy），所以这里提前返回。
+        if let Element::Bjt {
+            model,
+            npn,
+            c,
+            b,
+            e,
+            q,
+        } = self
+        {
+            // 结电荷的位移电流 `i = (q − q_prev)/dt`（后向欧拉，与电容同口径）。
+            // 直流（`dt <= 0` 或 `dc`）时结电容开路 —— 工作点与没有电容时逐位相同。
+            let (qbe_prev, qbc_prev) = (q[0], q[1]);
+            let dt_eff = if dc || dt <= 0.0 { 0.0 } else { dt };
+            sys.multiport(&[*c, *b, *e], v, |vv| {
+                let (vc, vb, ve) = (vv[0], vv[1], vv[2]);
+                // PNP：电压取反后喂 NPN 公式，电流再取反
+                let s = if *npn { 1.0 } else { -1.0 };
+                let (vbe, vbc) = (s * (vb - ve), s * (vb - vc));
+                let (ic, ib) = model.terminal(vbe, vbc);
+                let (mut ic, mut ib) = (s * ic, s * ib);
+                if dt_eff > 0.0 {
+                    let (qbe, qbc) = model.charges(vbe, vbc);
+                    let i_be = s * (qbe - qbe_prev) / dt_eff;
+                    let i_bc = s * (qbc - qbc_prev) / dt_eff;
+                    // B-E 结：电流从基极进、射极出；B-C 结：基极进、集电极出
+                    ic -= i_bc;
+                    ib += i_be + i_bc;
+                }
+                // 流入器件的电流（NPN 正向：Ic 流入集电极、Ib 流入基极、Ie 流出射极）
+                vec![ic, ib, -(ic + ib)]
+            });
+            return;
+        }
         match *self {
+            // 上面已提前返回（BJT 带自己的电荷状态）
+            Element::Bjt { .. } => unreachable!("BJT 在上面单独处理"),
             Element::Diode { model, a, k } => {
                 // **解析雅可比**（实时路径的主力）：`current_and_conductance` 已含 Rs 的内层迭代，
                 // 比通用的数值差分少 2 次模型调用。
@@ -432,23 +471,6 @@ impl Element {
                 let vl = va - vk;
                 let (i, g) = model.current_and_conductance(vl);
                 sys.stamp_lin(a, k, g, i - g * vl);
-            }
-            Element::Bjt {
-                model,
-                npn,
-                c,
-                b,
-                e,
-            } => {
-                sys.multiport(&[c, b, e], v, |vv| {
-                    let (vc, vb, ve) = (vv[0], vv[1], vv[2]);
-                    // PNP：电压取反后喂 NPN 公式，电流再取反
-                    let s = if npn { 1.0 } else { -1.0 };
-                    let (ic, ib) = model.terminal(s * (vb - ve), s * (vb - vc));
-                    let (ic, ib) = (s * ic, s * ib);
-                    // 流入器件的电流（NPN 正向：Ic 流入集电极、Ib 流入基极、Ie 流出射极）
-                    vec![ic, ib, -(ic + ib)]
-                });
             }
             Element::Jfet { model, d, g, s } => {
                 sys.multiport(&[d, g, s], v, |vv| {
@@ -524,6 +546,20 @@ impl Element {
                 let va = if *a == GND { 0.0 } else { v[*a] };
                 let vb = if *b == GND { 0.0 } else { v[*b] };
                 *v_prev = va - vb;
+            }
+            Element::Bjt {
+                model,
+                npn,
+                c,
+                b,
+                e,
+                q,
+            } => {
+                let s = if *npn { 1.0 } else { -1.0 };
+                let (vc, vb, ve) = (v[*c], v[*b], v[*e]);
+                let (vbe, vbc) = (s * (vb - ve), s * (vb - vc));
+                let (qbe, qbc) = model.charges(vbe, vbc);
+                *q = [qbe, qbc];
             }
             Element::OpAmp {
                 model, state, out, ..
@@ -643,6 +679,7 @@ impl<const N: usize> Netlist<N> {
             c,
             b,
             e,
+            q: [0.0; 2],
         })
     }
     pub fn jfet(&mut self, model: Jfet, d: usize, g: usize, s: usize) -> &mut Self {
@@ -999,6 +1036,9 @@ impl<const N: usize> Netlist<N> {
         for e in &mut self.elems {
             if let Element::Capacitor { v_prev, .. } = e {
                 *v_prev = 0.0;
+            }
+            if let Element::Bjt { q, .. } = e {
+                *q = [0.0; 2];
             }
             if let Element::OpAmp { state, pin, .. } = e {
                 state.reset();

@@ -1,7 +1,9 @@
 # 元件库精度规范（设计决策）
 
 > 状态：**已实现并全部对拍**（2026-10-26）—— 14 个型号进 Rust 库、MNA 装配器已在用，
-> 界面层也已消费这些器件（削波指示用二极管电流）。动态档（C1/C2）仍未做，见 §8。
+> 界面层也已消费这些器件（削波指示用二极管电流）。
+> **BJT 的动态档（C1 结电容 + C2 渡越时间）已补**（2026-10-27，E82）：`ft` 与 ngspice 差 < 5%；
+> 锗管的扩散电荷（`Tf=600ns` ⇒ 41 nF）因求解器限制暂未启用，见 §8。
 > 相关：`DEVLOG.md` E31 / ADR-012；`README.md` 的「仓库结构」
 > 下一步输入：用户将提供 LTspice 风格的器件模型，按本文的档位与参数字段导入。
 
@@ -90,11 +92,11 @@ Sparklin Drive 的二极管只用了 `Is/N/Rs`，而 ngspice 用的是含 `Cjo/t
 
 | 器件 | 推荐档 | 必须给的参数 | 可以省 | 听觉机制（为什么是这个档） |
 |---|---|---|---|---|
-| **锗 BJT（NPN/PNP）** | **D3 + C0** | `Is, Bf(50~200), Vaf, Ise/Ne, Isc/Nc, Rbb'` | `Cje/Cjc/Tf` | **漏电决定整级工作点**（Fuzz Face 的偏置就靠它）；低 `Vf`(0.2~0.3V)、低 `Bf` 给出绒软压缩；温度极敏感（≈ −2 mV/°C） |
+| **锗 BJT（NPN/PNP）** | **D3 + C1**（`Tf` 待求解器） | `Is, Bf(50~200), Vaf, Ise/Ne, Isc/Nc, Rbb', Cje/Cjc` | `Tf/Tr`（见 §8） | **漏电决定整级工作点**（Fuzz Face 的偏置就靠它）；低 `Vf`(0.2~0.3V)、低 `Bf` 给出绒软压缩；温度极敏感（≈ −2 mV/°C） |
 | **锗二极管** | **D2 + C0** | `Is(~10⁻⁶), N(1.5~2), Rs(10~100Ω)` | `Cj` | 0.3V 低拐点 + 大 `Rs` → **圆头削波**，"锗味"的全部来源 |
 | **1N4007（硅整流）** | **D2 + C1** | `Is, N, Rs(较大), Cjo(20~30p)` | `tt`（先省） | 大芯片 ⇒ `Rs` 软化拐点；`Cjo` 比 1N4148 大 5~7 倍，在**高阻节点**（几百 kΩ 反馈）可能可闻 |
 | **2N7000（MOSFET）** | **D2 + C1** | `Vto, Kp(or Beta), Lambda, 体二极管` | `Cgd/Cgs` 高阶项 | 踏板里基本只做削波/开关：跨导与体二极管是主角；结电容只在做高频增益级时才重要 |
-| **BC549C（已有）** | **D3 + C0** | `Is, Bf, Vaf, Ikf, Ise/Ne` | `Cje/Cjc/Tf` | 扩到 D3 就够；升 C1 才需要电容 |
+| **BC549C（已有）** | **D3 + C2** | `Is, Bf, Vaf, Ikf, Ise/Ne, Cje/Cjc, Tf` | `Itf/Xtf` 的高阶项、`Cjcs` | 已补齐：`ft` 114 MHz vs ngspice 120 MHz（E82） |
 | **J201（已有）** | **D3 + C0** | `Beta, Vto, Lambda` | `Cgs/Cgd` | `Vto/Lambda` 决定夹断软硬 |
 | **OP07（已有）** | **宏模型 A（1 内部节点）** | `A0, GBW, **压摆率**, 输出摆幅` | 共模、噪声、失调 | **压摆率 0.25 V/µs 是 OP07 性格的核心**：大信号时高频压缩 |
 | **1N4148（已有）** | **D2 + C0** | `Is, N, Rs` | `Cjo, M, tt` | 已验证可忽略（§2.3） |
@@ -227,7 +229,7 @@ sys.multiport(&[c, b, e], v, |vv| {
 
 | 项 | 现状 | 建议 |
 |---|---|---|
-| **动态档（C1/C2）** | **未做**：BJT `Cje/Cjc/Tf/Tr`、二极管 `Cjo/tt`（1N4007 除外）、MOS `Cgs/Cgd` | 高频细节会偏硬；AB 已证明静态档够用（`docs/ab-test-sparklin-v2.md`） |
+| **动态档（C1/C2）** | BJT 已做（E82）：`Cje/Cjc`（C1）+ `Tf/Tr`（C2）；**锗管的 `Tf` 默认关**（41 nF 扩散电容需要 SPICE 式结电压限制才稳得住）。二极管 `Cjo/tt`、MOS `Cgs/Cgd` 仍未做 | 逐档加：先补二极管的 `Cjo`（1N4007 已在用），MOS 的 `Cgs/Cgd` 最后 |
 | **温度建模** | 未做 | 先不做，但 `Device` 里保留 `temperature: f64` 字段位（默认 25 °C）；以后可加"温度"旋钮或运行时间漂移 |
 | **锗器件参数来源** | `models.lib` 里没有 | 用户提供的 LTspice 模型 → 映射；没有的话用「实测 V-I 扫描 + 拟合 `Is/Bf/Vaf/Ise`」，对拍框架已具备 |
 | **R/C 的非理想性** | 理想元件 | 先不做；若某电路需要，加 `esr` / `da` 字段（同样是线性项，代价低） |
@@ -289,7 +291,7 @@ could not find a valid modelname
 | 器件 | Rust 模型 | 对拍结果（`crates/rustomp-dsp/tests/devices.rs`） |
 |---|---|---|
 | `D_1N4148` / `D_1N34A` / `D_1N4007` | `devices::Diode`（静态 **D2**：`Is / N / Rs`） | **V-I 与 ngspice 完全一致（0.00%）**，覆盖 1 µA~10 mA 五个数量级 |
-| `BC549C` / `AC127` / `AC128` / `BC559C`(PNP) | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc` + 大信号结电压限制） | **Ic 与 Ib 均对拍**：AC127/AC128/BC559C ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下）；**直流工作点与 ngspice 一位不差**（锗管法兹，`tests/designer_generated_fuzz.rs`） |
+| `BC549C` / `AC127` / `AC128` / `BC559C`(PNP) | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc` + 大信号结电压限制；动态 **C1**：`Cje/Cjc`（含 `Fc` 线性化），硅管再开 **C2**：`Tf/Tr`） | **Ic 与 Ib 均对拍**：AC127/AC128/BC559C ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下）；**直流工作点与 ngspice 一位不差**（锗管法兹，`tests/designer_generated_fuzz.rs`） |
 | `1N5817`（肖特基） | `devices::Diode`（D2） | **0.00%**（1 µA~10 mA；Vf@1 mA=0.124 V、@10 mA=0.205 V） |
 | `LedRed` / `LedGreen` / `LedBlue` | `devices::Diode`（D2） | **0.00%**（1 µA~10 mA；Vf@20 mA ≈ 1.85 / 2.29 / 3.71 V） |
 | `J201` | `devices::Jfet`（静态 **D3**：Shichman-Hodges + `Rd/Rs`） | **转移 + 输出特性均 0.00%**（含三极管区 Vds=0.2/0.5 V） |
@@ -316,6 +318,18 @@ could not find a valid modelname
 >
 > 极性约定：`Bjt` 是**极性无关**的（同一套 NPN 公式）。PNP 使用时把
 > `(veb, vcb)` 传进去，并对返回电流取负 —— 与 SPICE 内部 `type = -1` 的处理一致（已对拍验证）。
+
+> **动态档（E82，2026-10-27）**：结电荷 `Q(v) = ∫C dv`（`C = Cj(1−v/Vj)^−Mj`，
+> `v ≥ Fc·Vj` 后按切线延续），扩散电荷 `Qf = Tf·Ict/Qb`（含 `Itf/Xtf` 滚降）、`Qr = Tr·|Ict|/Qb`；
+> 位移电流 `i = (q − q_prev)/Δt` 用后向欧拉装配，**不增加未知量**。
+> 验收（`tests/bjt_dynamics.rs`）：
+>
+> | 型号 | 我们的 `ft` | ngspice `ft` | 差 |
+> |---|---|---|---|
+> | BC549C（`Vbe=0.664 V`、`Vce=5 V`） | 114.2 MHz | 119.7 MHz | −4.6% |
+> | AC127（`Vbe=0.15 V`、`Vce=8.2 V`，`Tf` 打开） | 0.244 MHz | 0.25 MHz | −2.4% |
+>
+> 直流工作点**逐位不变**（`dc` 时结电容开路）；运放+二极管电路逐样本相同（见 DEVLOG E82 审计）。
 
 > 重要细节：热电压取 **27 °C（`VT=0.025865`）**，与 SPICE 默认 `TNOM` 对齐；
 > 用 300 K 会带来约 −0.05% 的系统性偏差（实测发现并修正）。

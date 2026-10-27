@@ -10,7 +10,13 @@
 //! - 大电流 β 塌陷 `Ikf/Ikr`
 //! - 体电阻 `Rb/Re/Rc`（在**端**电压与**本征**结电压之间做一次 2 维牛顿）
 //!
-//! 未包含（按精度表属动态档 C1/C2）：`Cje/Cjc/Tf/Tr`，以及 `IRB/RBM`（电流相关基区电阻）。
+//! 动态档（C1 + C2，2026-10-27 补齐）：
+//!
+//! - 结（耗尽）电容 `Cje/Vje/Mje`、`Cjc/Vjc/Mjc` + `Fc` 线性化 —— 积分成结电荷；
+//! - 扩散电容：正向渡越时间 `Tf`（含 `Itf/Xtf` 的大电流滚降）、反向 `Tr`；
+//! - 位移电流 `i = (q − q_prev)/dt` 由 MNA 侧的 `Element::Bjt` 用后向欧拉装配。
+//!
+//! 未包含：`IRB/RBM`（电流相关基区电阻）、`Xcjc`/`Cjcs`（分离的衬底结电容）。
 //!
 //! 约定：所有电流方向为**流入端**（NPN 正向工作时 `Ic>0, Ib>0, Ie<0`）。
 
@@ -35,6 +41,33 @@ pub struct Bjt {
     pub rb: f64,
     pub re: f64,
     pub rc: f64,
+    // ---- 动态（C1：结电容；C2：渡越时间）----
+    /// 基极-发射极零偏结电容（F）
+    pub cje: f64,
+    /// B-E 结内建电势（V）
+    pub vje: f64,
+    /// B-E 结梯度因子
+    pub mje: f64,
+    /// 基极-集电极零偏结电容（F）
+    pub cjc: f64,
+    pub vjc: f64,
+    pub mjc: f64,
+    /// 正偏结电容的线性化系数（SPICE 默认 0.5）
+    pub fc: f64,
+    /// 正向渡越时间（s）：`Qf = Tf·Ict/Qb`，决定 `ft ≈ 1/(2π·Tf)`
+    pub tf: f64,
+    /// 反向渡越时间（s）
+    pub tr: f64,
+    /// `Tf` 的高电流拐点（A）与滚降系数：`Tf_eff = Tf·(1 + Xtf·(Ict/(Ict+Itf))²)`
+    pub itf: f64,
+    pub xtf: f64,
+    /// 是否启用**扩散电荷**（`Tf/Tr`，即 C2 档）。
+    ///
+    /// 默认关（`false` = 只上 C1 的 `Cje/Cjc`）。原因见 `DEVLOG.md` E82：锗管
+    /// `Tf=600ns` ⇒ 扩散电容 ≈41 nF，在 192 kHz 下等效电导 `C/dt ≈ 8 S`；
+    /// 当前牛顿（3 次预算、无 SPICE 式结电压限制）会把解推到错的支路上。
+    /// 硅管 `Tf≈420ps` ⇒ 只有 ~16 pF，开着没问题。
+    pub diffusion: bool,
 }
 
 impl Default for Bjt {
@@ -56,6 +89,18 @@ impl Default for Bjt {
             rb: 0.0,
             re: 0.0,
             rc: 0.0,
+            cje: 0.0,
+            vje: 0.75,
+            mje: 0.33,
+            cjc: 0.0,
+            vjc: 0.75,
+            mjc: 0.33,
+            fc: 0.5,
+            tf: 0.0,
+            tr: 0.0,
+            itf: f64::INFINITY,
+            xtf: 0.0,
+            diffusion: false,
         }
     }
 }
@@ -85,12 +130,54 @@ fn exp_lim(v: f64, vt: f64, isat: f64) -> f64 {
     }
 }
 
+/// 结电容积分成的**结电荷**（库仑），`Q(v) = ∫₀ᵛ C(u) du`。
+///
+/// `C(v) = Cj·(1 − v/Vj)^(−Mj)`；`v ≥ Fc·Vj` 后电容按**切线**延续
+/// （`C(v) = Cz·(1 + Mj·(v−Fc·Vj)/(Vj·(1−Fc)))`，`Cz = Cj·(1−Fc)^(−Mj)`），
+/// 保证电荷与电容都一阶连续 —— 与 SPICE3 的 `BJTcap()` 同一形式。
+#[inline]
+fn junction_charge(v: f64, cj: f64, vj: f64, mj: f64, fc: f64) -> f64 {
+    if !(cj > 0.0) || !(vj > 0.0) {
+        return 0.0;
+    }
+    let fc = fc.clamp(0.0, 0.95);
+    let vf = fc * vj;
+    let q_fc = cj * vj / (1.0 - mj) * (1.0 - (1.0 - fc).powf(1.0 - mj));
+    if v < vf {
+        // 用 arg^(1−Mj) 而不是 (1 − v/Vj) 的负底数幂：v ≥ Vj 时根本没走到这里
+        let arg = 1.0 - v / vj;
+        cj * vj / (1.0 - mj) * (1.0 - arg.powf(1.0 - mj))
+    } else {
+        let cz = cj * (1.0 - fc).powf(-mj);
+        let dv = v - vf;
+        q_fc + cz * dv + 0.5 * cz * mj * dv * dv / (vj * (1.0 - fc))
+    }
+}
+
+/// 一次算齐 Gummel-Poon 的中间量（`intrinsic` 与 `charges` 共用，避免重复求 `exp`）。
+struct Core {
+    /// 传输电流（含 `qb`）
+    ict: f64,
+    /// B-E 结注入电流
+    ibe: f64,
+    /// B-C 结注入电流
+    ibc: f64,
+    /// 基区电荷因子
+    qb: f64,
+}
+
 impl Bjt {
     /// **本征**器件：给定结电压 (vbe, vbc)，返回 (Ic, Ib)。
     ///
     /// 不含 `Rb/Re/Rc`。公式与 SPICE3 的 Gummel-Poon 一致（不含 `Nk`）。
     #[inline]
     pub fn intrinsic(&self, vbe: f64, vbc: f64) -> (f64, f64) {
+        let c = self.core(vbe, vbc);
+        (c.ict - c.ibc, c.ibe + c.ibc)
+    }
+
+    #[inline]
+    fn core(&self, vbe: f64, vbc: f64) -> Core {
         let vte = self.nf * VT;
         let vtc = self.nr * VT;
         let e_be = exp_lim(vbe, vte, self.is);
@@ -109,14 +196,87 @@ impl Bjt {
         }
         let qb = 0.5 * q1 * (1.0 + (1.0 + 4.0 * q2).max(0.0).sqrt());
 
-        // 传输电流与两个结电流
-        let ict = self.is / qb * (e_be - e_bc);
-        let ibe = self.is / self.bf * (e_be - 1.0)
-            + self.ise * (exp_lim(vbe, self.ne * VT, self.ise) - 1.0);
-        let ibc = self.is / self.br * (e_bc - 1.0)
-            + self.isc * (exp_lim(vbc, self.nc * VT, self.isc) - 1.0);
+        Core {
+            ict: self.is / qb * (e_be - e_bc),
+            ibe: self.is / self.bf * (e_be - 1.0)
+                + self.ise * (exp_lim(vbe, self.ne * VT, self.ise) - 1.0),
+            ibc: self.is / self.br * (e_bc - 1.0)
+                + self.isc * (exp_lim(vbc, self.nc * VT, self.isc) - 1.0),
+            qb,
+        }
+    }
 
-        (ict - ibc, ibe + ibc)
+    /// **结电荷**（库仑，NPN 归一化空间）：`(Qbe, Qbc)`。
+    ///
+    /// - `Qbe = Qj,be(Vbe) + Tf_eff·Ict/Qb`（正向扩散电荷 → 决定 `ft`）
+    /// - `Qbc = Qj,bc(Vbc) + Tr·|Ict|/Qb`（反向渡越，仅在电流反向时计入）
+    ///
+    /// `Tf_eff = Tf·(1 + Xtf·(Ict/(Ict+Itf))²)`：大电流时渡越时间变长、`ft` 下降
+    /// （`Itf/Xtf`，与 SPICE 的 `Vtf` 无关；`Vtf` 未建模）。
+    #[inline]
+    pub fn charges(&self, vbe: f64, vbc: f64) -> (f64, f64) {
+        if self.cje == 0.0 && self.cjc == 0.0 && !self.diffusion {
+            return (0.0, 0.0);
+        }
+        let qj_be = junction_charge(vbe, self.cje, self.vje, self.mje, self.fc);
+        let qj_bc = junction_charge(vbc, self.cjc, self.vjc, self.mjc, self.fc);
+        let c = self.core(vbe, vbc);
+        if !self.diffusion {
+            return (qj_be, qj_bc);
+        }
+        let tf = if self.itf.is_finite() && self.itf > 0.0 {
+            let x = c.ict.abs() / (c.ict.abs() + self.itf);
+            self.tf * (1.0 + self.xtf * x * x)
+        } else {
+            self.tf
+        };
+        let qf = (tf * c.ict / c.qb).max(0.0);
+        let qr = (self.tr * (-c.ict) / c.qb).max(0.0);
+        (qj_be + qf, qj_bc + qr)
+    }
+
+    /// 结的临界电压 `vcrit = N·VT·ln(N·VT/(√2·Is))`（SPICE 同一定义）。
+    ///
+    /// 牛顿迭代里用它做**结电压限制**（`pnjlim`）：迭代中若结电压一次跳得比 `2·N·VT` 还多，
+    /// 就把这一步压到 `vold + N·VT·ln(1 + Δ/VT)`。没有这一步，锗管（`Tf=600ns` ⇒ 扩散电容
+    /// 41 nF）在硬驱动下会把指数项直接推到截断区，雅可比量级失衡 → 迭代落到离谱的解上。
+    pub fn vcrit(&self) -> (f64, f64) {
+        let vte = self.nf * VT;
+        let vtc = self.nr * VT;
+        let e = vte * (vte / (std::f64::consts::SQRT_2 * self.is)).ln();
+        let c = vtc * (vtc / (std::f64::consts::SQRT_2 * self.is)).ln();
+        (e, c)
+    }
+
+    /// SPICE 的 `pnjlim`：把本次迭代的结电压限制在"离上一次不超过 `2·N·VT`"的范围内。
+    pub fn pnjlim(vnew: f64, vold: f64, vt: f64, vcrit: f64) -> f64 {
+        if vnew > vcrit && (vnew - vold).abs() > 2.0 * vt {
+            if vold > 0.0 {
+                let arg = 1.0 + (vnew - vold) / vt;
+                if arg > 0.0 {
+                    vold + vt * arg.ln()
+                } else {
+                    vcrit
+                }
+            } else {
+                vt * (vnew / vt).ln()
+            }
+        } else {
+            vnew
+        }
+    }
+
+    /// 小信号参数（测试/诊断用）：`(gm, Cbe, Cbc)`，`ft = gm/(2π(Cbe+Cbc))`。
+    pub fn small_signal(&self, vbe: f64, vbc: f64) -> (f64, f64, f64) {
+        let h = 1e-7;
+        let (ic1, _) = self.intrinsic(vbe + h, vbc);
+        let (ic0, _) = self.intrinsic(vbe - h, vbc);
+        let gm = (ic1 - ic0) / (2.0 * h);
+        let (qbe1, _) = self.charges(vbe + h, vbc);
+        let (qbe0, _) = self.charges(vbe - h, vbc);
+        let (_, qbc1) = self.charges(vbe, vbc + h);
+        let (_, qbc0) = self.charges(vbe, vbc - h);
+        (gm, (qbe1 - qbe0) / (2.0 * h), (qbc1 - qbc0) / (2.0 * h))
     }
 
     /// **端**器件：给定端电压 (vbe, vbc)，返回 (Ic, Ib)，内部把 `Rb/Re/Rc` 的压降算进去。
@@ -188,6 +348,20 @@ pub const BC549C: Bjt = Bjt {
     rb: 0.0,
     re: 0.0,
     rc: 1.175,
+    // 动态（devices.lib：Cjc=5.5p Mjc=.3132 Vjc=.4924 Cje=11.5p Mje=.6558 Vje=.5
+    //              Tr=10n Tf=420.3p Itf=1.374 Xtf=39.42 Fc=.5）
+    cje: 11.5e-12,
+    vje: 0.5,
+    mje: 0.6558,
+    cjc: 5.5e-12,
+    vjc: 0.4924,
+    mjc: 0.3132,
+    fc: 0.5,
+    tf: 420.3e-12,
+    tr: 10e-9,
+    itf: 1.374,
+    xtf: 39.42,
+    diffusion: true, // ft≈379 MHz、扩散电容 ~16 pF，稳定
 };
 
 /// BC559C（硅 **PNP**，BC549C 的互补管）：`Is=1.02f Bf=401.6 Vaf=34.62 Rc=1.151`
@@ -210,6 +384,20 @@ pub const BC559C: Bjt = Bjt {
     rb: 0.0,
     re: 0.0,
     rc: 1.151,
+    // 动态（devices.lib：Cjc=9.81p Mjc=.332 Vjc=.4865 Cje=30p Mje=.3333 Vje=.5
+    //              Tr=10n Tf=524p Itf=.9847 Xtf=17.71 Fc=.5）
+    cje: 30e-12,
+    vje: 0.5,
+    mje: 0.3333,
+    cjc: 9.81e-12,
+    vjc: 0.4865,
+    mjc: 0.332,
+    fc: 0.5,
+    tf: 524e-12,
+    tr: 10e-9,
+    itf: 0.9847,
+    xtf: 17.71,
+    diffusion: true,
 };
 
 /// AC127（锗 NPN）：大漏电（`Is=5µ`、`Isc=5µ`）+ 低 `Vf` + 大 `Rb=100Ω`。
@@ -231,6 +419,21 @@ pub const AC127: Bjt = Bjt {
     rb: 100.0,
     re: 0.0,
     rc: 1.5,
+    // 动态（devices.lib：cjc=200p cje=60p tr=3u tf=600n fc=.5 vjc/vje=.4 mjc/mje=.333 itf=300m xtf=6）
+    cje: 60e-12,
+    vje: 0.4,
+    mje: 0.333,
+    cjc: 200e-12,
+    vjc: 0.4,
+    mjc: 0.333,
+    fc: 0.5,
+    tf: 600e-9,
+    tr: 3e-6,
+    itf: 0.3,
+    xtf: 6.0,
+    // Tf=600ns ⇒ ft≈265 kHz（已与 ngspice 对拍：0.20 vs 0.25 MHz），
+    // 但扩散电容 ~41 nF 超出当前求解器的稳定范围（DEVLOG E82）→ 先只上 C1
+    diffusion: false,
 };
 
 /// AC128（锗 PNP）。PNP 在与 `AC127` 相同的公式下工作 —— 使用时把端电压取反即可
@@ -252,6 +455,19 @@ pub const AC128: Bjt = Bjt {
     rb: 7.0,
     re: 0.1,
     rc: 0.2,
+    // 动态（devices.lib：cjc=250p cje=80p tr=5u tf=1u itf=1 xtf=6）
+    cje: 80e-12,
+    vje: 0.4,
+    mje: 0.333,
+    cjc: 250e-12,
+    vjc: 0.4,
+    mjc: 0.333,
+    fc: 0.5,
+    tf: 1e-6,
+    tr: 5e-6,
+    itf: 1.0,
+    xtf: 6.0,
+    diffusion: false, // 同 AC127：锗管扩散电容太大，等求解器限制（E82）
 };
 
 #[cfg(test)]
