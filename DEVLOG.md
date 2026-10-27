@@ -4713,6 +4713,74 @@ CI 验证的就是用户本地的同一种布局。
 
 ---
 
+## E78：第二次隔离验证 —— 专测「依赖缺失」的引导是否好使（2026-10-27）
+
+用户要求：**在全新目录里只 clone 插件仓**，看它能不能自己把依赖一路引到位。
+
+这次不是"三个仓一起 clone"，而是模拟真实新用户：**从零开始，照着提示做**。
+
+### 78.1 三段式引导（实测输出）
+
+**第 1 次运行**（只有插件仓）：
+
+```text
+  ✗ 找不到 rustomp 框架 —— 读 rustomp.toml、校验生成物都要用它
+  约定：三个仓放在**同一个目录**下（本仓的同级）
+    /tmp/deps-clean-1359/
+      rustomp/                 ← 缺这个
+      rustomp-mac-plugin/
+      sparklin-drive/    ← 你在这里
+  在这个目录里执行（tag 与本仓 Cargo.toml 一致）：
+    cd "/tmp/deps-clean-1359"
+    git clone --depth 1 --branch v0.1.0 https://github.com/amonisachicken/rustomp.git rustomp
+```
+
+**第 2 次运行**（框架就位，缺打包工具）：
+
+```text
+  ✓ 框架：/tmp/deps-clean-1359/rustomp
+  ✗ 找不到打包工具（…/rustomp-mac-plugin/pack.sh）
+  按约定，它和框架一起放在**本仓的同级目录**。依次执行：
+    cd "/tmp/deps-clean-1359"
+    git clone https://github.com/amonisachicken/rustomp-mac-plugin.git
+    git -C rustomp-mac-plugin checkout v0.1.5      # 钉到本版用过的 tag
+    ./rustomp-mac-plugin/scripts/fetch-third-party.sh        # 首次（约 12 MB）
+```
+
+**第 3 次运行**：真构建 → 6 条 `ARTIFACT`、`au_smoke` 两个变体都过、**RMS 0.356170**。
+
+### 78.2 顺手修掉的两个提示缺陷
+
+| 问题 | 修法 |
+|---|---|
+| `cd … && git clone …` 后面紧跟 `./rustomp-mac-plugin/scripts/fetch…` —— 在同一个 shell 里 `cd` 过之后这条相对路径是**错的** | 拆成三行独立命令，逐行照抄即可 |
+| "钉版本"那行硬编码了 `v0.1.4`（早就不是最新） | 新增 `rustomp.toml` 的 `[requires] packer_tag`，提示从这里读；版本随 manifest 走 |
+
+（对应 `sparklin-drive v0.1.6`。）
+
+### 78.3 结果
+
+| 检查项 | 结果 |
+|---|---|
+| 只 clone 插件仓 → 提示 | ✅ 引导到框架 |
+| 照做 → 提示 | ✅ 引导到打包工具（含 `fetch-third-party`） |
+| 照做 → 构建 | ✅ 3m33s，6 条 ARTIFACT |
+| 产物位置 | ✅ 全在 `/tmp/deps-clean-…` 里 |
+| `au_smoke` | ✅ Mono / Stereo 都通过，RMS **0.356170** |
+| 依赖来源 | ✅ 3 条 `git+…?tag=v0.1.0`，无 path 依赖 |
+| 全程环境变量 | ✅ 一个都没设 |
+| 本机三个仓 | ✅ 验证前后都是 0 个未提交 |
+
+临时工作区 682 MB，验证后已删除。
+
+### 78.4 结论
+
+"新用户从零开始"这条路是**可自助走通的**：每一步出错都直接告诉你在哪个目录敲什么命令，
+而且命令逐行可执行、tag 不会过期。剩下的手工步骤只有两处：
+`fetch-third-party.sh`（第三方源码，约 12 MB）和 `cargo-nih-plug` 的安装（`doctor` 会给命令）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -5003,6 +5071,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **第二次隔离验证：专测依赖引导**（E78）：从"只有插件仓"起步，照提示一路补齐框架与打包工具 → 6 条 ARTIFACT、RMS 0.356170、零环境变量。顺手修掉"cd 后相对路径失效"与"硬编码 packer tag"（新增 `[requires] packer_tag`，插件打 v0.1.6） |
 | 2026-10-27 | **依赖位置统一为同级目录**（E77）：删掉 `~/develop` 之类绝对路径假设与 `$HOME/develop` 兜底；提示改为"目录树 + 一条 cd 命令"；CI 与 verify-isolation 都不再设环境变量。隔离回归 `v0.1.0 + v0.1.5 + v0.1.5`（179s，RMS 0.356170） |
 | 2026-10-27 | **新机指引**（E76）：缺框架时打印克隆命令（tag 自动取自 Cargo.toml）+ "放同级目录"最省事路径；漂移守卫不再静默跳过（`RUSTOMP_SKIP_DRIFT_CHECK=1` 才能跳）；packer doctor 同步。模拟新机验证 + 隔离回归（v0.1.0 + v0.1.4 + v0.1.4，172s） |
 | 2026-10-27 | **CI 真跑一次**（E75）：第一次是**假绿**（缺 cargo-nih-plug + `| tee` 吞掉失败 + 上传空目录只警告）→ 加 pipefail / if-no-files-found: error / 产物数量断言；再修 `pipefail` + `grep -q` 的 SIGPIPE 误报。最终 4m22s 真绿：6 个产物，下回本机 au_smoke 实测 RMS 0.356170 |
