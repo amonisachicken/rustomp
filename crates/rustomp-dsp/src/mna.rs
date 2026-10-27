@@ -24,7 +24,7 @@
 //! let v = net.solve_dc();
 //! ```
 
-use crate::devices::{Bjt, Diode, Jfet, Nmos, OpAmpModel, OpAmpState};
+use crate::devices::{Bjt, BjtConsts, Diode, Jfet, Nmos, OpAmpModel, OpAmpState};
 
 /// 地节点编号（电压恒为 0，不进入矩阵）
 pub const GND: usize = 0;
@@ -276,6 +276,45 @@ impl<const N: usize> Mna<N> {
         }
     }
 
+    /// 三端非线性器件的**解析**装配（`multiport` 的解析版）。
+    ///
+    /// `jac[t][k]` 是第 `t` 个端电流对本端电压 `v(nodes[k])` 的偏导。
+    /// 固定节点与地的处理与 `multiport` 一致：固定节点行不参与求解，
+    /// 其对未知量的耦合已经含在等效电流源 `i_eq = i − J·v` 里。
+    pub fn stamp_ports(
+        &mut self,
+        nodes: &[usize; 3],
+        v: &[f64],
+        i: &[f64; 3],
+        jac: &[[f64; 3]; 3],
+    ) {
+        let v0 = [
+            if nodes[0] == GND { 0.0 } else { v[nodes[0]] },
+            if nodes[1] == GND { 0.0 } else { v[nodes[1]] },
+            if nodes[2] == GND { 0.0 } else { v[nodes[2]] },
+        ];
+        // 导纳部分
+        for t in 0..3 {
+            if self.fixed_voltage(nodes[t]).is_some() {
+                continue;
+            }
+            for k in 0..3 {
+                let (nt, nk) = (nodes[t], nodes[k]);
+                if nt != GND && nk != GND && nt < N && nk < N && self.fixed[nk].is_none() {
+                    self.y[nt][nk] += jac[t][k];
+                }
+            }
+        }
+        // 等效电流源：i_eq = i − J·v（从节点流向器件）
+        for t in 0..3 {
+            let mut i_eq = i[t];
+            for k in 0..3 {
+                i_eq -= jac[t][k] * v0[k];
+            }
+            self.inject(nodes[t], -i_eq);
+        }
+    }
+
     /// 解 `Y·x = rhs`（部分主元高斯消元）。
     ///
     /// 内层用切片 `zip` 而不是 `a[row][k]` 双重下标 —— 去掉边界检查后
@@ -376,6 +415,8 @@ pub enum Element {
     /// 三端 BJT（`npn = false` 时按 PNP 处理：电压取反、电流取反）
     Bjt {
         model: Bjt,
+        /// 预计算常量（E83：避免每次 `exp` 前做 `ln`）
+        consts: BjtConsts,
         npn: bool,
         c: usize,
         b: usize,
@@ -425,10 +466,14 @@ impl Element {
     /// `dc = true` 时运放按**连续极限**装配（增益 `A0`、无离散极点），这样
     /// 解出的就是真正的工作点；`dc = false` 时按离散更新式（含 `v_out_prev`）。
     pub fn stamp<const N: usize>(&self, sys: &mut Mna<N>, v: &[f64], dt: f64, dc: bool) {
-        // ---- BJT：动态档的位移电流（结电荷）----
+        // ---- BJT：解析雅可比 + 结电荷位移电流（E83）----
+        // 旧实现走 `multiport`：一次迭代要 7 次模型求值（基值 + 6 个差分探针），
+        // 每次还要解 `Rb/Re/Rc` 的内层牛顿 —— 实测 26 µs/次迭代。
+        // 现在一次求值就拿到电流、电荷**和**解析雅可比。
         // 其余元件仍是 `match *self`（Element 可 Copy），所以这里提前返回。
         if let Element::Bjt {
             model,
+            consts,
             npn,
             c,
             b,
@@ -436,28 +481,61 @@ impl Element {
             q,
         } = self
         {
-            // 结电荷的位移电流 `i = (q − q_prev)/dt`（后向欧拉，与电容同口径）。
-            // 直流（`dt <= 0` 或 `dc`）时结电容开路 —— 工作点与没有电容时逐位相同。
             let (qbe_prev, qbc_prev) = (q[0], q[1]);
             let dt_eff = if dc || dt <= 0.0 { 0.0 } else { dt };
-            sys.multiport(&[*c, *b, *e], v, |vv| {
-                let (vc, vb, ve) = (vv[0], vv[1], vv[2]);
-                // PNP：电压取反后喂 NPN 公式，电流再取反
-                let s = if *npn { 1.0 } else { -1.0 };
-                let (vbe, vbc) = (s * (vb - ve), s * (vb - vc));
-                let (ic, ib) = model.terminal(vbe, vbc);
-                let (mut ic, mut ib) = (s * ic, s * ib);
-                if dt_eff > 0.0 {
-                    let (qbe, qbc) = model.charges(vbe, vbc);
-                    let i_be = s * (qbe - qbe_prev) / dt_eff;
-                    let i_bc = s * (qbc - qbc_prev) / dt_eff;
-                    // B-E 结：电流从基极进、射极出；B-C 结：基极进、集电极出
-                    ic -= i_bc;
-                    ib += i_be + i_bc;
-                }
-                // 流入器件的电流（NPN 正向：Ic 流入集电极、Ib 流入基极、Ie 流出射极）
-                vec![ic, ib, -(ic + ib)]
-            });
+            let s = if *npn { 1.0 } else { -1.0 };
+            let (vb, vc, ve) = (v[*b], v[*c], v[*e]);
+            let (vbe, vbc) = (s * (vb - ve), s * (vb - vc));
+            let ev = model.eval(consts, vbe, vbc, dt_eff > 0.0);
+
+            // 端电流（流入器件）：DC 部分 + 结电荷的位移电流
+            let mut ic = s * ev.ic;
+            let mut ib = s * ev.ib;
+            if dt_eff > 0.0 {
+                let i_be = s * (ev.qbe - qbe_prev) / dt_eff;
+                let i_bc = s * (ev.qbc - qbc_prev) / dt_eff;
+                ic -= i_bc;
+                ib += i_be + i_bc;
+            }
+            let ie = -(ic + ib);
+
+            // 雅可比（∂i/∂v，对端电压）。注意 PNP 的 s²=1，导数与 NPN 相同。
+            let (dic_be, dic_bc) = (ev.dic_dvbe, ev.dic_dvbc);
+            let (dib_be, dib_bc) = (ev.dib_dvbe, ev.dib_dvbc);
+            // 位移电流对端电压的导数（dq/dv / dt）
+            let (dcap_be, dcap_bc, dcapc_be, dcapc_bc) = if dt_eff > 0.0 {
+                (
+                    ev.dqbe_dvbe / dt_eff,
+                    ev.dqbe_dvbc / dt_eff,
+                    ev.dqbc_dvbe / dt_eff,
+                    ev.dqbc_dvbc / dt_eff,
+                )
+            } else {
+                (0.0, 0.0, 0.0, 0.0)
+            };
+            // 节点电压 → 结电压：vbe = s(vb−ve)，vbc = s(vb−vc)
+            // ∂/∂vb = ∂/∂vbe + ∂/∂vbc；∂/∂ve = −∂/∂vbe；∂/∂vc = −∂/∂vbc
+            let mut jac = [[0.0f64; 3]; 3]; // [terminal][v: c, b, e]
+            let cols = |d_be: f64, d_bc: f64| -> [f64; 3] {
+                [-(d_bc), d_be + d_bc, -(d_be)] // (c, b, e)
+            };
+            // 集电极：ic = ict − ibc − i_bc
+            let jc = cols(dic_be, dic_bc);
+            let jbc = cols(dcapc_be, dcapc_bc); // ∂i_bc/∂v
+            for k in 0..3 {
+                jac[0][k] = jc[k] - jbc[k];
+            }
+            // 基极：ib = ibe + ibc + i_be + i_bc
+            let jb = cols(dib_be, dib_bc);
+            let jbe = cols(dcap_be, dcap_bc);
+            for k in 0..3 {
+                jac[1][k] = jb[k] + jbe[k] + jbc[k];
+            }
+            // 射极：电流守恒
+            for k in 0..3 {
+                jac[2][k] = -(jac[0][k] + jac[1][k]);
+            }
+            sys.stamp_ports(&[*c, *b, *e], v, &[ic, ib, ie], &jac);
             return;
         }
         match *self {
@@ -549,6 +627,7 @@ impl Element {
             }
             Element::Bjt {
                 model,
+                consts,
                 npn,
                 c,
                 b,
@@ -558,8 +637,8 @@ impl Element {
                 let s = if *npn { 1.0 } else { -1.0 };
                 let (vc, vb, ve) = (v[*c], v[*b], v[*e]);
                 let (vbe, vbc) = (s * (vb - ve), s * (vb - vc));
-                let (qbe, qbc) = model.charges(vbe, vbc);
-                *q = [qbe, qbc];
+                let ev = model.eval(consts, vbe, vbc, true);
+                *q = [ev.qbe, ev.qbc];
             }
             Element::OpAmp {
                 model, state, out, ..
@@ -675,6 +754,7 @@ impl<const N: usize> Netlist<N> {
     pub fn bjt(&mut self, model: Bjt, npn: bool, c: usize, b: usize, e: usize) -> &mut Self {
         self.push(Element::Bjt {
             model,
+            consts: model.consts(),
             npn,
             c,
             b,

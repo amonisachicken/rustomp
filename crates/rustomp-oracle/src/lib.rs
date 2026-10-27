@@ -7,6 +7,8 @@
 //! 1. [`Oracle::discover`] 找到本机 ngspice（环境变量 `NGSPICE` 或 `PATH`）；
 //! 2. [`Oracle::run_netlist`] 在临时目录里跑批处理仿真，读回 ASCII rawfile；
 //! 3. [`RawFile`] 解析成 `变量名 → 采样序列`；
+//!    **AC 分析**（`Flags: complex`）也可以：`get()` 给模长，`get_complex()` 给 `(实部, 虚部)`
+//!    —— 于是 `ft`（`h21` 穿越 0 dB）、幅频/相频都能自动对拍（E83）；
 //! 4. [`harmonics`] / [`thd_percent`] / [`gain_db`] 对**任意波形**做同样的测量 ——
 //!    对 ngspice 的输出和 DSP 的输出都用这几个函数，避免"两把尺子"。
 //!
@@ -21,6 +23,21 @@
 //! let thd = thd_percent(out, raw.sample_rate(), 1000.0, 9);
 //! println!("THD = {thd:.3} %");
 //! ```
+//!
+//! AC 的例子（量 `ft`）：
+//!
+//! ```no_run
+//! # use rustomp_oracle::Oracle;
+//! let oracle = Oracle::discover().expect("需要 ngspice");
+//! let netlist = "VCC vcc 0 DC 5\nVCE c vcc DC 0\nVBE b 0 DC 0.664 AC 1\n\
+//!                Q1 c b 0 BC549C\n.ac dec 20 1k 2G\n.end\n";
+//! let raw = oracle.run_netlist(netlist).unwrap();
+//! let f = raw.get("frequency").unwrap();               // 取实部（虚部是垃圾值）
+//! let ic = raw.get_complex("i(vce)").unwrap();          // (re, im)
+//! let ib = raw.get_complex("i(vbe)").unwrap();
+//! let h21: Vec<f64> = ic.iter().zip(ib).map(|(c, b)| c.0.hypot(c.1) / b.0.hypot(b.1)).collect();
+//! # let _ = (f, h21);
+//! ```
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -31,8 +48,15 @@ use std::process::Command;
 pub struct RawFile {
     /// 变量名（小写，例如 `v(out)`、`time`）
     pub vars: Vec<String>,
-    /// 每个变量的采样序列
+    /// rawfile 头里的 `Flags:`（`real` 或 `complex`）
+    pub flags: String,
+    /// 每个变量的采样序列。
+    ///
+    /// 实分析（`.op`/`.tran`/`.dc`）是原值；**AC 分析给的是复数模长**
+    /// （与设计器 `sim.rs` 同口径，便于直接做幅频/增益测量）。
     pub data: HashMap<String, Vec<f64>>,
+    /// AC 分析的**复数**结果 `(实部, 虚部)`；实分析时为空。
+    pub data_c: HashMap<String, Vec<(f64, f64)>>,
 }
 
 impl RawFile {
@@ -44,10 +68,13 @@ impl RawFile {
     pub fn parse(text: &str) -> Result<Self, String> {
         let lines: Vec<&str> = text.lines().collect();
         let mut nvar = 0usize;
+        let mut flags = String::from("real");
         let mut vars_start = None;
         let mut vals_start = None;
         for (i, line) in lines.iter().enumerate() {
-            if let Some(rest) = line.strip_prefix("No. Variables:") {
+            if let Some(rest) = line.strip_prefix("Flags:") {
+                flags = rest.trim().to_lowercase();
+            } else if let Some(rest) = line.strip_prefix("No. Variables:") {
                 nvar = rest.trim().parse().map_err(|_| "No. Variables 解析失败")?;
             } else if line.starts_with("Variables:") {
                 vars_start = Some(i + 1);
@@ -75,16 +102,39 @@ impl RawFile {
             return Err("rawfile 里没有变量".into());
         }
 
+        let is_complex = flags.contains("complex");
         let mut data: HashMap<String, Vec<f64>> =
             vars.iter().map(|v| (v.clone(), Vec::new())).collect();
-        let mut cur: Vec<f64> = Vec::with_capacity(vars.len());
-        let flush = |cur: &mut Vec<f64>, data: &mut HashMap<String, Vec<f64>>| {
+        let mut data_c: HashMap<String, Vec<(f64, f64)>> =
+            vars.iter().map(|v| (v.clone(), Vec::new())).collect();
+        let mut cur: Vec<(f64, f64)> = Vec::with_capacity(vars.len());
+        let flush = |cur: &mut Vec<(f64, f64)>,
+                     data: &mut HashMap<String, Vec<f64>>,
+                     data_c: &mut HashMap<String, Vec<(f64, f64)>>,
+                     is_complex: bool| {
             if cur.len() == vars.len() {
                 for (name, v) in vars.iter().zip(cur.iter()) {
-                    data.get_mut(name).unwrap().push(*v);
+                    // 复数 → 模长（AC 的幅频用）；`frequency` 取实部
+                    // （ngspice 在网格变量的虚部塞了垃圾值）
+                    let scalar = if name == "frequency" {
+                        v.0
+                    } else if is_complex {
+                        v.0.hypot(v.1)
+                    } else {
+                        v.0
+                    };
+                    data.get_mut(name).unwrap().push(scalar);
+                    data_c.get_mut(name).unwrap().push(*v);
                 }
             }
             cur.clear();
+        };
+        // 一个值：`1.0` 或 AC 的 `re,im`
+        let parse_val = |tok: &str| -> Option<(f64, f64)> {
+            match tok.split_once(',') {
+                Some((re, im)) => Some((re.parse().ok()?, im.parse().ok()?)),
+                None => Some((tok.parse().ok()?, 0.0)),
+            }
         };
         for line in &lines[vals_start..] {
             if line.trim().is_empty() {
@@ -93,7 +143,7 @@ impl RawFile {
             if line.starts_with(' ') || line.starts_with('\t') {
                 // 后续变量：只有值
                 if let Some(tok) = line.split_whitespace().next() {
-                    if let Ok(v) = tok.parse::<f64>() {
+                    if let Some(v) = parse_val(tok) {
                         cur.push(v);
                     }
                 }
@@ -101,20 +151,40 @@ impl RawFile {
                 // 新数据点：`<序号>\t\t<var0 的值>`
                 let tok: Vec<&str> = line.split_whitespace().collect();
                 if tok.len() >= 2 {
-                    if let Ok(v) = tok[1].parse::<f64>() {
-                        flush(&mut cur, &mut data);
+                    if let Some(v) = parse_val(tok[1]) {
+                        flush(&mut cur, &mut data, &mut data_c, is_complex);
                         cur.push(v);
                     }
                 }
             }
         }
-        flush(&mut cur, &mut data);
+        flush(&mut cur, &mut data, &mut data_c, is_complex);
 
-        Ok(RawFile { vars, data })
+        Ok(RawFile {
+            vars,
+            flags,
+            data,
+            data_c,
+        })
     }
 
     pub fn get(&self, name: &str) -> Option<&Vec<f64>> {
         self.data.get(&name.to_lowercase())
+    }
+
+    /// 复数结果 `(实部, 虚部)`（只有 AC 分析才有；实分析返回 `None`）。
+    pub fn get_complex(&self, name: &str) -> Option<&Vec<(f64, f64)>> {
+        if !self.flags.contains("complex") {
+            return None;
+        }
+        self.data_c
+            .get(&name.to_lowercase())
+            .filter(|v| !v.is_empty())
+    }
+
+    /// 是否为复数（AC）结果。
+    pub fn is_complex(&self) -> bool {
+        self.flags.contains("complex")
     }
 
     /// 采样率（由 `time` 向量推断）；没有 time 时返回 0。
@@ -435,7 +505,9 @@ Values:\n\
         }
         let mut raw = RawFile {
             vars: vec!["time".into(), "v(x)".into()],
+            flags: "real".into(),
             data: HashMap::new(),
+            data_c: HashMap::new(),
         };
         raw.data.insert("time".into(), t);
         raw.data.insert("v(x)".into(), y);
@@ -444,6 +516,51 @@ Values:\n\
         let uni = raw.resample("v(x)", 5e-6).unwrap();
         let thd = thd_percent(&uni, 200_000.0, f0, 5);
         assert!(thd < 1e-6, "重采样后仍是纯正弦，THD={thd}");
+    }
+
+    /// AC rawfile：值形如 `re,im`，`Flags: complex`。
+    /// `data` 里应拿到模长（`frequency` 取实部），`data_c` 里是原始复数。
+    #[test]
+    fn parses_complex_ac_rawfile() {
+        let text = "Title: ac\n\
+Plotname: AC Analysis\n\
+Flags: complex\n\
+No. Variables: 3\n\
+No. Points: 2\n\
+Variables:\n\
+\t0\tfrequency\tfrequency\tgrid=3\n\
+\t1\tv(out)\tvoltage\n\
+\t2\ti(v1)\tcurrent\n\
+Values:\n\
+0\t\t1.000000000000000e+03,6.9e-310\n\
+\t3.000000000000000e+00,4.000000000000000e+00\n\
+\t0.000000000000000e+00,2.000000000000000e+00\n\
+1\t\t1.000000000000000e+04,6.9e-310\n\
+\t6.000000000000000e+00,8.000000000000000e+00\n\
+\t-1.000000000000000e+00,0.000000000000000e+00\n";
+        let raw = RawFile::parse(text).expect("解析失败");
+        assert!(raw.is_complex());
+        assert_eq!(raw.flags, "complex");
+        // frequency：取实部（虚部是垃圾值）
+        assert_eq!(raw.get("frequency").unwrap(), &vec![1e3, 1e4]);
+        // 电压：模长
+        let vout = raw.get("v(out)").unwrap();
+        assert!((vout[0] - 5.0).abs() < 1e-12, "{vout:?}");
+        assert!((vout[1] - 10.0).abs() < 1e-12, "{vout:?}");
+        // 电流：复数原样保留
+        let ic = raw.get_complex("i(v1)").unwrap();
+        assert_eq!(ic, &vec![(0.0, 2.0), (-1.0, 0.0)]);
+        // 实分析不会有复数结果
+        let mut real = RawFile::parse(
+            "Title: t\nPlotname: Transient\nFlags: real\nNo. Variables: 2\nNo. Points: 1\n\
+             Variables:\n\t0\ttime\ttime\n\t1\tv(x)\tvoltage\nValues:\n0\t\t0\n\t1.5\n",
+        )
+        .unwrap();
+        assert!(!real.is_complex());
+        assert!(real.get_complex("v(x)").is_none());
+        assert_eq!(real.get("v(x)").unwrap(), &vec![1.5]);
+        // 让编译器别抱怨 unused_mut（上面 real 只是示范实分析路径）
+        real.data.clear();
     }
 
     #[test]
