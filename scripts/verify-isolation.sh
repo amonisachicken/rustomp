@@ -107,8 +107,8 @@ fi
 
 # ---------------------------------------------------------------- 4. 构建
 say "构建（$([ "$FAST" = 1 ] && echo 'fast：只出 mono 的 AU' || echo 'mono + stereo，AU/VST3/CLAP')）"
-export RUSTOMP_ROOT="$ISO/rustomp"
-export RUSTOMP_MAC_PLUGIN="$ISO/rustomp-mac-plugin"
+# 不设任何环境变量：三仓已经在同一个目录里（build.sh 的"同级目录"约定）
+unset RUSTOMP_ROOT RUSTOMP_MAC_PLUGIN
 BUILD_ARGS=(--no-install)
 [ "$FAST" = "1" ] && BUILD_ARGS=(--no-install --variant mono --format au)
 

@@ -4651,6 +4651,68 @@ HOME=/tmp/sim-new/fakehome RUSTOMP_MAC_PLUGIN=/tmp/sim-new/rustomp-mac-plugin \
 
 ---
 
+## E77：依赖位置统一为「本仓同级目录」（2026-10-27）
+
+用户的提醒很实际：**每台机器的目录布局都不一样**。之前提示里写 `~/develop/rustomp`，
+等于假设了"大家都用 ~/develop"，而且给了两条做法（绝对路径 + 同级）反而让人犹豫。
+
+### 77.1 现在只有一种布局
+
+```text
+some-dir/
+  rustomp/                 ← 框架（读清单 / 校验生成物）
+  rustomp-mac-plugin/      ← 打包工具
+  sparklin-drive/          ← 插件项目（build.sh 在这里）
+```
+
+- `build.sh`：`PACKER=$ROOT/../rustomp-mac-plugin`、`FRAMEWORK=$ROOT/../rustomp`
+- `locate_framework()`：显式 `RUSTOMP_ROOT` → **同级目录**（删掉了 `$HOME/develop` 兜底）
+- 缺依赖时打印目录树 + **一条 `cd` 命令**，克隆完直接重跑，**不需要设任何环境变量**
+- 打包工具的 `doctor.sh` 同样：`RUSTOMP_ROOT` → 插件项目的同级 → 打包工具自己的同级
+
+### 77.2 提示长这样
+
+```text
+  ✗ 找不到 rustomp 框架 —— 读 rustomp.toml、校验生成物都要用它
+
+  约定：三个仓放在**同一个目录**下（本仓的同级）
+
+    /tmp/sim2/
+      rustomp/                 ← 缺这个
+      rustomp-mac-plugin/
+      my-drive/    ← 你在这里
+
+  在这个目录里执行（tag 与本仓 Cargo.toml 一致）：
+
+    cd "/tmp/sim2"
+    git clone --depth 1 --branch v0.1.0 https://github.com/amonisachicken/rustomp.git rustomp
+
+  克隆完直接重跑 ./scripts/build.sh 即可，**不需要设任何环境变量**。
+```
+
+注意两点：目录名取自实际位置（模拟里我故意把仓库命名成 `my-drive`，提示也跟着变）；
+tag 取自本仓 `Cargo.toml`，将来升 tag 不用改文案。
+
+### 77.3 CI 也跟着简化
+
+三个仓 checkout 到**同一目录**（`path: rustomp` / `rustomp-mac-plugin` / `sparklin-drive`），
+于是 CI 里**不再有** `RUSTOMP_ROOT` / `RUSTOMP_MAC_PLUGIN` 任何环境变量 ——
+CI 验证的就是用户本地的同一种布局。
+
+### 77.4 验证
+
+| 项 | 结果 |
+|---|---|
+| 模拟新机（`/tmp/sim2` 只有 `my-drive`，HOME 指向空目录） | doctor 打印目录树 + 克隆命令 |
+| 照提示克隆到同级后重跑 | `✓ rustomp 框架：/tmp/sim2/rustomp`，全绿 |
+| 打包工具直接调用（同级无框架） | 打印 `cd …/my-drive/.. && git clone … rustomp` |
+| 隔离回归（**不设任何环境变量**，自动取最新 tag） | `v0.1.0 + v0.1.5 + v0.1.5`，179 s，RMS 0.356170 |
+
+最后一项意义最大：`verify-isolation.sh` 已经把 `export RUSTOMP_ROOT/RUSTOMP_MAC_PLUGIN` 删了，
+现在它验证的就是"三个仓扔进一个目录、什么都不设也能构建"。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4941,6 +5003,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **依赖位置统一为同级目录**（E77）：删掉 `~/develop` 之类绝对路径假设与 `$HOME/develop` 兜底；提示改为"目录树 + 一条 cd 命令"；CI 与 verify-isolation 都不再设环境变量。隔离回归 `v0.1.0 + v0.1.5 + v0.1.5`（179s，RMS 0.356170） |
 | 2026-10-27 | **新机指引**（E76）：缺框架时打印克隆命令（tag 自动取自 Cargo.toml）+ "放同级目录"最省事路径；漂移守卫不再静默跳过（`RUSTOMP_SKIP_DRIFT_CHECK=1` 才能跳）；packer doctor 同步。模拟新机验证 + 隔离回归（v0.1.0 + v0.1.4 + v0.1.4，172s） |
 | 2026-10-27 | **CI 真跑一次**（E75）：第一次是**假绿**（缺 cargo-nih-plug + `| tee` 吞掉失败 + 上传空目录只警告）→ 加 pipefail / if-no-files-found: error / 产物数量断言；再修 `pipefail` + `grep -q` 的 SIGPIPE 误报。最终 4m22s 真绿：6 个产物，下回本机 au_smoke 实测 RMS 0.356170 |
 | 2026-10-27 | **隔离工作区验证**（E74）：全新目录 clone 三仓（钉 tag）跑 build.sh，抓出两个"本机看不出来"的缺陷 —— ① tag v0.1.0 的 pack.sh 因全角变量 unbound（修复只留在工作区未提交）→ packer 打 v0.1.1；② identity.rs 生成物漂移（改 url 没重生成）→ 插件打 v0.1.2，并把 test 也加上 --check。第三轮通过：3 分 39 秒出 6 条 ARTIFACT、RMS 0.356170、依赖全为 git tag、本机仓零污染 |
