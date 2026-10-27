@@ -5779,7 +5779,10 @@ CPU（2× 过采样，Logic 未运行时的干净测量）：锗 4.8–6.1 µs/�
 **验证**
 - `cargo test --release --workspace`：13 个测试目标全绿（含 ngspice 活体对拍）；
 - Sparklin 的固定基线逐位不变：THD 27.579%、h2..h9 = 3.92/22.46/2.43/11.94/1.83/7.65/1.47/5.34；
-- 下游组合：`sparklin-drive v0.1.8`（依赖钉 `v0.1.1`）+ `rustomp-mac-plugin v0.1.6`。
+- 下游组合：`sparklin-drive v0.1.8`（依赖钉 `v0.1.1`）+ `rustomp-mac-plugin v0.1.6`；
+- **隔离验证通过**（`scripts/verify-isolation.sh`，全新目录从 GitHub 拉三仓，
+  200 s）：`build.sh` 退出码 0、6 条 ARTIFACT 都落在隔离目录、au_smoke 两次通过、
+  **RMS = 0.356170 与 v0.1.7 逐位相同**（音频确实没变）、框架依赖 3 条全部来自 git tag。
 
 ---
 
