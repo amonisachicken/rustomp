@@ -4310,6 +4310,88 @@ echo "bundler.toml → $OUT（$PLUGIN_NAME）"
 
 ---
 
+## E72：拆仓第 2 步 —— `sparklin-drive` 独立发布，全新 clone 一条命令出插件（2026-10-27）
+
+https://github.com/amonisachicken/sparklin-drive （`0240df1`，tag `v0.1.0`）
+
+### 72.1 依赖改造：从 path 到 git tag
+
+```diff
+-rustomp-dsp = { path = "../rustomp/crates/rustomp-dsp" }
++rustomp-dsp = { git = "https://github.com/amonisachicken/rustomp", tag = "v0.1.0" }
+```
+
+开发期想改框架怎么办？**不改 `Cargo.toml`**，用 `.cargo/config.toml` 的 `[patch]`（Cargo 1.56+ 支持）：
+
+```toml
+[patch."https://github.com/amonisachicken/rustomp"]
+rustomp-dsp = { path = "../rustomp/crates/rustomp-dsp" }
+```
+
+`config.toml` 入 gitignore，仓库里只放 `config.toml.example`。
+
+**这一步同时验证了第 0 步的 tag 是真能用的**：`Cargo.lock` 解析出
+
+```text
+source = "git+https://github.com/amonisachicken/rustomp?tag=v0.1.0#29cbb12a…"
+```
+
+（如果当初没修 workspace，这里会直接 fail —— 这就是为什么"先自洽、再打 tag"的顺序不能反。）
+
+### 72.2 `scripts/build.sh`：四个子命令
+
+```text
+./scripts/build.sh doctor    # 体检（缺什么给"怎么装"）
+./scripts/build.sh           # doctor → rustomp-gen --check → pack.sh → 安装 → ARTIFACT 列表
+./scripts/build.sh test      # cargo test（不需要 ngspice）
+./scripts/build.sh verify    # 需要 ngspice：整机对拍
+```
+
+三个关键设计：
+
+1. **构建前跑 `rustomp-gen --check`** —— 改了网表却没重新生成，这里就 fail（ADR-014 的漂移守卫不能在插件仓里丢）；
+2. 缺打包工具时打印**可复制的 clone 命令**，不猜路径；
+3. 结尾打印 `ARTIFACT:` 列表（与打包工具契约同形），CI 直接抓。
+
+> 顺手修了一个交互小坑：`./scripts/build.sh --no-install` 之前会被当成"未知子命令"，
+> 现在以 `-` 开头就按 build 处理并把参数透传。
+
+### 72.3 CI：干净 runner 上的证明
+
+`.github/workflows/build.yml` 在 `macos-14` 上 checkout **三个仓**（插件 / rustomp@tag / packer），
+跑 `doctor → test → build --no-install`，然后从日志里抓 `ARTIFACT:` 行，把产物上传。
+
+这才是"任何人拉取后能构建"的证据 —— 用全新 clone，而不是本机已有缓存。
+
+### 72.4 验收（真·全新 clone）
+
+```text
+$ git clone git@github.com:amonisachicken/sparklin-drive.git /tmp/sd-fresh
+$ cd /tmp/sd-fresh && ./scripts/build.sh --no-install
+...
+ARTIFACT: .../au-mono/Sparklin Drive Mono.component
+ARTIFACT: /private/tmp/sd-fresh/target/bundled/Sparklin Drive Mono.vst3
+ARTIFACT: /private/tmp/sd-fresh/target/bundled/Sparklin Drive Mono.clap
+ARTIFACT: .../au-stereo/Sparklin Drive Stereo.component
+ARTIFACT: /private/tmp/sd-fresh/target/bundled/Sparklin Drive Stereo.vst3
+ARTIFACT: /private/tmp/sd-fresh/target/bundled/Sparklin Drive Stereo.clap
+```
+
+`au_smoke`：CocoaUI ✓、**RMS 0.356170**（与所有历史版本逐位相同）。
+
+### 72.5 仓库内容（35 个文件，440 KB）
+
+| 目录 | 内容 |
+|---|---|
+| `circuit/netlist/*.cir` | 电路"源码"（两份完整网表，ngspice 可直接跑） |
+| `circuit/src/generated/*.rs` | 网表 → 装配代码（入库 + `--check`） |
+| `plugin/src/editor.rs` | 手写界面层（约 90 行） |
+| `assets/` + `design/panel.box.json` | 设计器产物与源文件（含 3 个导入 SVG） |
+| `rustomp.toml` | 含 `[requires]`（framework/packer/designer） |
+| `scripts/build.sh`、`BUILDING.md`、`.github/workflows/build.yml` | 一键构建与文档 |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4600,6 +4682,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **拆仓第 2 步：参考插件独立发布**（E72）：sparklin-drive 仓（依赖钉 rustomp tag `v0.1.0`）；`scripts/build.sh` 四子命令（含构建前 `rustomp-gen --check`）；CI 三仓 checkout；**全新 clone → 一条命令 → 6 条 ARTIFACT**，RMS 0.356170 不变 |
 | 2026-10-27 | **拆仓第 1 步：macOS 打包独立**（E71）：新增 rustomp-mac-plugin（pack.sh 契约 B + doctor.sh），框架侧 build-all.sh 变瘦包装；新增 tests/packer_contract.sh（ARTIFACT 透传 + 框架无平台词）并进 verify.sh；拆前/拆后 au_smoke 与 RMS 0.356170 完全一致 |
 | 2026-10-27 | **拆仓第 0 步：工作区自洽**（E70）：全新 clone 的 workspace 失败已修；发现 `cargo-nih-plug` 会 chdir 到**最顶层** `Cargo.toml` → **插件必须住在本仓之外**；插件移到 `../sparklin-drive`，`new-plugin.sh` 改为生成到 `$RUSTOMP_GUEST`；Sp02/Sp03 重建通过 |
 | 2026-10-27 | **真实下载件完整安装**（E68）：用户自绘设计（3 个导入 SVG）8 文件 zip → 装上 Sp02/Sp03；`rustomp-gen` 写 0 个文件（只改美术 → 只动 panel.png）；修掉 CLI 不认 `imported[]` 的 bug；RMS 逐位不变 |

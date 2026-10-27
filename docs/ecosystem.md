@@ -36,7 +36,7 @@
 
 | 仓库 | 负责 | 不负责 |
 |---|---|---|
-| **rustomp** | 器件模型、MNA 装配器、实时路径、代码生成、面板契约、ngspice 对拍 | 任何平台打包、素材美术、插件身份之外的业务 |
+| **rustomp**（本仓） | 器件模型、MNA 装配器、实时路径、代码生成、面板契约、ngspice 对拍 | 任何平台打包、素材美术、插件身份之外的业务 |
 | **rustomp-mac-plugin** | macOS 打包：AUv2 / VST3 / CLAP（universal）、clap-wrapper 补丁、签名、安装、AU 自检 | DSP、代码生成、素材 |
 | **rustomp-win-plugin** / **linux** | 各自平台的打包与宿主验证（未开工） | 同上 |
 | **sparklin-drive** | 一个**完整可构建**的参考插件：电路网表、生成物、面板产物、`build.sh` | 框架代码（只通过 tag 依赖） |
@@ -140,7 +140,7 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 |---|---|---|
 | **0** | 给 `rustomp` 打 tag `v0.1.0`；把契约 B 写成可执行测试（见 §6） | ✅ **已完成**：`v0.1.0` 已推；`tests/packer_contract.sh` 已进 `verify.sh` |
 | **1** | 拆出 `rustomp-mac-plugin` | ✅ **已完成**（DEVLOG E71）：框架里平台词为 0（测试断言）；拆前/后 `au_smoke` + RMS 0.356170 一致 |
-| **2** | 独立发布 `sparklin-drive` | **全新 clone + `./build.sh`** 能出 AU/VST3/CLAP；CI 在干净 runner 上绿 |
+| **2** | 独立发布 `sparklin-drive` | ✅ **已完成**（DEVLOG E72）：全新 clone → `./scripts/build.sh` → 6 条 `ARTIFACT`；CI 三仓 checkout |
 | **3** | `rustomp-circuit-designer` D0 | 符号库 + 网表生成 + 一键校验（`rustomp-import` + ngspice 偏差显示）；拖拽连线留 D1 |
 
 **拆仓期纪律：只搬不改。** 需要改契约（如 `[requires]`）就在第 0 步做掉。
