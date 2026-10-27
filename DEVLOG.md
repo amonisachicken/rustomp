@@ -5278,6 +5278,51 @@ E84 又补了"残差一票"，正好兜住任何假收敛。
 
 ---
 
+## E86：M-C 闭环成立 —— 设计器工程 → 代码 → THD 与 ngspice 对拍（2026-10-27）
+
+M-C 的定义（`docs/06-roadmap.md`）：**生成的 `Ckt` 的 THD 与设计器自己的仿真一致（同一把尺子）**。
+E81~E85 把模型、求解器、性能都补齐之后，这一步终于能真跑了。
+
+### 86.1 测试怎么搭
+
+```text
+rustomp-circuit-designer 工程（.design.json）
+  → rustomp-import --mna → tests/generated/*.rs（三个电路，全部 include!）
+  → 我们的 Ckt：192 kHz 内层速率，喂 1 kHz 正弦，取最后 20 ms（整数周期）
+  ↕ 同一张网表（设计器导出的 .cir + VSIM 激励 + devices.lib）→ ngspice，同样的窗口
+  → 两边都用 rustomp-oracle 的 harmonics/thd_percent 量（**同一把尺子**）
+```
+
+三个用例（`crates/rustomp-dsp/tests/mc_closed_loop_*.rs`）：
+
+| 电路 | 性质 | 我们的 THD | ngspice | 差 |
+|---|---|---|---|---|
+| `lowpass`（10k + 100n） | 线性对照 | 0.0000 % | 0.0000 % | 0（守"尺子本身"没歪） |
+| `diode-clip`（1N4148 ∥ 1N34A） | 二极管硬削波 | 26.554 % | 26.554 % | **−0.000 pp** |
+| `pretty-face`（两级 AC127 法兹） | 锗管 + 反馈 + 削波 | 60.53 % | 60.93 % | **−0.39 pp** |
+
+> 锗管那 0.39 pp 来自仍未建模的项（`Nk`、`Xcjc/Cjcs`、`Irb`），二极管纯电路已经能逐位对齐。
+
+### 86.2 顺手补的夹具
+
+`diode-clip` 这一套是**设计器直接导出**的（`designer.netlist` RPC）：工程文件 + `.cir` +
+生成物三件套入库，于是它同时吃到了三条守卫：
+
+- `tests/designer.rs::与设计器导出的网表逐行一致`（工程文件 → 网表 == 设计器导出）
+- `tests/codegen.rs::designer_project_is_up_to_date`（工程 → 生成物漂移守卫）
+- `mc_closed_loop_diode_clip.rs`（生成物 → THD == ngspice）
+
+### 86.3 这一轮"验收"串起来看
+
+| 里程碑 | 证据 |
+|---|---|
+| M-A（图 → `.cir` → ngspice 能跑） | `lowpass` 实测 1 kHz 衰减与理论一致（E1x）；本轮 THD 0.0000% |
+| M-B（图 → `rustomp-import --mna` → 可编译的 `Ckt`） | 三个工程全部生成、编译、跑通 |
+| **M-C（生成的 `Ckt` 与 ngspice 同尺子同结果）** | **✅ 三个用例：0 / 0.000 / 0.39 pp** |
+| M-D（进插件出声） | 待办（依赖打包链路） |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定

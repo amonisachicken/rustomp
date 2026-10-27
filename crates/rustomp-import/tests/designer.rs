@@ -37,6 +37,10 @@ const SYMBOLS: &str = include_str!("data/designer-symbols.json");
 const LOWPASS: &str = include_str!("data/lowpass.design.json");
 const LOWPASS_CIR: &str = include_str!("data/lowpass.cir");
 
+/// 第三组：二极管削波（非线性、但只有二极管 —— 与 ngspice 能逐字节对齐）
+const DIODE_CLIP: &str = include_str!("data/diode-clip.design.json");
+const DIODE_CLIP_CIR: &str = include_str!("data/diode-clip.cir");
+
 fn import() -> rustomp_import::ImportedCircuit {
     let table = SymbolTable::from_json(SYMBOLS).expect("symbols.json 快照解析失败");
     import_with_table(Path::new("pretty-face.design.json"), DESIGN, &table)
@@ -57,6 +61,7 @@ fn 与设计器导出的网表逐行一致() {
     for (name, design, golden) in [
         ("pretty-face", DESIGN, DESIGNER_CIR),
         ("lowpass", LOWPASS, LOWPASS_CIR),
+        ("diode-clip", DIODE_CLIP, DIODE_CLIP_CIR),
     ] {
         let table = SymbolTable::from_json(SYMBOLS).unwrap();
         let imported = import_with_table(Path::new(name), design, &table).expect("导入失败");

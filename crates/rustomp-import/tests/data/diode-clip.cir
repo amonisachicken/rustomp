@@ -1,0 +1,7 @@
+* 二极管削波（非对称） —— 由 rustomp-circuit-designer 生成
+* @rustomp in=IN out=OUT
+
+D1 OUT 0 1N4148
+D2 0 OUT 1N34A
+R1 IN OUT 10k
+.end

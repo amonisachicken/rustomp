@@ -65,6 +65,10 @@ fn designer_project_is_up_to_date() {
             "tests/data/pretty-face.design.json",
             "../rustomp-dsp/tests/generated/pretty_face.rs",
         ),
+        (
+            "tests/data/diode-clip.design.json",
+            "../rustomp-dsp/tests/generated/diode_clip.rs",
+        ),
     ] {
         let source = fixture.rsplit_once('/').unwrap().1;
         let fresh = regenerate_designer(fixture, source);
