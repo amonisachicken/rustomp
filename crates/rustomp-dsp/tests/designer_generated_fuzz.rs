@@ -78,6 +78,33 @@ fn 瞬态不发散且节点电压物理() {
     );
 }
 
+/// 收敛判据自带"残差一票"（E84）：每拍结束后 `last_resid` 必须达标，
+/// 否则说明是**假收敛**（Δv 小但 KCL 还差很远）。
+#[test]
+fn 每拍的残差都达标() {
+    let mut net = build(FS, &Params::default());
+    net.solve_dc();
+    let dt = 1.0 / FS;
+    let mut worst: f64 = 0.0;
+    for i in 0..2_000 {
+        let t = i as f64 * dt;
+        let x = 0.1 * (std::f64::consts::TAU * 1_000.0 * t).sin();
+        net.set_fixed(FIXED_IN, x);
+        net.step_fixed(dt, 3);
+        assert!(
+            net.last_resid.is_finite(),
+            "第 {i} 拍没做残差复检（Δv 判据没触发？）"
+        );
+        worst = worst.max(net.last_resid);
+        assert!(
+            net.last_resid <= net.resid_tol,
+            "第 {i} 拍残差 {:.3e}",
+            net.last_resid
+        );
+    }
+    println!("最坏归一化残差 {worst:.2e}（阈值 {:e}）", net.resid_tol);
+}
+
 #[test]
 fn 电位器拧到两端也稳() {
     let mut p = Params::default();

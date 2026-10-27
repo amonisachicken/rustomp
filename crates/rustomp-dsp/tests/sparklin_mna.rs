@@ -476,8 +476,10 @@ fn realtime_path_matches_offline() {
         let mut c = SparklinMna::build(INNER_FS, Params::default());
         c.iters = iters;
         // 这个基准量的是"**单次**迭代成本"：关掉救援通道（否则没收敛的样本会
-        // 自动多迭代几次，`1 次迭代` 就不再是 1 次了 —— 见 DEVLOG E81）
+        // 自动多迭代几次，`1 次迭代` 就不再是 1 次了 —— 见 DEVLOG E81），
+        // 也关掉残差复检（它每拍多装一次非线性部分，约 +10% —— 见 DEVLOG E84）
         c.net.set_rescue_cap(iters);
+        c.net.resid_tol = 0.0;
         let n = (3.0 * INNER_FS) as usize;
         let tail = (0.02 * INNER_FS) as usize;
         let mut out = Vec::with_capacity(tail);
@@ -540,5 +542,26 @@ fn realtime_cpu_cost() {
             ns * 1e-9 * INNER_FS * 100.0
         );
         assert!(ns < 12_000.0, "{iters} 次迭代：{ns:.0} ns/样本 偏慢");
+    }
+
+    // 默认配置（残差复检 + 救援上限都开着）下的**真实**成本：
+    // 每拍会多装一次非线性部分做残差复检（约 +10%，见 DEVLOG E84）
+    {
+        let mut c = SparklinMna::build(INNER_FS, Params::default());
+        let n = 100_000usize;
+        for i in 0..10_000 {
+            let x = 0.2 * (std::f64::consts::TAU * 1_000.0 * i as f64 / INNER_FS).sin();
+            std::hint::black_box(c.process(x));
+        }
+        let t0 = std::time::Instant::now();
+        for i in 0..n {
+            let x = 0.2 * (std::f64::consts::TAU * 1_000.0 * i as f64 / INNER_FS).sin();
+            std::hint::black_box(c.process(x));
+        }
+        let ns = t0.elapsed().as_nanos() as f64 / n as f64;
+        println!(
+            "  默认配置（残差复检开）→ {ns:6.0} ns/样本 → 192 kHz 单核 {:5.1}%",
+            ns * 1e-9 * INNER_FS * 100.0
+        );
     }
 }

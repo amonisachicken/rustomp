@@ -315,6 +315,32 @@ impl<const N: usize> Mna<N> {
         }
     }
 
+    /// 把候选解 `x` 代回**当前装配好的**方程组，返回归一化残差
+    /// `max_i |(Y·x − b)_i| / (atol + |b_i| + Σ_k |Y_ik·x_k|)`。
+    ///
+    /// 固定节点/未使用节点的行是全零（它们不参与求解），直接跳过。
+    pub fn residual_norm(&self, x: &[f64; N], rows: usize) -> f64 {
+        let rows = rows.clamp(1, N);
+        let mut worst = 0.0f64;
+        for i in 0..rows {
+            let mut r = -self.rhs[i];
+            let mut magnitude = self.rhs[i].abs();
+            for k in 0..rows {
+                let yik = self.y[i][k];
+                if yik == 0.0 {
+                    continue;
+                }
+                r += yik * x[k];
+                magnitude += (yik * x[k]).abs();
+            }
+            if magnitude <= 0.0 {
+                continue; // 空行
+            }
+            worst = worst.max(r.abs() / (1e-9 + magnitude));
+        }
+        worst
+    }
+
     /// 解 `Y·x = rhs`（部分主元高斯消元）。
     ///
     /// 内层用切片 `zip` 而不是 `a[row][k]` 双重下标 —— 去掉边界检查后
@@ -683,6 +709,13 @@ pub struct Netlist<const N: usize> {
     pub fixed_tol: f64,
     /// 上一拍实际做了几次牛顿迭代（诊断用）
     pub last_iters: usize,
+    /// 上一拍收敛时的归一化残差（诊断用；没算就是 `NaN`）
+    pub last_resid: f64,
+    /// 残差收敛阈值（归一化）：`‖Y·v − b‖∞ / 行量级`
+    ///
+    /// 只靠 Δv 判收敛会**假收敛**（阻尼把人按住时 Δv 很小，但 KCL 还差很远）。
+    /// 这个阈值是"最后一票"：Δv 过了还要看残差（E84）。
+    pub resid_tol: f64,
     /// 实时路径的**硬上限**：没收敛时最多迭代到 `min(4×预算, 这个值)`。
     ///
     /// 默认 24。设成与预算相等就退回"严格跑满 `iters` 次"的老行为
@@ -717,7 +750,9 @@ impl<const N: usize> Netlist<N> {
             fixed: Vec::new(),
             fixed_tol: 1e-6,
             last_iters: 0,
-            rescue_cap: 24,
+            last_resid: f64::NAN,
+            resid_tol: 1e-6,
+            rescue_cap: 32,
             unknowns: 0,
             v: [0.0; N],
             v_prev2: [0.0; N],
@@ -804,7 +839,7 @@ impl<const N: usize> Netlist<N> {
         self.fixed.len() - 1
     }
 
-    /// 设实时路径的迭代硬上限（默认 24）。与常规预算相等 = 关掉救援通道。
+    /// 设实时路径的迭代硬上限（默认 32）。
     pub fn set_rescue_cap(&mut self, cap: usize) -> &mut Self {
         self.rescue_cap = cap;
         self
@@ -1043,10 +1078,24 @@ impl<const N: usize> Netlist<N> {
         // 留给下一拍**（实测 n2 冲到 16 V、输出摆到 −0.68 V，而收敛解是 [−0.16, +0.10]），
         // 之后越修越乱。所以留一条救援通道：最多 4 倍预算（且不超 24），
         // 只有确实没收敛时才走到那里；稳态成本不变。
-        const RESCUE_FACTOR: usize = 4;
+        // 迭代预算：`iters` 是**常规预算**，`rescue_cap` 是**硬上限**。
+        // - 开着残差兜底（`resid_tol > 0`，默认）：允许迭代到硬上限 —— 容易的拍
+        //   2~3 次就因 Δv/残差达标退出，难的拍（实测 fuzz 第 91 拍要 17 次）才走到上限；
+        // - 关掉残差（`resid_tol = 0`，CPU 基准用）：退回"严格跑满 `iters` 次"。
         let budget = iters.max(1);
-        let cap = (budget * RESCUE_FACTOR).min(self.rescue_cap).max(budget);
+        let cap = if self.resid_tol > 0.0 {
+            self.rescue_cap.max(budget)
+        } else {
+            budget
+        };
         self.last_iters = 0;
+        let mut resid = f64::NAN;
+        // 复检残差：把候选解代回**非线性**方程，看 KCL 误差（只多装一次非线性部分）
+        let check_residual = |net: &Self, v: &[f64; N], base: &Mna<N>| -> f64 {
+            let mut probe = base.clone();
+            net.stamp_nonlinear(&mut probe, v, dt, false);
+            probe.residual_norm(v, net.solve_len())
+        };
         for _ in 0..cap {
             self.last_iters += 1;
             let mut sys = base.clone();
@@ -1054,9 +1103,7 @@ impl<const N: usize> Netlist<N> {
             let mut v_new = sys.solve_len(self.solve_len());
             // 固定节点不在 LU 行里，解里是 0 —— 补回已知值（电容历史 / 下一拍线性化要用）
             self.fill_fixed(&mut v_new);
-            // **自适应提前退出**：残差够小就不再迭代。
-            // 这一步很关键：固定 4 次在硬驱动下差 0.76 dB，固定 8 次又太贵；
-            // 用"两次迭代之间的最大相对变化"当判据，稳态常见 4~5 次、难算时自动补到 8 次。
+            // Δv（两次迭代之间的最大相对变化）
             let mut max_dv: f64 = 0.0;
             for i in 0..N {
                 max_dv = max_dv.max((v_new[i] - v[i]).abs() / (1.0 + v_new[i].abs()));
@@ -1069,13 +1116,27 @@ impl<const N: usize> Netlist<N> {
                     v[i] = 0.5 * (v[i] + v_new[i]);
                 }
                 self.fill_fixed(&mut v);
-            } else {
-                v = v_new;
+                continue;
             }
+            v = v_new;
+            // **收敛判据：Δv + 残差两票**（E84）。
+            // 只看 Δv 会**假收敛**：解被按住时 Δv 很小，KCL 却还差很远。
+            // 残差没过就继续迭代（用救援通道把预算放宽），而不是直接接受。
             if tol > 0.0 && max_dv < tol {
-                break;
+                if self.resid_tol <= 0.0 {
+                    break; // 关掉复检（CPU 基准用）
+                }
+                resid = check_residual(self, &v, &base);
+                if resid <= self.resid_tol {
+                    break;
+                }
             }
         }
+        // 预算耗尽（或 Δv 一直不小）时也补一次复检：`last_resid` 要能反映真实收敛度
+        if !resid.is_finite() {
+            resid = check_residual(self, &v, &base);
+        }
+        self.last_resid = resid;
         self.v_prev2 = self.v;
         self.has_prev2 = true;
         self.v = v;
