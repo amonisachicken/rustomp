@@ -40,10 +40,15 @@ fi
 # ---------------------------------------------------------------- 1. Rust
 echo "==> [1/7] 构建通用二进制 CLAP + VST3 (x86_64 + arm64)"
 ./scripts/gen-bundler-toml.sh >/dev/null
-cargo nih-plug bundle-universal "$PKG" --release
+# 插件自带 workspace → 在插件项目根构建（cargo-nih-plug 会 chdir 到 workspace 根）
+PLUGIN_BUILD_DIR="$_PLUGIN_DIR"
+(
+    cd "$PLUGIN_BUILD_DIR"
+    cargo nih-plug bundle-universal "$PKG" --release
+)
 
-CLAP="target/bundled/${PLUGIN_NAME}.clap"
-VST3="target/bundled/${PLUGIN_NAME}.vst3"
+CLAP="$PLUGIN_BUILD_DIR/target/bundled/${PLUGIN_NAME}.clap"
+VST3="$PLUGIN_BUILD_DIR/target/bundled/${PLUGIN_NAME}.vst3"
 for f in "$CLAP" "$VST3"; do
     [ -e "$f" ] || { echo "构建产物缺失：$f"; exit 1; }
 done
@@ -62,7 +67,7 @@ echo "==> [3/7] clap-wrapper → AUv2"
 cmake -B build/au -S cmake \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
-      -DCLAP_BUNDLE="$ROOT/$CLAP" \
+      -DCLAP_BUNDLE="$CLAP" \
       -DRUSTOMP_AU_SUBTYPE="$AU_SUBTYPE" \
       -DRUSTOMP_AU_MANUFACTURER_CODE="$AU_MANUFACTURER" \
       -DRUSTOMP_AU_MANUFACTURER_NAME="$AU_MANUFACTURER_NAME" \

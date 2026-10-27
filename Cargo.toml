@@ -1,14 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "plugins/sparklin-drive/plugin",
-    "plugins/sparklin-drive/circuit",
     "crates/rustomp-gen",
     "crates/rustomp-dsp",
     "crates/rustomp-gui",
     "crates/rustomp-oracle",
     "crates/rustomp-import",
 ]
+# 插件项目**不是**本 workspace 的成员：它自带 workspace，可以放在任何地方（plugins/ 被 gitignore）。
+# 这也保证"clone 下来就能 cargo test"——仓库里没有 plugins/ 目录。
+exclude = ["plugins"]
 
 [workspace.package]
 version = "0.1.0"

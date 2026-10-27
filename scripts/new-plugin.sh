@@ -33,7 +33,8 @@ print(s or 'plugin')
 SLUG_U="${SLUG//-/_}"
 SLUG_DOT="${SLUG//-/_}"
 
-DEST="plugins/$SLUG"
+GUEST_ROOT="${RUSTOMP_GUEST_ROOT:-$(dirname "$ROOT")}"
+DEST="${RUSTOMP_GUEST:-$GUEST_ROOT/$SLUG}"
 [ -e "$DEST" ] && { echo "已存在：$DEST"; exit 1; }
 
 # AU / VST3 码：由名字派生，之后可手改（发布后不可改）
@@ -54,7 +55,10 @@ VST3_DUAL=$(echo "$CODES" | sed -n 2p | awk '{print $1}')
 VST3_MONO=$(echo "$CODES" | sed -n 2p | awk '{print $2}')
 VST3_STEREO=$(echo "$CODES" | sed -n 2p | awk '{print $3}')
 
+# 插件在仓外 → 模板里的 rustomp 路径要按实际相对位置算
+REL_RUSTOMP="$(python3 -c "import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))" "$ROOT" "$DEST")"
 echo "==> 生成 ${DEST}（包名 ${SLUG}，AU $AU_DUAL/$AU_MONO/${AU_STEREO}）"
+echo "    rustomp 相对路径：${REL_RUSTOMP}"
 mkdir -p "$(dirname "$DEST")"
 cp -R template "$DEST"
 rm -rf "$DEST/circuit/netlist" "$DEST/plugin/target" 2>/dev/null || true
@@ -63,10 +67,11 @@ mkdir -p "$DEST/circuit/netlist"
 # 替换占位符
 python3 - "$DEST" "$NAME" "$SLUG" "$SLUG_U" "$SLUG_DOT" "$VENDOR" \
          "$AU_DUAL" "$AU_MONO" "$AU_STEREO" \
-         "$VST3_DUAL" "$VST3_MONO" "$VST3_STEREO" <<'PY'
+         "$VST3_DUAL" "$VST3_MONO" "$VST3_STEREO" "$REL_RUSTOMP" <<'PY'
 import pathlib, sys
-dest, name, slug, slug_u, slug_dot, vendor, au_d, au_m, au_s, v_d, v_m, v_s = sys.argv[1:13]
+dest, name, slug, slug_u, slug_dot, vendor, au_d, au_m, au_s, v_d, v_m, v_s, rel = sys.argv[1:14]
 subs = {
+    "__RUSTOM_PATH__": rel,
     "__NAME__": name,
     "__SLUG_UNDERSCORE__": slug_u,
     "__SLUG_DOT__": slug_dot,
@@ -106,17 +111,8 @@ if ! cargo run -q -p rustomp-gen -- "$DEST" 2>&1 | sed 's/^/    /'; then
     exit 1
 fi
 
-# 注册进 workspace
-python3 - "$ROOT/Cargo.toml" "$SLUG" <<'PY'
-import sys, re
-path, slug = sys.argv[1], sys.argv[2]
-s = open(path, encoding="utf-8").read()
-for member in (f'    "plugins/{slug}/circuit",', f'    "plugins/{slug}/plugin",'):
-    if member not in s:
-        s = s.replace('members = [\n', 'members = [\n' + member + '\n', 1)
-open(path, "w", encoding="utf-8").write(s)
-print("  workspace 已注册两个 crate")
-PY
+# 插件项目自带 workspace（见 $DEST/Cargo.toml），**不**注册进 rustomp 的 workspace
+echo "  插件自带 workspace：$DEST/Cargo.toml"
 
 cat <<EOT
 
@@ -132,8 +128,9 @@ cat <<EOT
   2. 把电路写进 ${DEST}/circuit/src/（现在是一个纯增益示例 Gain）。
   3. 电路写好后：
        ./scripts/make-netlist.sh ${DEST}/circuit/netlist      # 生成 SPICE 网表
+
+构建（插件在仓外，用 RUSTOMP_GUEST 指路）：
+       RUSTOMP_GUEST=${DEST} ./scripts/build-all.sh
        ./scripts/sim-baseline.sh ${DEST}/circuit/netlist      # ngspice 基线
-       cargo test -p ${SLUG}-circuit --release                # 对拍
-  4. 构建安装：
-       PLUGIN_DIR=${ROOT}/${DEST} ./scripts/build-all.sh
+       (cd ${DEST} && cargo test --release)                   # 对拍（插件自带 workspace）
 EOT

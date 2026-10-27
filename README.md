@@ -96,6 +96,7 @@
 
 ```
 devices/                器件库（SPICE 侧）：models.add 清洗→ devices.lib，手写子电路，对拍报告
+                        ⚠️ 插件项目**不在本仓**（cargo-nih-plug 要求），用 RUSTOMP_GUEST 指路
   build.sh              models.add → parsed.lib + handwritten.lib + reference.lib → devices.lib
   REPORT.md             每个型号的实测数据与"丢弃了哪些字段、为什么"
 crates/

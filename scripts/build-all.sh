@@ -28,12 +28,18 @@ echo "############ 0/2  重新生成插件代码 ############"
 # 这里统一重生成一次，避免"改了 toml 但忘了跑生成器"用旧代码构建。
 GEN="./target/release/rustomp-gen"
 [ -x "$GEN" ] || cargo build -q --release -p rustomp-gen
-for proj in plugins/*/rustomp.toml; do
-    [ -e "$proj" ] || continue
-    dir="$(dirname "$proj")"
-    echo "  → $dir"
+# 插件项目可以在仓外（RUSTOMP_GUEST / PLUGIN_DIR）；找不到就跳过这一步
+if dir="$("$ROOT/scripts/plugin-env.sh" --print-dir 2>/dev/null)"; then
+    echo "  → ${dir}"
     "$GEN" "$dir" | tail -1
-done
+else
+    for proj in "$ROOT"/plugins/*/rustomp.toml; do
+        [ -e "$proj" ] || continue
+        dir="$(dirname "$proj")"
+        echo "  → ${dir}"
+        "$GEN" "$dir" | tail -1
+    done
+fi
 
 echo "############ 1/2  单声道变体 ############"
 ./scripts/build-variant.sh mono

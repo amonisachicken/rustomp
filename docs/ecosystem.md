@@ -170,7 +170,8 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 | universal 需要两个 rust target | `bundle-universal` 失败信息不直观 | `doctor` 检查 `rustup target list --installed`，缺了直接给出安装命令 |
 | **standalone 其实还没做**（文档里是 ⬜） | 若列进 v0.1 会吃不消 | mac 工具 **v0.1 只出 AU/VST3/CLAP**；standalone 单列 v0.2（要处理音频设备/设置持久化） |
 | 现在是 **ad-hoc 签名**（`codesign -s -`） | 对外分发会被 Gatekeeper 拦 | 签名 + 公证（Developer ID + notarytool）**单独一项**，不混进拆仓 |
-| `plugins/` 在本仓是 gitignore 的，却是 workspace member | 拆仓后 workspace 会悬空 | 插件移出后，`rustomp` 用 `RUSTOMP_GUEST=/path` 指向外部插件目录；空 `plugins/` 也能 `cargo test` |
+| ~~`plugins/` 是 gitignore 却是 workspace member~~ | 全新 clone **解析不了 workspace**（已修） | 根 `Cargo.toml` 去掉插件成员 + `exclude = ["plugins"]`；插件自带 workspace；用 `RUSTOMP_GUEST=/path` 指路 |
+| **`cargo-nih-plug` 会 chdir 到"最顶层"的 `Cargo.toml`** | 插件嵌在本仓 `plugins/` 里时，会拉到 rustomp 根 → `cannot specify features for packages outside of workspace` | **插件项目必须住在本仓之外**（默认 `../<slug>`）；`new-plugin.sh` 已改为生成到 `$RUSTOMP_GUEST`；`target/` 与 `bundler.toml` 都落在插件项目根 |
 | 插件仓的生成物 | 用户可能编到过期代码 | `build.sh` 先跑 `rustomp-gen --check`（漂移即 fail），不允许跳过 |
 
 ---

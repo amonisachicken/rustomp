@@ -3,7 +3,7 @@
 > 依据：`docs/ecosystem.md`（仓库边界与三个契约）。本文是**可直接照着敲**的执行清单：
 > 每个文件从哪来、到哪去、怎么验证。
 >
-> 状态：2026-10-27 制定；**开工前需要先处理 §0 的阻塞项**。
+> 状态：2026-10-27 **§0 已完成**（含一个比预想更深的发现：插件必须住在本仓之外，见 §0.3）。
 
 ---
 
@@ -27,7 +27,7 @@ error: failed to load manifest for workspace member `/private/tmp/rustomp-clone/
 - `cargo install --git <rustomp> rustomp-gen` 同理；
 - **所以现在还不能打 tag**（打出来的是"用不了"的 tag）。
 
-### 0.2 修法（约 30 分钟）
+### 0.2 修法（已完成）
 
 | 改动 | 内容 |
 |---|---|
@@ -47,6 +47,34 @@ PLUGIN_DIR=$HOME/develop/rustomp/plugins/sparklin-drive ./scripts/build-all.sh  
 
 > **副作用**：根目录不再能 `cargo build -p sparklin-drive`。构建插件改为在插件目录里跑，
 > 这正是拆仓后的形态（插件是独立 workspace），所以是"提前到位"，不是回退。
+
+### 0.3 更深的发现：插件**不能**住在 rustomp 目录树里
+
+修完 workspace 后构建报：
+
+```text
+error: cannot specify features for packages outside of workspace
+```
+
+追到 `nih_plug_xtask` 的源码才发现原因（`nih_plug_xtask/src/lib.rs`）：
+
+```rust
+let workspace_root = project_dir.ancestors()
+    .filter(|dir| dir.join("Cargo.toml").exists())
+    .last();                       // ← 取**最顶层**那个 Cargo.toml
+std::env::set_current_dir(workspace_root)?;
+```
+
+插件住在 `rustomp/plugins/<name>/` 时，`project_dir` 的祖先里有 `rustomp/Cargo.toml`（顶层），
+于是 `cargo nih-plug` 会 chdir 到 **rustomp 根**，而那里没有这个包 → 上面那句报错。
+
+**结论：插件项目必须住在本仓之外。** 三个连带事实：
+
+1. `target/` 落在**插件项目根**（不是 `plugin/` 子目录）；
+2. `bundler.toml` 必须写在插件项目根（xtask 从 workspace 根读）；
+3. `new-plugin.sh` 改为生成到 `$RUSTOMP_GUEST`（默认 `../<slug>`），并在模板里按实际相对路径填 `rustomp` 的 path 依赖。
+
+这正好是拆仓后的最终形态，所以是"提前到位"。
 
 ---
 

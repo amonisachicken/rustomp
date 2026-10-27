@@ -35,12 +35,19 @@ MANUFACTURER_NAME="$AU_MANUFACTURER_NAME"
 SRC_BASE="$PLUGIN_NAME"
 
 echo "==> [1/5] 构建 ${NAME}（通用二进制，feature=${VARIANT}）"
-cargo nih-plug bundle-universal "$PLUGIN_PACKAGE" --release --features "$VARIANT"
+# 插件项目自带 workspace（不在 rustomp 的 workspace 里），所以要在插件目录里构建：
+#   - target/ 落在插件项目根下（cargo-nih-plug 会 chdir 到 workspace 根）
+#   - rustomp 本身 clone 下来就能 cargo test（不依赖 plugins/ 是否存在）
+PLUGIN_BUILD_DIR="$_PLUGIN_DIR"
+(
+    cd "$PLUGIN_BUILD_DIR"
+    cargo nih-plug bundle-universal "$PLUGIN_PACKAGE" --release --features "$VARIANT"
+)
 
-SRC_CLAP="target/bundled/${SRC_BASE}.clap"
-SRC_VST3="target/bundled/${SRC_BASE}.vst3"
-DST_CLAP="target/bundled/${NAME}.clap"
-DST_VST3="target/bundled/${NAME}.vst3"
+SRC_CLAP="$PLUGIN_BUILD_DIR/target/bundled/${SRC_BASE}.clap"
+SRC_VST3="$PLUGIN_BUILD_DIR/target/bundled/${SRC_BASE}.vst3"
+DST_CLAP="$PLUGIN_BUILD_DIR/target/bundled/${NAME}.clap"
+DST_VST3="$PLUGIN_BUILD_DIR/target/bundled/${NAME}.vst3"
 
 echo "==> [2/5] 重命名 bundle 并修正 plist"
 rm -rf "$DST_CLAP" "$DST_VST3"
@@ -62,7 +69,7 @@ mkdir -p "$BUILD_DIR"
 cmake -B "$BUILD_DIR" -S cmake \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
-      -DCLAP_BUNDLE="$ROOT/$DST_CLAP" \
+      -DCLAP_BUNDLE="$DST_CLAP" \
       -DRUSTOMP_PLUGIN_NAME="$NAME" \
       -DRUSTOMP_AU_SUBTYPE="$SUBTYPE" \
       -DRUSTOMP_AU_MANUFACTURER_CODE="$MANUFACTURER" \

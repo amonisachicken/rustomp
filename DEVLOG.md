@@ -4177,6 +4177,77 @@ ADR-014 早就写了 packer 契约，但**没有任何代码验证它**。文档
 
 ---
 
+## E70：拆仓第 0 步 —— 工作区自洽，并发现"插件不能住在本仓里"（2026-10-27）
+
+按 `docs/split-plan.md` 的 §0 开工。做完三件事，其中第三件是**计划里没有的**、但影响后续所有步骤。
+
+### 70.1 全新 clone 解析不了 workspace（已修）
+
+```text
+$ git clone … /tmp/c1 && cd /tmp/c1 && cargo metadata
+error: failed to load manifest for workspace member `/private/tmp/c1/plugins/sparklin-drive/plugin`
+```
+
+根 `Cargo.toml` 的 `members` 里有插件，而 `plugins/` 在 `.gitignore` 里。
+
+修法：根 workspace 去掉两个插件成员 + `exclude = ["plugins"]`；插件项目自带 `Cargo.toml` workspace
+（`members = ["plugin","circuit"]` + `[workspace.package]` + `[profile.release]`）。
+
+### 70.2 连带修好的四处
+
+| 位置 | 原来 | 现在 |
+|---|---|---|
+| `plugin/Cargo.toml` / `circuit/Cargo.toml` | `path` / `workspace = true` 混用 | 统一走插件自己的 `[workspace.dependencies]` |
+| `scripts/gen-bundler-toml.sh` | 写 `rustomp/bundler.toml` | 写**插件项目根**的 `bundler.toml`（xtask 从 workspace 根读） |
+| `scripts/build-variant.sh` / `build-au.sh` | 在 rustomp 根 `cargo nih-plug bundle-universal` | 在**插件项目根**构建；产物路径 `$PLUGIN_DIR/target/bundled/…` |
+| `scripts/plugin-env.sh` | 只认 `plugins/*` | 新增 `$RUSTOMP_GUEST` 与 `--print-dir`（供脚本探测） |
+
+### 70.3 真正的坑：`cargo-nih-plug` 会 chdir 到"最顶层"的 `Cargo.toml`
+
+修完 workspace 后构建报 `cannot specify features for packages outside of workspace`。
+翻 `nih_plug_xtask` 源码才看清：
+
+```rust
+let workspace_root = project_dir.ancestors()
+    .filter(|dir| dir.join("Cargo.toml").exists())
+    .last();                        // ← 取**最顶层**那个
+std::env::set_current_dir(workspace_root)?;
+```
+
+插件住在 `rustomp/plugins/<name>/` 时，祖先里最顶层的是 `rustomp/Cargo.toml`，
+于是 xtask 把 cwd 切到 rustomp 根 —— 那里没有这个包，`-p` 自然"outside of workspace"。
+
+**结论：插件项目必须住在 rustomp 目录树之外。** 这条直接影响三件事：
+
+1. `target/` 落在**插件项目根**（不是 `plugin/`）；
+2. `bundler.toml` 必须在插件项目根；
+3. `new-plugin.sh` 必须生成到仓外（`$RUSTOMP_GUEST`，默认 `../<slug>`），
+   并在模板里按实际相对路径填 `rustomp` 的 path 依赖（`../rustomp/crates/…`）。
+
+于是把 `plugins/sparklin-drive` 移到 `~/develop/sparklin-drive`（同级），
+这恰好是拆仓后的最终位置 —— **提前到位，不是绕路**。
+
+### 70.4 顺带一个 bash 坑（记过的老毛病又犯）
+
+```bash
+echo "bundler.toml → $OUT（$PLUGIN_NAME）"
+# 报：OUT（: unbound variable
+```
+
+中文括号紧跟变量名时，bash 把全角字符算进了变量名。**`${VAR}` 一律加花括号**（AGENTS 里的第 2 条）。
+
+### 70.5 验证
+
+| 项 | 结果 |
+|---|---|
+| 全新 clone `cargo metadata` | ✅ 通过 |
+| 框架自测 `cargo test --workspace` | ✅ 19 个测试目标全绿 |
+| 插件自测（自己 workspace） | ✅ 电路 6 个用例通过 |
+| `RUSTOMP_GUEST=… ./scripts/build-all.sh` | ✅ Sp02 / Sp03 重装，au_smoke 通过（1m14s） |
+| `new-plugin.sh "Gain Test"` | ✅ 生成到 `../gain-test`，`cargo check` 通过（模板补了 workspace 根与 `repository` 字段） |
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -4467,6 +4538,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 | 2026-10-23 | **定位 Logic 看不到插件的真因**（E6）：① 我们的 AU plist 缺 `AudioComponents`（增量构建被 CMake 默认模板覆盖）→ 已在构建脚本中无条件修复 + 断言 + 冒烟测试内校验；② 本机 system 域 `AudioComponentRegistrar` 已死（exit -9），客户端看不到任何第三方 AU（BYOD 对照同样失败）→ 需 `sudo` 修复或重启 |
 | 2026-10-23 | **修复窗口重开后界面消失**（E22）：TextureHandle 绑定旧的 egui Context，重开窗口后失效；在 `build` 回调（每次 spawn 执行）里清空纹理缓存 |
 | 2026-10-27 | **生态边界成文**（E69）：新增 `docs/ecosystem.md`（仓库地图 / 三个契约 / `[requires]` 版本约束 / 文件归属表 / 拆分顺序与完成标准 / 六条风险）；定下"拆仓期只搬不改"与第 0 步的契约可执行测试 |
+| 2026-10-27 | **拆仓第 0 步：工作区自洽**（E70）：全新 clone 的 workspace 失败已修；发现 `cargo-nih-plug` 会 chdir 到**最顶层** `Cargo.toml` → **插件必须住在本仓之外**；插件移到 `../sparklin-drive`，`new-plugin.sh` 改为生成到 `$RUSTOMP_GUEST`；Sp02/Sp03 重建通过 |
 | 2026-10-27 | **真实下载件完整安装**（E68）：用户自绘设计（3 个导入 SVG）8 文件 zip → 装上 Sp02/Sp03；`rustomp-gen` 写 0 个文件（只改美术 → 只动 panel.png）；修掉 CLI 不认 `imported[]` 的 bug；RMS 逐位不变 |
 | 2026-10-27 | **用设计器导出的文件重做 GUI**（E67）：只拿 `ui.toml` + `panel.svg` 走完 6 步交接；LED/脚踏半径已改"由素材推导"（2.249→2.247、7.2→7.175）；补 `docs/06-export-runbook.md` |
 | 2026-10-26 | **踩钉不旁通 / 灯不灭**（E66）：① 手写 `ParamAccess` 桥漏 `bypass` 分支 → 参数桥改由 `[[params]]` 生成 + 覆盖测试；② 旁通时电路仍在跑 → `activity × mix`；③ `panel.rs` 生成搬进 `rustomp-gen`；④ 脚踏增 `image_hold`；`build-all.sh` 加"先重生成" |

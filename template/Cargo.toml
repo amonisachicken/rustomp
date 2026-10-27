@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# 插件项目自己的 workspace（**不**是 rustomp 的成员）。
+# 生成时 __RUSTOM_PATH__ 会被替换成相对 rustomp 仓库根的路径。
+[workspace]
+resolver = "2"
+members = ["plugin", "circuit"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["amonisachicken"]
+repository = "https://github.com/amonisachicken/rustomp"
+
+[workspace.dependencies]
+rustomp-dsp = { path = "__RUSTOM_PATH__/crates/rustomp-dsp" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+# 不要设 panic = "abort"：插件里 panic → 宿主 abort = Logic 闪退
+strip = "symbols"
+
+[profile.release-debug]
+inherits = "release"
+debug = true
+strip = "none"
