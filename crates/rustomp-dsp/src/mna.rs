@@ -738,6 +738,16 @@ impl Element {
     }
 }
 
+/// 固定节点（输入/电源轨）单拍电压变化超过它 → 拆子步（V）。
+///
+/// 实测边界：0.175 V 阶跃在 192 kHz（dt≈5.2 µs）下牛顿发散、0.17 V 收敛；
+/// 这里留 1.7× 余量。正常音频（正弦/吉他）每拍变化远小于它，走快速路径。
+pub const SUBSTEP_DELTA: f64 = 0.1;
+/// 单拍最多拆几步（8 步 = dt/8，192 kHz 下 ≈0.65 µs）。
+pub const MAX_SUBSTEPS: usize = 8;
+/// 连续「DC 恢复」多少拍后强制 reset（防止极端输入下无限恢复）。
+pub const MAX_FAIL_STREAK: usize = 8;
+
 /// 一个完整网表：元件 + 独立电压源 + 牛顿求解器。
 #[derive(Debug, Clone)]
 pub struct Netlist<const N: usize> {
@@ -751,8 +761,16 @@ pub struct Netlist<const N: usize> {
     /// `0` = 关闭（严格跑满 `iters` 次）。默认 `1e-6`：实测在 4~5 次内满足，
     /// 与"跑满 8 次"的输出差异可忽略（DEVLOG E57）。
     pub fixed_tol: f64,
-    /// 上一拍实际做了几次牛顿迭代（诊断用）
+    /// 上一拍实际做了几次牛顿迭代（诊断用；子步进时是各子步之和）
     pub last_iters: usize,
+    /// 上一拍实际拆了几步（诊断；正常音频恒为 1）
+    pub last_substeps: usize,
+    /// 上一拍是否正常收敛提交（`false` = 走了 DC 恢复兜底）
+    pub last_accept: bool,
+    /// 累计 DC 恢复次数（诊断；应长期为 0）
+    pub last_recoveries: u64,
+    /// 连续「DC 恢复」拍数（内部；到 [`MAX_FAIL_STREAK`] 强制 reset）
+    fail_streak: usize,
     /// 上一拍收敛时的归一化残差（诊断用；没算就是 `NaN`）
     pub last_resid: f64,
     /// 残差收敛阈值（归一化）：`‖Y·v − b‖∞ / 行量级`
@@ -794,6 +812,10 @@ impl<const N: usize> Netlist<N> {
             fixed: Vec::new(),
             fixed_tol: 1e-6,
             last_iters: 0,
+            last_substeps: 1,
+            last_accept: true,
+            last_recoveries: 0,
+            fail_streak: 0,
             last_resid: f64::NAN,
             resid_tol: 1e-6,
             rescue_cap: 24,
@@ -1086,6 +1108,114 @@ impl<const N: usize> Netlist<N> {
     /// 一旦换成方波/快速边沿，基频以下会冒出 −0 dB 量级的次谐波（听感是低频"噗噗"+ 高频发毛）。
     /// 验收时务必用**方波**测一次（见 `tests/sparklin_generated.rs::no_subharmonics_under_square_input`）。
     pub fn step_fixed(&mut self, dt: f64, iters: usize) -> [f64; N] {
+        let delta = self.max_fixed_delta();
+        // 快速路径：输入/电源轨的变化在正常范围内 → 与旧行为逐位一致
+        let k_hint = if delta.is_finite() && delta > SUBSTEP_DELTA {
+            ((delta / SUBSTEP_DELTA).ceil() as usize).clamp(2, MAX_SUBSTEPS)
+        } else {
+            1
+        };
+        if k_hint == 1 {
+            self.last_substeps = 1;
+            self.step_fixed_once(dt, iters);
+            if self.last_accept {
+                self.fail_streak = 0;
+                return self.v;
+            }
+            // 没预料到的失败：从「未提交」的当前状态走子步救援
+        }
+
+        let target = self.fixed.clone();
+        let mut k = k_hint.max(2);
+        loop {
+            if let Some((mut trial, iters_total, resid_max)) =
+                self.try_substeps(dt, k, iters, &target)
+            {
+                trial.last_substeps = k;
+                trial.last_iters = iters_total;
+                trial.last_resid = resid_max;
+                trial.last_accept = true;
+                trial.fail_streak = 0;
+                *self = trial;
+                return self.v;
+            }
+            if k >= MAX_SUBSTEPS {
+                break;
+            }
+            k = (k * 2).min(MAX_SUBSTEPS);
+        }
+
+        // 最后兜底：按目标固定电压解一次 DC。会有一次跳变，但绝不会永久冻结。
+        self.fixed.clone_from(&target);
+        self.solve_dc();
+        self.v_prev2 = self.v;
+        self.has_prev2 = false;
+        self.last_substeps = k;
+        self.last_accept = false;
+        self.last_iters = 0;
+        self.last_resid = f64::NAN;
+        self.last_recoveries += 1;
+        self.fail_streak += 1;
+        if self.fail_streak >= MAX_FAIL_STREAK {
+            self.reset();
+            self.solve_dc();
+        }
+        self.v
+    }
+
+    /// 固定节点相对**上一拍提交解**的最大变化（V）。
+    fn max_fixed_delta(&self) -> f64 {
+        let mut d = 0.0f64;
+        for &(node, volt) in &self.fixed {
+            if node != GND && node < N {
+                d = d.max((volt - self.v[node]).abs());
+            }
+        }
+        d
+    }
+
+    /// 从一个**未被提交破坏**的状态出发，把一拍拆成 `k` 步；全部收敛才返回新状态。
+    ///
+    /// 返回 `(新状态, 总迭代数, 最大残差)`。任何一步失败 → `None`，调用方拿原状态
+    /// 重试或走 DC 恢复。
+    fn try_substeps(
+        &self,
+        dt: f64,
+        k: usize,
+        iters: usize,
+        target: &[(usize, f64)],
+    ) -> Option<(Self, usize, f64)> {
+        let mut trial = self.clone();
+        let v0: Vec<f64> = target.iter().map(|&(node, _)| trial.v[node]).collect();
+        let sub_dt = dt / k as f64;
+        let mut iters_total = 0usize;
+        let mut resid_max = f64::NAN;
+        for j in 1..=k {
+            for (idx, &(_, vt)) in target.iter().enumerate() {
+                let v = v0[idx] + (vt - v0[idx]) * (j as f64 / k as f64);
+                if let Some(entry) = trial.fixed.get_mut(idx) {
+                    entry.1 = v;
+                }
+            }
+            trial.step_fixed_once(sub_dt, iters);
+            iters_total += trial.last_iters;
+            if trial.last_resid.is_finite() {
+                resid_max = if resid_max.is_finite() {
+                    resid_max.max(trial.last_resid)
+                } else {
+                    trial.last_resid
+                };
+            }
+            if !trial.last_accept {
+                return None;
+            }
+        }
+        trial.fixed.clear();
+        trial.fixed.extend_from_slice(target);
+        Some((trial, iters_total, resid_max))
+    }
+
+    fn step_fixed_once(&mut self, dt: f64, iters: usize) -> [f64; N] {
         // 线性部分（含运放状态、电容伴随导纳）每拍重建一次；
         // 牛顿迭代里只重装 3 只二极管 —— 这是实时档的主要优化。
         let mut base = Mna::<N>::new();
@@ -1194,6 +1324,7 @@ impl<const N: usize> Netlist<N> {
         // 现在：残差还离谱就保留上一拍的状态（电容/结电荷/运放都不动），下一拍重来。
         // 代价是这一拍输出"保持"上一拍的电压（比爆音好得多），而且只在极端点发生。
         let accept = self.resid_tol <= 0.0 || (resid.is_finite() && resid <= self.resid_tol * 1e3);
+        self.last_accept = accept;
         if accept {
             self.v_prev2 = self.v;
             self.has_prev2 = true;
@@ -1237,6 +1368,11 @@ impl<const N: usize> Netlist<N> {
         self.v = [0.0; N];
         self.v_prev2 = [0.0; N];
         self.has_prev2 = false;
+        self.last_iters = 0;
+        self.last_substeps = 1;
+        self.last_accept = true;
+        self.last_resid = f64::NAN;
+        self.fail_streak = 0;
         for e in &mut self.elems {
             if let Element::Capacitor { v_prev, .. } = e {
                 *v_prev = 0.0;
