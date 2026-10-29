@@ -232,7 +232,7 @@ Windows 工具（`rustomp-win-plugin` v0.3.0）就是照这条路落地的：**�
 | 素材/美术 | 建议在插件仓显式声明（同 GPL 或 CC BY-SA），避免 fork 时的犹豫 |
 | **tag 约定** | 每个仓发布即打 tag；下游**一律钉 tag**，不钉 `master`。**tag 必须在干净 checkout 里验证过才算数**（DEVLOG E74 就是没验证导致 v0.1.0 是坏的） |
 | **依赖布局** | 各仓**必须同级**（`some-dir/{rustomp, rustomp-mac-plugin, rustomp-win-plugin, rustomp-linux-plugin, sparklin-drive}`，按平台取用）——脚本按此自动发现，不假设任何绝对路径 |
-| **当前可用组合** | macOS：`rustomp v0.1.2` + `rustomp-mac-plugin v0.1.7` + `sparklin-drive v0.1.9`；Windows：`rustomp ≥ v0.1.2`（工具在 `7a186e4` 上验证）+ `rustomp-win-plugin v0.3.0`；Linux：`rustomp ≥ v0.1.2` + `rustomp-linux-plugin v0.1.0`（工具在 `7a186e4` 上验证） |（更早的 mac packer `v0.1.0`–`v0.1.5` 与插件 `v0.1.0`–`v0.1.7` 请勿使用：`v0.1.5` 及更早的 packer 会触发 clap-wrapper 的 CPM 联网下载，见 DEVLOG E88.3/E95） |
+| **当前可用组合** | macOS：`rustomp v0.1.2` + `rustomp-mac-plugin v0.1.7` + `sparklin-drive v0.1.9`（三平台 prerelease 已发布）；Windows：`rustomp ≥ v0.1.2`（工具在 `7a186e4` 上验证）+ `rustomp-win-plugin v0.3.0`；Linux：`rustomp ≥ v0.1.2` + `rustomp-linux-plugin v0.1.0`（工具在 `7a186e4` 上验证） |（更早的 mac packer `v0.1.0`–`v0.1.5` 与插件 `v0.1.0`–`v0.1.7` 请勿使用：`v0.1.5` 及更早的 packer 会触发 clap-wrapper 的 CPM 联网下载，见 DEVLOG E88.3/E95） |
 | **CI 必须真跑过** | 第一次 CI 是"假绿"（缺 cargo-nih-plug + `\| tee` 吞掉失败 + 上传空目录只警告），见 DEVLOG E75。判据：**产物数量 ≥1 且能下载** |
 
 ---

@@ -453,6 +453,10 @@ rustomp（框架 + 平台契约）
    与关键数字（V-I 误差、THD、频响偏差）渲染成 markdown 表格，翻历史构建就能看到
    "这次的精度是多少"，而不是只有一句“passed”。
 
+> 三平台分发由参考插件仓的 `.github/workflows/release.yml` 覆盖：tag `v*` 触发
+> macOS / Windows / Linux 构建 → GitHub Release（技术预览 / 未签名）；`workflow_dispatch`
+> 可只构建（dry-run）。见 DEVLOG E100。
+
 ## 宿主兼容性（Logic）
 
 AUv2 由 `clap-wrapper` 包装，为让 Logic 正确识别，本项目带三个必要补丁：
@@ -469,8 +473,10 @@ AUv2 由 `clap-wrapper` 包装，为让 Logic 正确识别，本项目带三个�
 
 ## 示例插件 Sparklin Drive
 
-> 完整插件（电路 + 基线 + 界面 + 打包）已拆到独立仓库 **`sparklin-drive-legacy`**，
-> 本仓库只保留框架。下一次迭代会用 MNA 装配器重写同一电路做回归验证。
+> 完整插件（电路 + 基线 + 界面 + 打包）在独立仓库 **`sparklin-drive`**；
+> **预编译包见 [Releases v0.1.9](https://github.com/amonisachicken/sparklin-drive/releases/tag/v0.1.9)**
+> （macOS DMG / Windows MSI ×2 / Linux tar.gz；未签名技术预览）。
+> 更早的手推实现冻结在 `sparklin-drive-legacy`。
 
 单电源 9V、OP07、**反馈环内非对称二极管削波**的失真/法兹：
 
@@ -513,9 +519,10 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
   （现在要手工加 `gui` feature 并写 `editor.rs`）。
 - `panel.rs` 目前由 `tools/meta/plugin_meta.py` 生成；搬进 `rustomp-gen`（单一发射器）还是 TODO。
 - **Windows 侧**：无代码签名；arm64 产物只能静态校验（x64 机器跑不了 arm64 DLL）；
-  不做 standalone；MSI 是两个固定范围的包，没有"向导里选范围"的单入口；CI 未接。
-- **Linux 侧**：分发包的 glibc 基线随构建机（老发行版用 `--container`）；arm64 / 容器 /
-  GUI 插件 / 真实宿主仍未实测；不做 deb/flatpak/AppImage、standalone；CI 未接。
+  不做 standalone；MSI 是两个固定范围的包，没有"向导里选范围"的单入口；打包器仓自身没有 CI
+  （由参考插件的三平台 release workflow 覆盖）。
+- **Linux 侧**：分发包的 glibc 基线随构建机（CI 用 Ubuntu 22.04 / glibc 2.35）；arm64 /
+  容器 / GUI 插件 / 真实宿主仍未实测；不做 deb/flatpak/AppImage、standalone；打包器仓自身没有 CI。
 
 **路线图**
 
@@ -541,6 +548,8 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
       VST3/CLAP（x64/arm64）+ 系统级/用户级 MSI，clap-probe + pluginval 自检，本机 DAW 实测出声
 - [x] **Linux 打包工具** ✅ `rustomp-linux-plugin` v0.1.0（独立仓库，ADR-015）：
       VST3/CLAP（x64/arm64）+ 可复现 tar.gz（install.sh / SHA256SUMS），clap-probe + pluginval 自检
+- [x] **三平台 GitHub Release** ✅ `sparklin-drive v0.1.9`：tag 触发三平台构建，产出
+      macOS DMG / Windows MSI×2 / Linux tar.gz（未签名 prerelease，见 DEVLOG E100）
 - [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
 - [x] **macOS DMG 安装包** ✅ `rustomp-mac-plugin --format dmg`（用户级：三种插件 + 双击安装脚本）
 - [ ] 电位器 A/C taper；预设与状态管理；`pkg` 安装包 + 签名公证

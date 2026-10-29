@@ -333,9 +333,11 @@ labels = ["Asym", "Sym"]; circuit = "symmetric"
 
 ## 6. 验收方式：CI 矩阵
 
-> 现状：仓库 CI 只有 **macOS**；Windows / Linux 打包工具各自带 `doctor.sh` / `verify.sh`
->（clap-probe + pluginval；Linux 另有 ELF/ldd）与 `tests/self-test.sh`，但**都尚未接 CI**。
-> 下面矩阵是目标形态。
+> 现状：框架仓 CI 只有 **macOS**；但参考插件仓 `sparklin-drive` 已有
+> `.github/workflows/release.yml`：tag `v*` 触发 **macOS / Windows / Linux** 三平台构建并发布
+> GitHub Release（mac DMG、win MSI、linux tar.gz），`workflow_dispatch` 可 dry-run。
+> 三个打包器各自带 `doctor.sh` / `verify.sh`（Linux 另有 ELF/ldd）；打包器仓自身仍无 CI。
+> 下面矩阵是目标形态，但已在一个真实插件上跑通（DEVLOG E100）。
 
 ```yaml
 strategy:
@@ -376,7 +378,7 @@ steps:
 | **S1c** ✅ | **插件侧**：`rustomp-gen` 把 `rustomp.toml` → `identity.rs` / `params.rs`（`PluginParams` + `to_dsp()`）/ `plugin_impl.rs`；`--check` 防漂移 | 生成的项目 `cargo build` 成功，cdylib 导出 `clap_entry` + `GetPluginFactory` |
 | **S1d** | **界面**：`[ui]` → `panel.rs`（`PanelSpec`），`gui` feature + 手写 `editor.rs` | 与 legacy 的界面像素一致 |
 | **S2** | `rustomp pack` 驱动 + `scripts/pack/macos/{au,vst3,clap}.sh`（把现有脚本收敛进去） | 本机一条命令产出 AU/VST3/CLAP |
-| **S3** | Windows / Linux 后端 + CI 矩阵 | **Windows ✅**（`rustomp-win-plugin` v0.3.0：VST3/CLAP + MSI，x64 实测）；**Linux ✅**（`rustomp-linux-plugin` v0.1.0：VST3/CLAP + tar.gz，x64 实测）；CI 矩阵未接 |
+| **S3** | Windows / Linux 后端 + CI 矩阵 | **Windows ✅**（v0.3.0：VST3/CLAP + MSI）；**Linux ✅**（v0.1.0：VST3/CLAP + tar.gz）；**三平台 CI ✅**（`sparklin-drive` release workflow，v0.1.9 已发布） |
 | **S4** | `standalone`（三平台） | 双击/命令行能出声 |
 | **S5** | 安装包与签名（DMG ✅ / MSI ✅ / tar.gz ✅ / pkg） | 安装包已三平台可用；签名与公证待做（M4 商业面） |
 
@@ -402,5 +404,6 @@ steps:
 | 2026-10-29 | **Windows 打包落地**：`rustomp-win-plugin v0.3.0` 实现契约 B（VST3/CLAP + 两个范围的 MSI，clap-probe + pluginval 自检），**框架与契约零改动**；§4.0/§4.2/§4.4 改为“当前状态”，补 Windows 的平台事实（无 AU、无 standalone、MSI 单包双范围不可行、arm64 只静态校验） |
 | 2026-10-29 | **macOS DMG 安装包**：`rustomp-mac-plugin --format dmg`（Payload + `安装.command` + README，用户级安装）；§4.4 安装包列改为 DMG ✅ |
 | 2026-10-29 | **Linux 打包落地**：`rustomp-linux-plugin v0.1.0` 实现契约 B（VST3/CLAP + 可复现 tar.gz，clap-probe + pluginval + ELF/ldd 自检）；框架 `build-all.sh` 增加 Linux 分派与 `RUSTOMP_LINUX_PLUGIN`；§4.4 补 Linux 平台事实（无 AU、glibc 基线、`--container`） |
+| 2026-10-29 | **三平台 Release 跑通**：`sparklin-drive v0.1.9` 由 tag 触发 macOS/Windows/Linux 构建并发布（DMG / MSI×2 / tar.gz，未签名 prerelease）；§6 的 CI 矩阵从"目标"变为"已在参考插件落地" |
 | 2026-10-25 | **S1c 完成**：`crates/rustomp-gen`（manifest 校验 + 三份代码 + `--check`）、模板改为无 GUI 外壳、`new-plugin.sh` 自动生成；生成项目可 `cargo build` 并导出 CLAP/VST3 入口。路线表新增 S1d（界面） |
 | 2026-10-23 | **S1a/S1b 完成**（§3.4）：电路侧代码生成（网表 → 装配代码 + 参数化 + `impl Circuit`）、漂移守卫、行为级验收；路线表拆成 S1a/S1b/S1c；新增 §3.6「与外部设计器的接口」（原理图设计器 → 网表、GUI 设计器 → `rustomp.toml`） |

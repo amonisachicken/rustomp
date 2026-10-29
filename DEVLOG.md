@@ -6040,6 +6040,73 @@ tag 打在 HEAD（含“兼容 bash 3.2”那次修复），不是最初的骨�
 
 ---
 
+## E100：三平台 GitHub Release 跑通（sparklin-drive v0.1.9，未签名技术预览，2026-10-29）
+
+**目标**：用参考插件 `sparklin-drive` 验证完整链路 ——
+**一个 tag → 三平台打包器 → GitHub Release（DMG / MSI ×2 / tar.gz）**，全程不手工搬产物。
+
+**结果**：<https://github.com/amonisachicken/sparklin-drive/releases/tag/v0.1.9>
+（`prerelease`，7 个资产，未签名）。
+
+| 资产 | 大小 |
+|---|---|
+| `Sparklin-Drive-0.1.9-macOS.dmg` | 26.3 MB |
+| `Sparklin-Drive-0.1.9-macOS-plugins.zip` | 23.7 MB |
+| `Sparklin-Drive-0.1.9-Windows-x64-Setup-system.msi` | 4.0 MB |
+| `Sparklin-Drive-0.1.9-Windows-x64-Setup-per-user.msi` | 4.0 MB |
+| `Sparklin-Drive-0.1.9-Windows-x64-plugins.zip` | 3.7 MB |
+| `Sparklin-Drive-0.1.9-Linux-x64.tar.gz` | 8.9 MB |
+| `SHA256SUMS.txt` | — |
+
+版本配套：`rustomp v0.1.2` + `rustomp-mac-plugin v0.1.7` + `rustomp-win-plugin v0.3.0`
++ `rustomp-linux-plugin v0.1.0` + `sparklin-drive v0.1.9`（workspace 版本从 0.1.0 直接对齐到 0.1.9）。
+
+### 100.1 流水线
+
+`sparklin-drive/.github/workflows/release.yml`：
+
+```text
+push tag v*  ─┬─ macos (macos-14)    AU/VST3/CLAP + DMG
+              ├─ windows (windows-2022) VST3/CLAP + MSI ×2
+              ├─ linux (ubuntu-22.04)   VST3/CLAP + tar.gz
+              └─ publish（仅 tag / 指定 publish_tag）→ 改名 + SHA256SUMS + gh release create --prerelease
+workflow_dispatch  ── 只构建（dry-run）；传 publish_tag=v0.1.9 可对已有 tag 补发
+```
+
+- Linux 用 **Ubuntu 22.04**（glibc 2.35）而不是 24.04：产物要能在更老的发行版上跑；
+  分发包 README 写基线（`RUSTOMP_BUILD_BASELINE`）。
+- 每个 job 都先跑 `./scripts/build.sh test`（含 `rustomp-gen --check`），再打包。
+- 打包走 `scripts/build.sh` 的**平台分派**（mac/win/linux 三个 `pack.sh`），框架只透传 `ARTIFACT:`。
+
+### 100.2 在 runner 上踩到的坑（都已修）
+
+| 现象 | 真因 | 修法 |
+|---|---|---|
+| Windows `link.exe` 报 `/usr/bin/link: extra operand` | Git Bash 的 `/usr/bin` 里有 GNU `link`，遮住了 MSVC 的 `link.exe` | `ilammy/msvc-dev-cmd` + 把 MSVC bin 放到 PATH 前，并设 `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` |
+| Windows `rustomp-gen --check` 报 7 个生成物全部漂移 | checkout 把 LF 转成了 CRLF，生成器写 LF | 新增 `.gitattributes`：`* text=auto eol=lf`（二进制显式 `binary`） |
+| Linux 缺 `gl.pc` / `x11-xcb.pc` | 只装了 X11 基础库，没装 OpenGL / xcb 开发包 | apt 增加 `libgl1-mesa-dev` `libegl1-mesa-dev` `libx11-xcb-dev` `libxcb1-dev` |
+| Linux `doctor` 说找不到框架、以为插件没 GUI | `build.sh doctor` 没把 `PLUGIN_DIR` / `RUSTOMP_ROOT` 传给打包器的 doctor | `PLUGIN_DIR=… RUSTOMP_ROOT=… "$PACKER/scripts/doctor.sh"` |
+| `publish` 里 `gh release` 报 `not a git repository` | publish job 不 checkout 仓库 | 所有 `gh release` 加 `-R "$GITHUB_REPOSITORY"`；dispatch 增加 `publish_tag` 以便补发 |
+| 发布说明里的反引号被当成命令执行 | 未加引号的 heredoc 会做命令替换（`sudo ./install.sh` 差点被跑） | 说明文本去掉反引号 |
+| 首次 macos-14 排队后失败 | GitHub 免费 arm64 mac runner 容量不足（不是代码） | 重跑；必要时可切 `macos-13`（x64）构建 universal |
+
+### 100.3 验证
+
+- dry-run（`workflow_dispatch`）三平台全绿（约 3 分 20 秒）；
+- tag `v0.1.9` 触发：三个构建 job 全绿、`publish` 全绿；
+- `SHA256SUMS.txt` 的 6 个文件哈希与 GitHub API 返回的 asset digest **全部一致**；
+- Linux tar.gz 解包检查：`VST3/`、`CLAP/`（mono+stereo）、`install.sh`、`SHA256SUMS`、README 基线 `glibc 2.35`。
+
+### 100.4 边界
+
+- **未签名**：macOS 是 ad-hoc（Gatekeeper 会提示）、Windows 无 Authenticode（SmartScreen）、Linux 无签名；
+  release 标为 `prerelease`，面向测试；
+- 未在真实 DAW 里人工验收；验证只到 clap-probe / pluginval；
+- Windows / Linux 只出 x64；arm64 仍待真机；
+- 发布说明固定写在 workflow 里（没有接自动 changelog）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -6325,6 +6392,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 
 | 日期 | 内容 |
 |---|---|
+| 2026-10-29 | **三平台 GitHub Release 跑通**（E100）：`sparklin-drive v0.1.9` → macOS DMG / Windows MSI ×2 / Linux tar.gz（未签名 prerelease）；release workflow 用平台分派，修掉 Windows GNU `link` 遮挡、CRLF 漂移、Linux GL/xcb 依赖、`gh -R` 等 runner 坑 |
 | 2026-10-29 | **发布 rustomp v0.1.2**：三平台分派（`build-all.sh`）、`[requires]` 模板/导出/校验、契约测试扩到 5 步；DSP/生成物字节不变；配套 mac `v0.1.7`、win `v0.3.0`、linux `v0.1.0` |
 | 2026-10-29 | **Linux 打包工具落地**（E99）：`rustomp-linux-plugin v0.1.0` 建仓并发布（VST3/CLAP + 可复现 tar.gz，clap-probe/pluginval/ELF 自检）；框架 `build-all.sh` 增加 Linux 分派与 `RUSTOMP_LINUX_PLUGIN`，契约测试用假 `uname` 覆盖三平台；文档从“未开工”改为已落地并标注 arm64/容器/GUI/真实宿主/CI 待验 |
 | 2026-10-29 | **macOS DMG 安装包**（E98）：`rustomp-mac-plugin --format dmg` 产出 `<Name> Installer.dmg`（`Payload/{Components,VST3,CLAP}` + `安装.command` + `README.txt`，用户级安装）；产物清单由 `build-variant.sh` 写、`build-dmg.sh` 收集，`hdiutil` 打 UDZO；框架侧仅文档对齐（`--format` 透传、`ARTIFACT:` 不变） |
