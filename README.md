@@ -152,6 +152,7 @@ git clone git@github.com:amonisachicken/rustomp-mac-plugin.git
 
 # 2) 构建 + 安装一个插件项目（插件住在**框架之外**）
 ./scripts/build-all.sh ../my-effect            # → AU/VST3/CLAP，装到 ~/Library/Audio/Plug-Ins/
+./scripts/build-all.sh ../my-effect --format dmg --no-install   # 额外产出 <Name> Installer.dmg
 ```
 
 `./scripts/build-all.sh` 是**统一入口**：按当前平台把插件目录交给对应的打包工具
@@ -367,7 +368,7 @@ rustomp（框架 + 平台契约）
 |---|---|---|
 | 格式 | AUv2 / VST3 / CLAP | VST3 / CLAP（**无 AU**） |
 | 架构 | universal（x86_64 + arm64） | x64 / arm64（各自独立产物，无 universal） |
-| 安装包 | `pkg`（未做） | MSI，**系统级 / 用户级两个包**（`--format msi`） |
+| 安装包 | **DMG**（`--format dmg`，用户级拖拽/双击安装）；`pkg` 未做 | MSI，**系统级 / 用户级两个包**（`--format msi`） |
 | 签名 | ad-hoc（对外分发待做） | 未做（Authenticode） |
 | 宿主验证 | `auval` + `au_smoke` + Logic | `clap-probe` + `pluginval` + PE 架构核对（arm64 仅静态校验） |
 
@@ -514,7 +515,8 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
       VST3/CLAP（x64/arm64）+ 系统级/用户级 MSI，clap-probe + pluginval 自检，本机 DAW 实测出声
 - [ ] Linux 打包工具（`rustomp-linux-plugin`，独立仓库，ADR-015）
 - [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
-- [ ] 电位器 A/C taper；预设与状态管理；安装包（pkg）+ 签名公证
+- [x] **macOS DMG 安装包** ✅ `rustomp-mac-plugin --format dmg`（用户级：三种插件 + 双击安装脚本）
+- [ ] 电位器 A/C taper；预设与状态管理；`pkg` 安装包 + 签名公证
 - [ ] 更多示例电路（BJT 前级 / 光电压缩 / BBD）
 
 ---

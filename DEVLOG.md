@@ -5920,6 +5920,51 @@ CPU（2× 过采样，Logic 未运行时的干净测量）：锗 4.8–6.1 µs/�
 
 ---
 
+## E98：macOS 打包器补 DMG 安装包（2026-10-29）
+
+**背景**：Windows 仓已有 `--format msi`（系统级 / 用户级两个包）。macOS 侧此前只有
+“构建 + 拷贝到用户插件目录”，没有可分发的单文件；本轮效仿 MSI，补 `--format dmg`。
+实现在 `rustomp-mac-plugin`，框架侧只需文档对齐（分派与 `ARTIFACT:` 契约不变）。
+
+### 98.1 DMG 的形态（为什么不是“拖进 Applications”）
+
+```text
+<Name> Installer.dmg
+  Payload/Components/<Name> Mono|Stereo.component    ← AUv2
+  Payload/VST3/<Name> Mono|Stereo.vst3               ← VST3
+  Payload/CLAP/<Name> Mono|Stereo.clap               ← CLAP
+  安装.command                                        ← 双击复制到 ~/Library/Audio/Plug-Ins/
+  README.txt                                          ← 路径、Logic 缓存清法、ad-hoc 签名说明
+```
+
+- 安装范围固定为**当前用户**（`$HOME`），不需要管理员；系统级 `/Library/...` 不做（留给 `pkg`）；
+- `--format` 同时决定 `ARTIFACT:` 列表与 **DMG payload**：`--format dmg` 单写 = 三种全放，
+  `--format au dmg` = 只放 AU；构建与安装仍始终是三种（与 macOS 构建链一致）；
+- DMG 只**收集**已构建产物，不重新编译：`build-variant.sh` 写
+  `build/artifacts-<variant>.txt`（绝对路径），`build-dmg.sh` 读它；
+- `hdiutil create -format UDZO -fs HFS+`；`.command` 的可执行位在镜像里保留；
+- **不等于签名/公证**：DMG 与插件都还是 ad-hoc 签名，首次打开可能要在系统设置里放行。
+
+### 98.2 验证（假产物，不触发真实编译）
+
+| 检查 | 结果 |
+|---|---|
+| `build-dmg.sh`（mono+stereo，三格式） | 生成 24 KB UDZO；stdout 只有一行 DMG 路径 |
+| 挂载内容 | `Payload/{Components,VST3,CLAP}` 各 2 个 + `安装.command`（可执行）+ `README.txt` |
+| payload 过滤 `--formats au` | 只有 `Payload/Components/…` |
+| `bash -n 安装.command` / `hdiutil imageinfo` | 通过 |
+| `安装.command`（假 `HOME` + `killall` stub） | 三格式都复制到 `~/Library/Audio/Plug-Ins/{Components,VST3,CLAP}` |
+| `RUSTOMP_FORMATS=dmg ./scripts/doctor.sh --quiet` | rc=0（hdiutil 检查生效） |
+| 未验证 | 真实插件的完整 `--format dmg`（需重编译）；真实宿主里从 DMG 双击安装（脚本逻辑用假 HOME 验过） |
+
+### 98.3 边界
+
+- 没有版本号写进文件名；不做 Developer ID 签名/公证；不做系统级安装与卸载；
+- 同一台机器同时装旧版/新版（同一插件身份）仍会让宿主扫到重复插件——与安装方式无关；
+- 框架侧零代码改动：`build-all.sh` 原样透传 `--format dmg`，`ARTIFACT:` 行照旧。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -6205,6 +6250,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 
 | 日期 | 内容 |
 |---|---|
+| 2026-10-29 | **macOS DMG 安装包**（E98）：`rustomp-mac-plugin --format dmg` 产出 `<Name> Installer.dmg`（`Payload/{Components,VST3,CLAP}` + `安装.command` + `README.txt`，用户级安装）；产物清单由 `build-variant.sh` 写、`build-dmg.sh` 收集，`hdiutil` 打 UDZO；框架侧仅文档对齐（`--format` 透传、`ARTIFACT:` 不变） |
 | 2026-10-29 | **框架侧对齐两个打包器**（E97）：`build-all.sh` 按平台分派（mac/win，`RUSTOMP_PACKER` 可覆盖）；`template/` 新增 `[requires]`，`plugin_meta.py` 导出 `REQUIRES_*` 且 `--get/--shell` 容忍缺省字段；`rustomp-gen` 校验 `framework` 版本边界；契约测试扩到 5 步（含 `--arch` 透传、mac 旧变量回退、模板 requires）；顺手修掉 `verify-isolation.sh` 里会让契约测试变红的一行 |
 | 2026-10-29 | **Windows 打包工具落地**（E96）：`rustomp-win-plugin v0.3.0` —— VST3/CLAP（x64/arm64）+ 系统级/用户级两个 MSI + clap-probe/pluginval 自检，真实 Windows 机器 DAW 出声；**框架与契约零改动**（契约 A/B 首次被第二个平台独立消费）。文档同步：README 双平台状态与 Windows 快速开始、`ecosystem.md` 仓库地图/进度/风险、`declarative-build.md` §4.0/§4.2/§4.4 改为当前状态 |
 | 2026-10-28 | **大跳变内部子步进 + 失败恢复**（E95）：`step_fixed` 在固定节点单拍变化 >0.1 V 时拆 2–8 个子步；子步失败按 k 重试，仍失败做 DC 恢复，连续 8 拍强制 reset。正常音频走原快速路径（逐位不变）；新增 `last_substeps/last_accept/last_recoveries` 诊断。实测 0.2 V 阶跃 substeps=2、0.5 V 方波零恢复；release 全仓测试全绿 |

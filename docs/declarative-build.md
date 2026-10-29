@@ -274,7 +274,7 @@ requires  = ["cmake", "clap-wrapper", "AudioUnitSDK"]
 
 | 平台 | au | vst3 | clap | standalone | 安装包 |
 |---|---|---|---|---|---|
-| **macOS** | ✅（clap-wrapper） | ✅（nih-plug） | ✅（nih-plug） | ⬜ | ⬜ `pkg` |
+| **macOS** | ✅（clap-wrapper） | ✅（nih-plug） | ✅（nih-plug） | ⬜ | ✅ **DMG**（用户级）；`pkg` ⬜ |
 | **Windows** | ❌（无 AU） | ✅（`rustomp-win-plugin` v0.3.0） | ✅（同上） | ⬜ 不在范围 | ✅ **MSI ×2**（系统级 / 用户级） |
 | **Linux** | ❌（无 AU） | ⬜ 外部工具 | ⬜ 外部工具 | ⬜ 外部工具 | ⬜ 外部工具 |
 | `au3` | ⬜ 需完整 Xcode | — | — | — | — |
@@ -373,7 +373,7 @@ steps:
 | **S2** | `rustomp pack` 驱动 + `scripts/pack/macos/{au,vst3,clap}.sh`（把现有脚本收敛进去） | 本机一条命令产出 AU/VST3/CLAP |
 | **S3** | Windows / Linux 后端 + CI 矩阵 | **Windows ✅**（`rustomp-win-plugin` v0.3.0：VST3/CLAP + MSI，x64 实测）；Linux 未做；CI 矩阵未接 |
 | **S4** | `standalone`（三平台） | 双击/命令行能出声 |
-| **S5** | 安装包与签名（pkg / MSI / tar.gz） | M4 商业面 |
+| **S5** | 安装包与签名（DMG ✅ / MSI ✅ / pkg / tar.gz） | 安装包已可用；签名与公证待做（M4 商业面） |
 
 ---
 

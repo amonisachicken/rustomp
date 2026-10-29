@@ -67,7 +67,7 @@
 ### 契约 B：打包工具的命令行与产物
 
 ```bash
-<packer> <plugin_dir> --variant mono|stereo|dual --format au|vst3|clap|msi [--arch x64|arm64|both] [--install|--no-install]
+<packer> <plugin_dir> --variant mono|stereo|dual --format au|vst3|clap|dmg|msi [--arch x64|arm64|both] [--install|--no-install]
 # 成功：stdout 逐行 "ARTIFACT: /abs/path"（可被脚本抓取）
 # 失败：非 0 退出 + 人话原因（缺 Xcode CLT / 缺 MSVC / 缺 rust target / 素材缺失…）
 ```
@@ -76,7 +76,7 @@
 
 | 实现 | 支持的 `--format` | 默认安装位置 |
 |---|---|---|
-| `rustomp-mac-plugin` | `au` / `vst3` / `clap` | `~/Library/Audio/Plug-Ins/` |
+| `rustomp-mac-plugin` | `au` / `vst3` / `clap` / `dmg`（用户级安装包） | `~/Library/Audio/Plug-Ins/` |
 | `rustomp-win-plugin` | `vst3` / `clap` / `msi`（+ `--arch x64` / `arm64` / `both`） | `%LOCALAPPDATA%\Programs\Common\` |
 
 **框架侧永远不知道平台的细节**（clap-wrapper / codesign / CMake），只知道这一行 `ARTIFACT:`。
