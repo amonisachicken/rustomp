@@ -184,7 +184,7 @@ E45 里还有一条"直流工作点被压摆率限制污染、开场凭空多出
 
 ```text
 rustomp（框架 + 平台契约）
-   ├── rustomp-mac-plugin     macOS：AU / VST3 / CLAP（universal）        ✅ v0.1.6
+   ├── rustomp-mac-plugin     macOS：AU / VST3 / CLAP（universal）        ✅ v0.1.7
    ├── rustomp-win-plugin     Windows：VST3 / CLAP（x64/arm64）+ MSI     ✅ v0.3.0
    └── rustomp-linux-plugin   Linux：VST3 / CLAP + tar.gz                ✅ v0.1.0
 ```

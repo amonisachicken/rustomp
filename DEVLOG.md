@@ -6017,6 +6017,29 @@ tag 打在 HEAD（含“兼容 bash 3.2”那次修复），不是最初的骨�
 
 ---
 
+## 发布 v0.1.2（2026-10-29）
+
+三平台打包接入后的框架版本。相对 `v0.1.1`：
+
+**新增**
+- `scripts/build-all.sh` 按平台分派：macOS / Windows / Linux（`RUSTOMP_PACKER` 可覆盖）；
+- `template/rustomp.toml` 带 `[requires] framework/packer`；`rustomp-gen` 生成前校验
+  `framework` 版本边界；`plugin_meta.py` 导出 `REQUIRES_*`、`--get` 容忍缺省键、
+  `[au]/[build]` 可缺省；
+- 契约测试扩到 5 步：参数/`--arch`/`RUSTOMP_ROOT` 透传、三平台环境变量回退、
+  三平台缺包指引、未知平台报错、模板 `[requires]`、框架无平台词。
+
+**兼容性**
+- `Circuit` / `Netlist` / `Engine` 与生成物字节均未变（`--check` 仍通过）；
+- 插件不写 `[requires]` 仍可生成/打包。
+
+**验证**
+- `cargo test --workspace --release` 全绿；`./tests/packer_contract.sh` 5/5；
+  `./scripts/verify.sh --only fast --no-fmt` 全绿；
+- 三平台打包器：mac `v0.1.7`（含 DMG）、win `v0.3.0`、linux `v0.1.0`。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -6302,6 +6325,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 
 | 日期 | 内容 |
 |---|---|
+| 2026-10-29 | **发布 rustomp v0.1.2**：三平台分派（`build-all.sh`）、`[requires]` 模板/导出/校验、契约测试扩到 5 步；DSP/生成物字节不变；配套 mac `v0.1.7`、win `v0.3.0`、linux `v0.1.0` |
 | 2026-10-29 | **Linux 打包工具落地**（E99）：`rustomp-linux-plugin v0.1.0` 建仓并发布（VST3/CLAP + 可复现 tar.gz，clap-probe/pluginval/ELF 自检）；框架 `build-all.sh` 增加 Linux 分派与 `RUSTOMP_LINUX_PLUGIN`，契约测试用假 `uname` 覆盖三平台；文档从“未开工”改为已落地并标注 arm64/容器/GUI/真实宿主/CI 待验 |
 | 2026-10-29 | **macOS DMG 安装包**（E98）：`rustomp-mac-plugin --format dmg` 产出 `<Name> Installer.dmg`（`Payload/{Components,VST3,CLAP}` + `安装.command` + `README.txt`，用户级安装）；产物清单由 `build-variant.sh` 写、`build-dmg.sh` 收集，`hdiutil` 打 UDZO；框架侧仅文档对齐（`--format` 透传、`ARTIFACT:` 不变） |
 | 2026-10-29 | **框架侧对齐两个打包器**（E97）：`build-all.sh` 按平台分派（mac/win，`RUSTOMP_PACKER` 可覆盖）；`template/` 新增 `[requires]`，`plugin_meta.py` 导出 `REQUIRES_*` 且 `--get/--shell` 容忍缺省字段；`rustomp-gen` 校验 `framework` 版本边界；契约测试扩到 5 步（含 `--arch` 透传、mac 旧变量回退、模板 requires）；顺手修掉 `verify-isolation.sh` 里会让契约测试变红的一行 |

@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "rustomp-dsp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rustfft",
  "rustomp-oracle",
@@ -1679,7 +1679,7 @@ dependencies = [
 
 [[package]]
 name = "rustomp-gen"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "toml",
@@ -1687,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "rustomp-gui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "nih_plug_egui",
  "png",
@@ -1695,7 +1695,7 @@ dependencies = [
 
 [[package]]
 name = "rustomp-import"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "rustomp-oracle"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "rustversion"
