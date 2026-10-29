@@ -8,6 +8,7 @@
 # 平台分派：
 #   macOS            → rustomp-mac-plugin/pack.sh
 #   Windows（MSYS）  → rustomp-win-plugin/pack.sh
+#   Linux            → rustomp-linux-plugin/pack.sh
 #   其他平台         → 明确报错；可用 RUSTOMP_PACKER 指定任意实现契约 B 的脚本
 #
 # 为什么：打包与宿主兼容是平台专属的，放进来会让框架被迫知道各平台的细节
@@ -17,6 +18,7 @@
 #   RUSTOMP_PACKER       任意实现契约 B 的 pack.sh（优先级最高）
 #   RUSTOMP_MAC_PLUGIN   macOS 工具目录（默认 <框架同级>/rustomp-mac-plugin）
 #   RUSTOMP_WIN_PLUGIN   Windows 工具目录（默认 <框架同级>/rustomp-win-plugin）
+#   RUSTOMP_LINUX_PLUGIN Linux 工具目录（默认 <框架同级>/rustomp-linux-plugin）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,8 +49,18 @@ if [ -z "$PACKER" ]; then
                 [ -n "$PACKER" ] || PACKER="$PARENT/rustomp-win-plugin"
             fi
             ;;
+        Linux)
+            if [ -n "${RUSTOMP_LINUX_PLUGIN:-}" ]; then
+                PACKER="$RUSTOMP_LINUX_PLUGIN"   # 显式指定：不再回退到其它位置
+            else
+                for c in "$PARENT/rustomp-linux-plugin"; do
+                    if [ -x "$c/pack.sh" ]; then PACKER="$c"; break; fi
+                done
+                [ -n "$PACKER" ] || PACKER="$PARENT/rustomp-linux-plugin"
+            fi
+            ;;
         *)
-            echo "✗ 暂不支持这个平台（$PLATFORM）：框架目前只提供 macOS / Windows 的打包工具。" >&2
+            echo "✗ 暂不支持这个平台（${PLATFORM}）：框架目前提供 macOS / Windows / Linux 的打包工具。" >&2
             echo "  新平台 = 写一个实现契约 B 的 pack.sh，然后用它显式指定：" >&2
             echo "    RUSTOMP_PACKER=/path/to/pack.sh $0 <插件目录>" >&2
             echo "  契约见 docs/ecosystem.md §2（stdout 只出 ARTIFACT: 行）。" >&2
@@ -78,6 +90,21 @@ EOF
   git clone git@github.com:amonisachicken/rustomp-mac-plugin.git
   ./rustomp-mac-plugin/scripts/fetch-third-party.sh      # 首次：拉打包所需的第三方源码
   export RUSTOMP_MAC_PLUGIN="$PARENT/rustomp-mac-plugin"  # 放在同级目录时可略过
+
+然后重新运行：
+  ./scripts/build-all.sh [插件目录]
+EOF
+            ;;
+        Linux)
+            cat >&2 <<EOF
+✗ 找不到 Linux 打包工具（$PACKER/pack.sh）
+
+需要 bash、rustup（*-unknown-linux-gnu）、g++、Python ≥3.11、binutils/tar/gzip。装一次即可：
+
+  cd "$PARENT"
+  git clone git@github.com:amonisachicken/rustomp-linux-plugin.git
+  ./rustomp-linux-plugin/scripts/doctor.sh                # 体检：缺什么、怎么装
+  export RUSTOMP_LINUX_PLUGIN="$PARENT/rustomp-linux-plugin"  # 放在同级目录时可略过
 
 然后重新运行：
   ./scripts/build-all.sh [插件目录]

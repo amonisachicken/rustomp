@@ -77,27 +77,45 @@ grep -qx "RUSTOMP_ROOT=$ROOT" "$TMP/fake-packer/env.txt" \
     || fail "RUSTOMP_ROOT 没有导出给打包工具：$(cat "$TMP/fake-packer/env.txt")"
 ok "RUSTOMP_ROOT 已导出"
 
-echo "== 2/5 macOS 的 RUSTOMP_MAC_PLUGIN 仍然有效（向后兼容）"
-case "$(uname -s)" in
-    Darwin)
-        OUT="$(RUSTOMP_MAC_PLUGIN="$TMP/fake-packer" "$ROOT/scripts/build-all.sh" \
-                "$TMP/fake-plugin" 2>&1)" \
-            || fail "RUSTOMP_MAC_PLUGIN 回退失效：$OUT"
-        grep -q '^ARTIFACT: ' <<<"$OUT" || fail "RUSTOMP_MAC_PLUGIN 回退没有产物：$OUT"
-        ok "RUSTOMP_MAC_PLUGIN 仍可指定打包工具"
-        ;;
-    *)
-        echo "  （非 macOS，跳过）"
-        ;;
-esac
+# 假 uname：让三个平台分派在任何开发机上都能被测到（不依赖真机）
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/uname" <<'UNAME_EOF'
+#!/bin/sh
+# 只被 build-all.sh 的 `uname -s` 调用；FAKE_UNAME 没设时退回真实 uname
+if [ -n "${FAKE_UNAME:-}" ]; then echo "$FAKE_UNAME"; else exec /usr/bin/uname "$@"; fi
+UNAME_EOF
+chmod +x "$TMP/bin/uname"
+
+echo "== 2/5 三个平台的环境变量回退仍然有效"
+test_env_fallback() {
+    local plat="$1" var="$2" label="$3" out
+    out="$(PATH="$TMP/bin:$PATH" FAKE_UNAME="$plat" env "$var=$TMP/fake-packer" \
+            "$ROOT/scripts/build-all.sh" "$TMP/fake-plugin" 2>&1)" \
+        || fail "$var 回退失效（${label}）：$out"
+    grep -q '^ARTIFACT: ' <<<"$out" || fail "$var 回退没有产物（${label}）：$out"
+    ok "$var 可指定打包工具（${label}）"
+}
+test_env_fallback Darwin RUSTOMP_MAC_PLUGIN macOS
+test_env_fallback Linux RUSTOMP_LINUX_PLUGIN Linux
+test_env_fallback MINGW64_NT-10.0 RUSTOMP_WIN_PLUGIN Windows
 
 echo "== 3/5 找不到打包工具时给出可执行的提示"
-# 不给 RUSTOMP_PACKER：让平台分支给 clone 指引（两个平台都测）
-OUT="$(RUSTOMP_MAC_PLUGIN="$TMP/nope" RUSTOMP_WIN_PLUGIN="$TMP/nope" \
-    "$ROOT/scripts/build-all.sh" "$TMP/fake-plugin" 2>&1 || true)"
-grep -q "pack.sh" <<<"$OUT" || fail "缺 packer 时没有说明缺什么：$OUT"
-grep -q "git clone" <<<"$OUT" || fail "缺 packer 时没有给出 clone 命令：$OUT"
-ok "缺 packer → 明确指引"
+test_missing_packer() {
+    local plat="$1" var="$2" repo="$3" out
+    out="$(PATH="$TMP/bin:$PATH" FAKE_UNAME="$plat" env "$var=$TMP/nope" \
+            "$ROOT/scripts/build-all.sh" "$TMP/fake-plugin" 2>&1 || true)"
+    grep -q "pack.sh" <<<"$out" || fail "缺 packer 时没有说明缺什么（${plat}）：$out"
+    grep -q "git clone" <<<"$out" || fail "缺 packer 时没有给出 clone 命令（${plat}）：$out"
+    grep -q "$repo" <<<"$out" || fail "缺 packer 时没指向 ${repo}（${plat}）：$out"
+    ok "缺 packer → 明确指引（${plat}）"
+}
+test_missing_packer Darwin RUSTOMP_MAC_PLUGIN rustomp-mac-plugin
+test_missing_packer Linux RUSTOMP_LINUX_PLUGIN rustomp-linux-plugin
+test_missing_packer MINGW64_NT-10.0 RUSTOMP_WIN_PLUGIN rustomp-win-plugin
+
+OUT="$(PATH="$TMP/bin:$PATH" FAKE_UNAME=FreeBSD "$ROOT/scripts/build-all.sh" "$TMP/fake-plugin" 2>&1 || true)"
+grep -q "暂不支持这个平台" <<<"$OUT" || fail "未知平台没有明确报错：$OUT"
+ok "未知平台 → 明确报错"
 
 # 显式指定了一个不存在的路径：要说清是 RUSTOMP_PACKER 的问题，而不是乱提示
 OUT="$(RUSTOMP_PACKER="$TMP/nope" "$ROOT/scripts/build-all.sh" "$TMP/fake-plugin" 2>&1 || true)"

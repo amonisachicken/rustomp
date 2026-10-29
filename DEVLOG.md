@@ -5965,6 +5965,58 @@ CPU（2× 过采样，Logic 未运行时的干净测量）：锗 4.8–6.1 µs/�
 
 ---
 
+## E99：Linux 打包工具落地（2026-10-29）
+
+**背景**：三平台打包的最后一块。Linux 打包器在 Linux 机器上开发完成（VST3/CLAP + 可复现
+tar.gz），仓库同步到开发机后建了 GitHub 仓并发布 `v0.1.0`；框架侧补上 Linux 分派，
+生态系统文档从“未开工”改为“已落地”。
+
+### 99.1 交付（`rustomp-linux-plugin` v0.1.0）
+
+| 项 | 状态 |
+|---|---|
+| VST3 目录包（`Contents/x86_64-linux/*.so`） | ✅ 模板插件实测 |
+| CLAP 单文件（ELF 共享库） | ✅ 模板插件实测 |
+| 可复现 tar.gz（`install.sh` + `SHA256SUMS` + glibc 基线） | ✅ 同产物两次打包 sha256 一致 |
+| 宿主侧自检 | ✅ clap-probe（mono=1ch / stereo=2ch）+ pluginval strictness 5 + ELF/ldd |
+| arm64（`--arch arm64`） | ⚠ 交叉参数与静态校验就绪；缺交叉工具链，未实测 |
+| 容器构建（`--container`，debian:12） | ⚠ 脚本/镜像就绪；本机 docker 无权限，未跑通 |
+| GUI 插件（`gui = true`） | ⚠ 依赖检查已实现；未用带界面的插件实测 |
+| 真实宿主出声 | ❌ Linux 机器上没有 DAW；pluginval 通过 ≠ 听过 |
+| CI | ❌ 未接（入口已按 `RUSTOMP_REQUIRE_VERIFY=1` 设计） |
+
+GitHub：<https://github.com/amonisachicken/rustomp-linux-plugin>（public，`master`，tag `v0.1.0`）。
+tag 打在 HEAD（含“兼容 bash 3.2”那次修复），不是最初的骨架提交。
+
+### 99.2 框架侧改了什么
+
+| 位置 | 改动 |
+|---|---|
+| `scripts/build-all.sh` | 增加 `Linux` 分支（同级 `rustomp-linux-plugin`）；`RUSTOMP_LINUX_PLUGIN` 可显式指定；缺工具时给 Linux 的 clone / doctor 指引；未知平台报错文案改为“三平台” |
+| `tests/packer_contract.sh` | 用**假 `uname`** 让 macOS / Windows / Linux 三个分派分支在任何开发机上都能测；新增“未知平台必须报错”；修掉全角标点紧跟变量的 `unbound variable`（旧文案里的 `$PLATFORM）` 只在未知平台分支触发，以前从没测到） |
+| `README.md` | 状态表 / 快速开始（新增 Linux 段）/ 平台矩阵 → 三平台；补 Linux 的 glibc 与 `--container` 事实 |
+| `docs/ecosystem.md` | 仓库地图 / 职责表 / 契约 B 的 `targz` / 进度表第 5 步 / Linux 风险 / 版本组合 |
+| `docs/declarative-build.md` | §4.0 / §4.2 / §4.4（Linux ✅）/ §6 / §7 / §8 S3、S5 / §10 |
+| `docs/pre-gui-checklist.md` | P3 改为“三平台打包已可用，CI 未接” |
+
+### 99.3 验证
+
+| 检查 | 结果 |
+|---|---|
+| Linux 仓 `tests/self-test.sh`（在 macOS 上跑快速部分） | 5/5 通过（ELF 检查按设计跳过） |
+| `rustomp/tests/packer_contract.sh` | 5/5 通过：三平台环境变量回退、三平台缺包指引、未知平台报错、`--arch`/`RUSTOMP_ROOT` 透传、契约 A 模板 |
+| `bash -n` 所有改过的脚本 | 通过 |
+| 未做 | 开发机上没有 Linux 工具链/docker/DAW：真实构建与 `--format targz` 以 Linux 机器上的实测为准（见该仓 DEVLOG E2–E5） |
+
+### 99.4 边界与教训
+
+- Linux 产物与**构建机 glibc 绑定**；分发包 README 明写基线，要老发行版兼容就用 `--container`；
+- arm64 / 容器 / GUI / 真实宿主 / CI 都还没有“跑过”的证据，文档里逐项标 ⚠，不写成 ✅；
+- **教训**：平台分派这种代码，测试不要依赖当前机器 —— 用假 `uname` 才能把三个分支都覆盖；
+  这次就是补测试时才发现未知平台分支里藏着一个 bash 3.2 的全角标点 unbound 错误。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -6250,6 +6302,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 
 | 日期 | 内容 |
 |---|---|
+| 2026-10-29 | **Linux 打包工具落地**（E99）：`rustomp-linux-plugin v0.1.0` 建仓并发布（VST3/CLAP + 可复现 tar.gz，clap-probe/pluginval/ELF 自检）；框架 `build-all.sh` 增加 Linux 分派与 `RUSTOMP_LINUX_PLUGIN`，契约测试用假 `uname` 覆盖三平台；文档从“未开工”改为已落地并标注 arm64/容器/GUI/真实宿主/CI 待验 |
 | 2026-10-29 | **macOS DMG 安装包**（E98）：`rustomp-mac-plugin --format dmg` 产出 `<Name> Installer.dmg`（`Payload/{Components,VST3,CLAP}` + `安装.command` + `README.txt`，用户级安装）；产物清单由 `build-variant.sh` 写、`build-dmg.sh` 收集，`hdiutil` 打 UDZO；框架侧仅文档对齐（`--format` 透传、`ARTIFACT:` 不变） |
 | 2026-10-29 | **框架侧对齐两个打包器**（E97）：`build-all.sh` 按平台分派（mac/win，`RUSTOMP_PACKER` 可覆盖）；`template/` 新增 `[requires]`，`plugin_meta.py` 导出 `REQUIRES_*` 且 `--get/--shell` 容忍缺省字段；`rustomp-gen` 校验 `framework` 版本边界；契约测试扩到 5 步（含 `--arch` 透传、mac 旧变量回退、模板 requires）；顺手修掉 `verify-isolation.sh` 里会让契约测试变红的一行 |
 | 2026-10-29 | **Windows 打包工具落地**（E96）：`rustomp-win-plugin v0.3.0` —— VST3/CLAP（x64/arm64）+ 系统级/用户级两个 MSI + clap-probe/pluginval 自检，真实 Windows 机器 DAW 出声；**框架与契约零改动**（契约 A/B 首次被第二个平台独立消费）。文档同步：README 双平台状态与 Windows 快速开始、`ecosystem.md` 仓库地图/进度/风险、`declarative-build.md` §4.0/§4.2/§4.4 改为当前状态 |

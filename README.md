@@ -15,7 +15,7 @@
 | **代码生成** | ✅ **网表 → 可运行电路**（S1a/S1b）+ **`rustomp.toml` → 插件外壳**（S1c，含参数表/身份/导出宏） |
 | 示例插件 | ✅ `Sparklin Drive` 已完整交付并拆为独立仓库（`sparklin-drive-legacy`） |
 | **进 GUI 之前** | ✅ 清单全过（`docs/pre-gui-checklist.md`）：网表 → 电路 → 插件 → 安装 → AB 无可感差别 |
-| **平台策略** | **macOS + Windows 双平台可用**：macOS（AU/VST3/CLAP）走 `rustomp-mac-plugin`；Windows（VST3/CLAP + MSI）走 `rustomp-win-plugin` v0.3.0；Linux 待做（ADR-015，见下） |
+| **平台策略** | **macOS / Windows / Linux 三平台可用**（ADR-015）：macOS（AU/VST3/CLAP + DMG）、Windows（VST3/CLAP + MSI）、Linux（VST3/CLAP + 可复现 tar.gz），各走独立打包仓 |
 | 下一步 | **GUI 设计器**（`rustomp-box-designer`）；器件动态档（`Cje/Cjc`、`Cjo/tt`） |
 
 > **闭环已打通**：面包板/原理图 → SPICE 网表 → 与 ngspice 对拍的 DSP → 插件。
@@ -123,7 +123,7 @@ patches/                第三方补丁（clap-wrapper 的宿主兼容修复）
 scripts/                构建、网表生成、基线仿真、自检、缓存清理
 experiments/            归档的一次性验证代码（不参与构建，见其 README）
 .github/workflows/      CI：macOS 矩阵（cargo test --workspace + verify.sh 的 ngspice 对拍）
-                        ↑ Windows 的打包与 CI 在独立仓库 rustomp-win-plugin（见「平台策略」）
+                        ↑ 各平台打包在独立仓库（mac / win / linux，见「平台策略」）
 DEVLOG.md               开发日志：每个决策、实验数据、踩过的坑（追加时请"读全文→写临时文件→替换"）
 ```
 
@@ -132,8 +132,10 @@ DEVLOG.md               开发日志：每个决策、实验数据、踩过的�
 ## 快速开始
 
 本仓**只做框架**：器件 / MNA / 实时路径 / 代码生成 / 面板契约。
-**打包在独立仓库**：[rustomp-mac-plugin](https://github.com/amonisachicken/rustomp-mac-plugin)（macOS）与
-[rustomp-win-plugin](https://github.com/amonisachicken/rustomp-win-plugin)（Windows），契约见 `docs/ecosystem.md`。
+**打包在独立仓库**：[rustomp-mac-plugin](https://github.com/amonisachicken/rustomp-mac-plugin)（macOS）、
+[rustomp-win-plugin](https://github.com/amonisachicken/rustomp-win-plugin)（Windows）、
+[rustomp-linux-plugin](https://github.com/amonisachicken/rustomp-linux-plugin)（Linux），
+契约见 `docs/ecosystem.md`。
 
 ```bash
 # 0) 让框架能编译（插件项目不在本仓，见 DEVLOG E70）
@@ -156,7 +158,7 @@ git clone git@github.com:amonisachicken/rustomp-mac-plugin.git
 ```
 
 `./scripts/build-all.sh` 是**统一入口**：按当前平台把插件目录交给对应的打包工具
-（macOS → `rustomp-mac-plugin`，Windows → `rustomp-win-plugin`），只认 `ARTIFACT: <路径>`
+（macOS / Windows / Linux 三个仓），只认 `ARTIFACT: <路径>`
 这一行输出（契约 B）。找不到打包工具时它会打印 clone 命令，绝不会自己编；
 也可用 `RUSTOMP_PACKER=/path/to/pack.sh` 显式指定。
 
@@ -186,9 +188,30 @@ VS Build Tools 2022 的 C++ 工作负载、Python ≥ 3.11。逐项安装命令�
 MSI 按安装范围固定为**两个包**（单包双范围在 Windows Installer 里不可靠，见该仓 W-010），
 同一台机器只装其中一种。
 
+### Linux
+
+前置：x86_64 Linux、bash、rustup（**`*-unknown-linux-gnu`**）、g++ / build-essential、
+Python ≥ 3.11、binutils + tar + gzip；带界面的插件另需 X11 开发库。
+逐项安装命令见 [rustomp-linux-plugin README](https://github.com/amonisachicken/rustomp-linux-plugin) §4。
+
+```bash
+# 目录约定：框架、打包工具、插件项目都是**同级**
+#   some-dir/{rustomp, rustomp-linux-plugin, my-effect}
+./rustomp-linux-plugin/scripts/doctor.sh          # 缺什么、怎么装
+./rustomp-linux-plugin/scripts/fetch-third-party.sh --all   # CLAP SDK（探针）+ pluginval
+./scripts/build-all.sh ../my-effect               # → VST3 + CLAP，装到 ~/.vst3、~/.clap
+./scripts/build-all.sh ../my-effect --format targz --no-install   # 可复现 tar.gz 分发包
+./scripts/build-all.sh ../my-effect --format targz --container    # debian:12 基线（需要 docker）
+```
+
+平台事实：**Linux 没有 AU**；没有 universal（x64 / arm64 各自独立产物）；分发包是 **tar.gz**
+（`install.sh` 支持 user / system / prefix / uninstall / dry-run，`--system-install` 需要 root）；
+产物的 **glibc 基线 = 构建机**，要兼容老发行版就用 `--container`（默认 debian:12 / glibc 2.36）；
+`--format` 写 `targz`（`tar.gz` 会明确提示正确写法）。
+
 > **插件项目必须住在本仓之外**：`cargo-nih-plug` 会向上找**最顶层**的 `Cargo.toml` 当 workspace 根，
 > 插件嵌在 `rustomp/plugins/` 里会被拉到框架根 → `cannot specify features for packages outside of workspace`。
-> Windows 侧同理，插件必须与 `rustomp/`、`rustomp-win-plugin/` 同级。
+> 三个平台同理，插件必须与 `rustomp/` 和对应打包仓同级。
 
 ---
 
@@ -345,7 +368,7 @@ legacy 实现的其余实测（电位器 50%）：
 rustomp（框架 + 平台契约）
    ├── rustomp-mac-plugin     macOS：AU / VST3 / CLAP（universal）        ✅ v0.1.6
    ├── rustomp-win-plugin     Windows：VST3 / CLAP（x64/arm64）+ MSI     ✅ v0.3.0
-   └── rustomp-linux-plugin   Linux：VST3 / CLAP + 包                    ⬜ 未开工
+   └── rustomp-linux-plugin   Linux：VST3 / CLAP + tar.gz                ✅ v0.1.0
 ```
 
 | 层 | 谁提供 | 状态 |
@@ -353,24 +376,25 @@ rustomp（框架 + 平台契约）
 | DSP / 电路 / 器件 / 代码生成 | **本仓库** | ✅ 纯 Rust，三平台都能编 |
 | macOS 打包 | **`rustomp-mac-plugin`**（`scripts/build-all.sh` 按平台分派） | ✅ AU/VST3/CLAP，已在 Logic 验证 |
 | Windows 打包 | **`rustomp-win-plugin`** | ✅ VST3/CLAP + MSI，已在本机 DAW 出声 |
-| Linux 打包 | `rustomp-linux-plugin` | ⬜ 未开工 |
+| Linux 打包 | **`rustomp-linux-plugin`** | ✅ VST3/CLAP + tar.gz，x64 实测（arm64/容器/真实宿主待验） |
 
-两个已落地的打包工具都实现**同一个契约 B**：吃 `<plugin_dir>/rustomp.toml` + 已生成的
+三个已落地的打包工具都实现**同一个契约 B**：吃 `<plugin_dir>/rustomp.toml` + 已生成的
 `src/generated/`，只读不改；成功时 stdout 逐行 `ARTIFACT: <绝对路径>`，其余日志走 stderr。
-所以接 Windows 不需要改框架、不需要改插件源码。
+所以接一个新平台不需要改框架、不需要改插件源码。
 
 框架侧只有一个入口 `scripts/build-all.sh`：按平台分派到对应的 `pack.sh`，参数原样透传，
 `RUSTOMP_PACKER` 可指定任意实现契约 B 的脚本。新平台 = 实现一个 `pack.sh` + 在分派里加一行。
 
 各自的平台事实（都写进了工具仓的 README / `capabilities.toml`）：
 
-| | macOS | Windows |
-|---|---|---|
-| 格式 | AUv2 / VST3 / CLAP | VST3 / CLAP（**无 AU**） |
-| 架构 | universal（x86_64 + arm64） | x64 / arm64（各自独立产物，无 universal） |
-| 安装包 | **DMG**（`--format dmg`，用户级拖拽/双击安装）；`pkg` 未做 | MSI，**系统级 / 用户级两个包**（`--format msi`） |
-| 签名 | ad-hoc（对外分发待做） | 未做（Authenticode） |
-| 宿主验证 | `auval` + `au_smoke` + Logic | `clap-probe` + `pluginval` + PE 架构核对（arm64 仅静态校验） |
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| 格式 | AUv2 / VST3 / CLAP | VST3 / CLAP（**无 AU**） | VST3 / CLAP（**无 AU**） |
+| 架构 | universal（x86_64 + arm64） | x64 / arm64（各自独立产物） | x64 / arm64（各自独立产物） |
+| 安装包 | **DMG**（`--format dmg`）；`pkg` 未做 | MSI，**系统级 / 用户级两个包** | **tar.gz**（`--format targz`，含 `install.sh` + `SHA256SUMS`）；deb/flatpak 未做 |
+| 签名 | ad-hoc（对外分发待做） | 未做（Authenticode） | 无（发行版包管理器的事） |
+| 宿主验证 | `auval` + `au_smoke` + Logic | `clap-probe` + `pluginval` + PE 校验 | `clap-probe` + `pluginval` + ELF/ldd（arm64 仅静态校验） |
+| 分发基线 | 最低系统 11.0 | — | **glibc 基线**（原生=构建机；`--container` = debian:12 / 2.36） |
 
 理由：难点不在编译而在**打包与宿主兼容**（clap-wrapper/CMake/MSVC/签名/宿主缓存），
 每个平台都必须在本机验证；先写没环境验证的脚本等于猜。详见 `docs/declarative-build.md` §4.0。
@@ -490,6 +514,8 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 - `panel.rs` 目前由 `tools/meta/plugin_meta.py` 生成；搬进 `rustomp-gen`（单一发射器）还是 TODO。
 - **Windows 侧**：无代码签名；arm64 产物只能静态校验（x64 机器跑不了 arm64 DLL）；
   不做 standalone；MSI 是两个固定范围的包，没有"向导里选范围"的单入口；CI 未接。
+- **Linux 侧**：分发包的 glibc 基线随构建机（老发行版用 `--container`）；arm64 / 容器 /
+  GUI 插件 / 真实宿主仍未实测；不做 deb/flatpak/AppImage、standalone；CI 未接。
 
 **路线图**
 
@@ -513,7 +539,8 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
       工程文件 `.design.json` 已可直接导入（2026-10-27），取代 breadspice 成为默认路径
 - [x] **Windows 打包工具** ✅ `rustomp-win-plugin` v0.3.0（独立仓库，ADR-015）：
       VST3/CLAP（x64/arm64）+ 系统级/用户级 MSI，clap-probe + pluginval 自检，本机 DAW 实测出声
-- [ ] Linux 打包工具（`rustomp-linux-plugin`，独立仓库，ADR-015）
+- [x] **Linux 打包工具** ✅ `rustomp-linux-plugin` v0.1.0（独立仓库，ADR-015）：
+      VST3/CLAP（x64/arm64）+ 可复现 tar.gz（install.sh / SHA256SUMS），clap-probe + pluginval 自检
 - [ ] 动态档补齐：BJT `Cje/Cjc/Tf`、二极管 `Cjo/tt`、MOS `Cgs/Cgd`
 - [x] **macOS DMG 安装包** ✅ `rustomp-mac-plugin --format dmg`（用户级：三种插件 + 双击安装脚本）
 - [ ] 电位器 A/C taper；预设与状态管理；`pkg` 安装包 + 签名公证
@@ -527,7 +554,7 @@ AU 码：`aufx / SPm1 / SPs1 / HpEf`（Mono / Stereo）。
 |---|---|
 | **`DEVLOG.md`** | 开发日志（**最重要**）：每个决策、实测数据、踩坑与修复 |
 | `sparklin-drive-legacy` 仓库 | 参考实现（完整插件 + 电路解读 + 基线数据） |
-| `rustomp-mac-plugin` / `rustomp-win-plugin` 仓库 | 两个已落地的打包工具（契约 B 的实现）：macOS AU/VST3/CLAP；Windows VST3/CLAP + MSI |
+| `rustomp-mac-plugin` / `rustomp-win-plugin` / `rustomp-linux-plugin` 仓库 | 三个已落地的打包工具（契约 B 的实现）：macOS AU/VST3/CLAP + DMG；Windows VST3/CLAP + MSI；Linux VST3/CLAP + tar.gz |
 | **`docs/split-plan.md`** | **拆仓执行清单**：每个文件从哪来/到哪去、验证命令、明天的操作顺序 |
 | **`docs/ecosystem.md`** | **生态与仓库边界**：8 个仓谁负责什么、3 个跨仓契约、版本约束、拆分顺序与风险 |
 | `docs/component-library.md` | **元件库精度规范**：档位定义、逐器件推荐、验收实验模板 |
