@@ -238,7 +238,9 @@ sparklin-drive/
   assets/{panel.png,panel.svg,knob_round_dark.png,toggle_small_{up,down}.png,3pdt_alt_hold.png}
   design/panel.box.json        # 设计器源文件（可回设计器继续改）
   scripts/build.sh             # doctor / 构建 / test / verify
-  BUILDING.md  LICENSE  README.md  .github/workflows/build.yml
+  doc/{current,history}/        # 现状（构建 / 二次开发 / 架构 / 发布） + 历史留档
+  pictures/                    # README 截图（含 macOS Gatekeeper 放行示意）
+  LICENSE  README.md  .github/workflows/{build,release}.yml
 ```
 
 `build.sh` 的四条硬要求：
