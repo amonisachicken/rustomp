@@ -2,7 +2,7 @@
 
 > **这份文档回答一个问题：这么多仓库，谁负责什么？**
 >
-> 状态：**结论已定**（2026-10-27）；**三个平台的打包工具都已落地**（2026-10-29：Windows `v0.3.0`、Linux `v0.1.0`）。拆仓工作进行中见 §5 的进度表。
+> 状态：**结论已定**（2026-10-27）；**拆仓已完成**，三个平台的打包工具都已落地（mac `v0.1.7`、Windows `v0.3.0`、Linux `v0.1.0`）。历史进度见 [`history/repo-split.md`](history/repo-split.md)。
 > 相关决策：ADR-014（声明式构建两个平面）、ADR-015（macOS 默认 + 外部打包工具）。
 
 ---
@@ -21,7 +21,7 @@
 ┌──────────────────┐      ┌──────────────────┐      ┌────────────────────┐
 │ sparklin-drive   │      │ rustomp-mac-     │      │ rustomp-box-       │
 │ 参考插件（v2）    │─────►│ plugin（打包）    │      │ designer（面板）    │
-│ 电路 + GUI 产物   │ 调用  │ AU/VST3/CLAP     │      │ → ui.toml + PNG    │
+│ 电路 + GUI 产物   │ 调用  │ AU/VST3/CLAP     │      │ → [ui] + PNG       │
 └──────────────────┘      └──────────────────┘      └────────────────────┘
                                     ▲
                           ┌─────────┴──────────┐
@@ -41,7 +41,7 @@
 | **rustomp-win-plugin** | Windows 打包：VST3 / CLAP（x64 + arm64 各自产物）、MSI（系统级 / 用户级两个包）、clap-probe + pluginval + PE 架构自检 | DSP、代码生成、素材、**AU / standalone**（平台不存在 / 不在范围） |
 | **rustomp-linux-plugin** | Linux 打包：VST3 / CLAP（x64 + arm64 各自产物）、可复现 tar.gz（`install.sh` + `SHA256SUMS`）、clap-probe + pluginval + ELF/ldd 自检、glibc 基线声明 | DSP、代码生成、素材、**AU / standalone**（平台不存在 / 不在范围） |
 | **sparklin-drive** | 一个**完整可构建**的参考插件：电路网表、生成物、面板产物、`build.sh` | 框架代码（只通过 tag 依赖） |
-| **rustomp-box-designer** | 面板编辑 → `ui.toml` + 素材 PNG（零依赖浏览器端） | DSP、插件身份 |
+| **rustomp-box-designer** | 面板编辑 → `rustomp.toml` 的 `[ui]` + 素材 PNG（零依赖浏览器端） | DSP、插件身份 |
 | **rustomp-circuit-designer** | 原理图 → 工程文件 `.design.json`（**首选**，可直接导入）/ `.cir` 网表 + 指令 | 生成 Rust、打包 |
 | **sparklin-drive-legacy** | 冻结的历史基线（WDF 手推实现 + AB 数据） | 一切活跃开发 |
 
@@ -82,7 +82,7 @@
 
 **框架侧永远不知道平台的细节**（clap-wrapper / codesign / CMake），只知道这一行 `ARTIFACT:`。
 
-### 契约 C：设计器导出的 `ui.toml` + 素材
+### 契约 C：设计器导出的 `[ui]` + 素材
 
 ```toml
 # >>> rustomp-box-designer … # <<<（标记块内整段替换）
@@ -112,7 +112,7 @@ packer（校验 `packer`）各校验一次：
 framework = ">=0.1,<0.2"   # rustomp crates（插件 Cargo.toml 的 git tag 应对应）
 packer    = ">=0.1"        # rustomp-mac-plugin / win / linux
 packer_tag = "v0.1.7"      # 插件 build.sh 自动 clone 打包工具时钉的 tag（可选）
-designer  = ">=0.1"        # 仅记录（用于解释 ui.toml 的字段版本）
+designer  = ">=0.1"        # 仅记录（用于解释 [ui] 的字段版本）
 ```
 
 语法：逗号分隔的比较式（`>=` / `>` / `<=` / `<` / `=`），空串 = 不约束；
@@ -121,54 +121,43 @@ designer  = ">=0.1"        # 仅记录（用于解释 ui.toml 的字段版本）
 
 ---
 
-## 4. 文件归属（拆分时的搬运清单）
+## 4. 文件边界（当前）
 
-| 去 `rustomp-mac-plugin` | 留在 `rustomp` |
-|---|---|
-| `scripts/build-all.sh` `build-variant.sh` `build-au.sh` `check-au.sh` | `scripts/verify.sh`（对拍 / 漂移守卫） |
-| `scripts/gen-bundler-toml.sh` `reset-logic-cache.sh` | `scripts/new-plugin.sh`（脚手架，与平台无关） |
-| `cmake/CMakeLists.txt`、`bundler.toml` 模板 | `tools/meta/`（manifest 读取 = **契约 A 的一部分**） |
-| `patches/0001-auv2-host-classification-and-layouts.patch` | `tools/oracle/`（ngspice 对拍） |
-| `tools/au-smoke/`（C）、`tools/clap-probe/` | `crates/{rustomp-dsp,rustomp-gui,rustomp-gen,rustomp-import,rustomp-oracle}` |
-| — | `scripts/plugin-env.sh` `make-netlist.sh` `sim-baseline.sh` `build-ngspice.sh`、`docs/` |
-
-**判断标准**：一个文件如果提到 `clap-wrapper`、`codesign`、`CMake`、`Logic`、`.component`，它就该去 mac 工具；
-如果提到 `vcvars`、`MSVC`、`WiX`、`%LOCALAPPDATA%`、`PE Machine`，它就该去 win 工具。
-
-`scripts/fetch-third-party.sh`（拉 ngspice 源码）服务的是"在本机编 ngspice 做对拍"，
-属于验证环境，**不进 mac 打包工具**；需要时由开发者在 `rustomp` 里跑。
-
-`rustomp` 保留一个瘦包装，保证"一条命令"体验不丢（按平台分派，框架不认识平台细节）：
-
-```bash
-# rustomp/scripts/build-all.sh（拆分后）
-PACKER="$RUSTOMP_PACKER"                         # 显式指定优先
-# macOS   → 同级 rustomp-mac-plugin/pack.sh
-# Windows → 同级 rustomp-win-plugin/pack.sh
-# 其他    → 报错，提示用 RUSTOMP_PACKER 指定一个新后端
-exec "$PACKER/pack.sh" "$PLUGIN_DIR" "$@"        # 只透传 ARTIFACT: 行
-```
-
----
-
-## 5. 拆分顺序与完成标准
-
-| # | 任务 | 完成标准 |
+| 谁 | 拥有 | 不拥有 |
 |---|---|---|
-| **0** | 给 `rustomp` 打 tag `v0.1.0`；把契约 B 写成可执行测试（见 §6） | ✅ **已完成**：`v0.1.0` 已推；`tests/packer_contract.sh` 已进 `verify.sh` |
-| **1** | 拆出 `rustomp-mac-plugin` | ✅ **已完成**（DEVLOG E71）：框架里平台词为 0（测试断言）；拆前/后 `au_smoke` + RMS 0.356170 一致 |
-| **2** | 独立发布 `sparklin-drive` | ✅ **已完成**（DEVLOG E72）：全新 clone → `./scripts/build.sh` → 6 条 `ARTIFACT`；CI 三仓 checkout |
-| **3** | `rustomp-circuit-designer` D0 | 符号库 + 网表生成 + 一键校验（`rustomp-import` + ngspice 偏差显示）；拖拽连线留 D1 |
-| **4** | 拆出 `rustomp-win-plugin` | ✅ **已完成**（2026-10-29，`v0.3.0`）：VST3/CLAP + MSI 全链路，本机 DAW 实测出声；**框架零改动**（契约 A/B 首次被第二个平台独立实现消费） |
-| **5** | 拆出 `rustomp-linux-plugin` | ✅ **已完成**（2026-10-29，`v0.1.0`）：VST3/CLAP + 可复现 tar.gz，x64 实测（arm64/容器/GUI/真实宿主待验）；**框架只改了分派**（`build-all.sh` 的 Linux 分支） |
+| **rustomp（本仓）** | `crates/`、`devices/`（SPICE 侧）、`template/`、`scripts/`（new-plugin / build-all / verify / 网表 / 基线）、`tools/meta`、`tools/oracle`、`tests/packer_contract.sh`、`docs/` | 平台打包、具体插件、素材美术 |
+| **rustomp-mac-plugin** | macOS 构建、AUv2 包装/补丁、DMG、AU 自检 | DSP、代码生成、插件源码 |
+| **rustomp-win-plugin** | Windows 构建、MSVC/PE 校验、MSI、clap-probe/pluginval | 同上 |
+| **rustomp-linux-plugin** | Linux 构建、ELF/ldd、tar.gz、clap-probe/pluginval | 同上 |
+| **插件仓**（如 sparklin-drive） | 电路值/网表、生成物、面板素材、产品身份 | 框架代码（只通过 git tag 依赖） |
 
-**拆仓期纪律：只搬不改。** 需要改契约（如 `[requires]`）就在第 0 步做掉。
+**判断标准**：提到 `clap-wrapper`、`codesign`、CMake/Logic/.component 的文件属于 mac 工具；
+提到 `vcvars`、`MSVC`、`WiX`、`%LOCALAPPDATA%`、PE 的属于 win 工具；
+提到 ELF/ldd/glibc/tar.gz 的属于 linux 工具。框架侧不允许出现平台专有词
+（`tests/packer_contract.sh` 有断言）。
 
-> 逐文件搬运清单、验证命令与操作顺序见 **`docs/split-plan.md`**。
+> 拆仓时的逐文件搬运清单、顺序、开工前问题已归档：
+> [`history/repo-split.md`](history/repo-split.md) 与 [`history/split-plan.md`](history/split-plan.md)。
 
 ---
 
-## 6. 契约 B 的可执行测试（第 0 步的产物）
+## 5. 拆仓状态（已完成）
+
+| 步骤 | 结果 |
+|---|---|
+| 0 契约测试 + 首个 tag | ✅ `tests/packer_contract.sh` 已进 `verify.sh`；`v0.1.0` 起有 tag |
+| 1 macOS 打包独立 | ✅ `rustomp-mac-plugin`（当前 `v0.1.7`） |
+| 2 参考插件独立 | ✅ `sparklin-drive`（当前 `v0.1.9`，三平台 prerelease） |
+| 3 原理图设计器 D0 | ✅ `rustomp-circuit-designer` |
+| 4 Windows 打包 | ✅ `rustomp-win-plugin v0.3.0` |
+| 5 Linux 打包 | ✅ `rustomp-linux-plugin v0.1.0` |
+
+详细的完成标准与历史证据见 [`history/repo-split.md`](history/repo-split.md)；
+配套版本见 §8。
+
+---
+
+## 6. 契约 B 的可执行测试
 
 ```bash
 # rustomp/tests/packer_contract.sh —— 用假插件 + 假 packer 验证
@@ -180,8 +169,8 @@ exec "$PACKER/pack.sh" "$PLUGIN_DIR" "$@"        # 只透传 ARTIFACT: 行
 ```
 
 有了它，"加一个新的平台打包工具"就是**加一个符合契约的脚本**，而不是改框架。
-Windows 工具（`rustomp-win-plugin` v0.3.0）就是照这条路落地的：**框架与契约零改动**，
-两个平台隔着同一份 `ARTIFACT:` 输出对接。
+Windows / Linux 工具（`rustomp-win-plugin v0.3.0` / `rustomp-linux-plugin v0.1.0`）就是照这条路落地的：
+**框架与契约零改动**，三个平台隔着同一份 `ARTIFACT:` 输出对接。
 
 ### 6.1 发布前固定动作：隔离验证
 
@@ -208,7 +197,7 @@ Windows 工具（`rustomp-win-plugin` v0.3.0）就是照这条路落地的：**�
 |---|---|---|
 | `nih_plug` 是 **git rev 依赖**（非 crates.io） | 新手以为是网络问题；rev 漂移会改变行为 | 打包工具维护 `deps.lock`（rev + 补丁 sha），`doctor` 子命令先行检查 |
 | universal 需要两个 rust target | `bundle-universal` 失败信息不直观 | `doctor` 检查 `rustup target list --installed`，缺了直接给出安装命令 |
-| **standalone 其实还没做**（文档里是 ⬜） | 若列进 v0.1 会吃不消 | mac 工具 **v0.1 只出 AU/VST3/CLAP**；standalone 单列 v0.2（要处理音频设备/设置持久化） |
+| **standalone 没做**（三个打包器都明确不做） | 若列进 v0.1 会吃不消 | 需要音频设备选择/设置持久化，是独立的一件事；当前只出插件格式 |
 | 现在是 **ad-hoc 签名**（`codesign -s -`） | 对外分发会被 Gatekeeper 拦 | 签名 + 公证（Developer ID + notarytool）**单独一项**，不混进拆仓 |
 | ~~`plugins/` 是 gitignore 却是 workspace member~~ | 全新 clone **解析不了 workspace**（已修） | 根 `Cargo.toml` 去掉插件成员 + `exclude = ["plugins"]`；插件自带 workspace；用 `RUSTOMP_GUEST=/path` 指路 |
 | **`cargo-nih-plug` 会 chdir 到"最顶层"的 `Cargo.toml`** | 插件嵌在本仓 `plugins/` 里时，会拉到 rustomp 根 → `cannot specify features for packages outside of workspace` | **插件项目必须住在本仓之外**（默认 `../<slug>`）；`new-plugin.sh` 已改为生成到 `$RUSTOMP_GUEST`；`target/` 与 `bundler.toml` 都落在插件项目根 |
@@ -217,8 +206,8 @@ Windows 工具（`rustomp-win-plugin` v0.3.0）就是照这条路落地的：**�
 | Windows 两架构 **identity 相同**，`both` 默认只装 x64 | 同机装两份会让宿主扫到重复插件 | 工具层只装 x64；文档明确“一台机器只装一种” |
 | MSI **单包双范围不可行**（实测会两处都写，W-010） | 想要“一个安装包向导里选范围”会得到坏安装 | 按范围固定出**两个 MSI**（不同 `UpgradeCode` = 两个产品身份）；要单入口得再加 EXE 引导器 |
 | arm64 在 x64 机器上只能**静态校验** | “产物存在”≠“宿主能加载” | `RUSTOMP_REQUIRE_VERIFY=1` 时主动失败；文档写明待 ARM 机器验证 |
-| Linux 产物与**构建机 glibc 绑定** | 在滚动发行版上打的包，老发行版装不上 | `tar.gz` 的 README 写明基线；要兼容老系统用 `--container`（默认 debian:12 / glibc 2.36） |
-| Linux 的 docker/arm64/GUI 未实测 | “脚本就绪”不等于“跑过” | 文档逐项标注 ⚠；`doctor.sh` 给出装法；CI 接上后补真实运行 |
+| Linux 产物与**构建机 glibc 绑定** | 在滚动发行版上打的包，老发行版装不上 | `tar.gz` 的 README 写明基线；CI 用 Ubuntu 22.04（glibc 2.35），要更老的系统用 `--container`（debian:12 / 2.36） |
+| Linux 的 docker/arm64/GUI 未实测 | “脚本就绪”不等于“跑过” | x64 已经在 release workflow 真实构建；docker/arm64/GUI 仍标注 ⚠，`doctor.sh` 给出装法 |
 
 ---
 
@@ -259,13 +248,15 @@ sparklin-drive/
 3. 缺 packer 时打印**一行可复制的 clone 命令**；
 4. 结尾打印 `ARTIFACT:` 列表（与契约 B 同形），便于 CI 抓取。
 
-CI：在**干净 runner** 上 checkout 三个仓（插件 / rustomp@tag / mac 工具@tag）→ `./build.sh` → 上传产物。
-只有这样才能证明"任何人拉取后能构建"。
+CI：参考插件有两条流水线：
+
+- **build.yml**（macOS）：三仓 checkout → `build.sh` → 上传产物（证明"任何人拉取后能构建"）；
+- **release.yml**（三平台）：tag `v*` → macOS/Windows/Linux 构建 → GitHub Release
+  （DMG / MSI×2 / tar.gz，未签名 prerelease）；`workflow_dispatch` 可 dry-run。
 
 ---
 
-## 10. 待确认（开工前）
+## 10. 历史问题（已归档）
 
-1. `rustomp` 的第一个 tag（建议 **`v0.1.0`**）；
-2. 参考插件仓里是否带 `design/panel.box.json`（建议**带**，面板可追溯、可 fork）；
-3. `sparklin-drive` 是否兼任"插件模板"（建议**是**，比维护第二份模板可靠）。
+开工前的三个问题（第一个 tag、是否带 `design/panel.box.json`、参考插件是否兼任模板）
+均已有结论，见 [`history/repo-split.md`](history/repo-split.md) §3。

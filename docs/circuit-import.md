@@ -6,7 +6,7 @@
 > **2026-10-27：首选设计器改为 `rustomp-circuit-designer`** —— 它的工程文件 `.design.json`
 > 可以直接导入（`CircuitDesigner` 导入器），breadspice 的 `.bread` 退为次选（§1/§2/§10）。
 > 相关：`DEVLOG.md` E32 / ADR-013、E44 / E45；`docs/component-library.md`、`docs/declarative-build.md`
-> 上游：用户提供的 LTspice 风格器件模型；**rustomp-circuit-designer**（首选，见 §10）；`plugins/` 下的下游插件项目
+> 上游：用户提供的 LTspice 风格器件模型；**rustomp-circuit-designer**（首选，见 §10）；框架同级的插件项目
 
 ---
 

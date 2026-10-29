@@ -1,6 +1,9 @@
-# 拆仓执行计划（split plan）
+# 拆仓执行计划（split plan，归档）
 
-> 依据：`docs/ecosystem.md`（仓库边界与三个契约）。本文是**可直接照着敲**的执行清单：
+> 归档：2026-10-29。拆仓已完成；当前仓库边界见 [`../ecosystem.md`](../ecosystem.md)，
+> 完成里程碑见 [`milestones.md`](milestones.md)。
+
+> 依据：`../ecosystem.md`（仓库边界与三个契约）。本文是**可直接照着敲**的执行清单：
 > 每个文件从哪来、到哪去、怎么验证。
 >
 > 状态：2026-10-27 **§0 已完成**（含一个比预想更深的发现：插件必须住在本仓之外，见 §0.3）。
@@ -35,7 +38,7 @@ error: failed to load manifest for workspace member `/private/tmp/rustomp-clone/
 | `plugins/sparklin-drive/Cargo.toml`（**新建**） | 自带一个 workspace：`[workspace] members = ["plugin", "circuit"] resolver = "2"` |
 | `scripts/build-variant.sh` | 从 `cargo nih-plug …` 改为在 `"$PLUGIN_DIR/plugin"` 下构建（或加 `--manifest-path`） |
 | `scripts/verify.sh` | 只跑框架 `--workspace`（本来就是），确认没有 `-p sparklin-drive` |
-| `docs/ecosystem.md` §7 | 把"plugins/ 悬空"风险标为已处理 |
+| `../ecosystem.md` §7 | 把"plugins/ 悬空"风险标为已处理 |
 
 验证（缺一不可）：
 

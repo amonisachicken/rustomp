@@ -178,7 +178,7 @@ E45 里还有一条"直流工作点被压摆率限制污染、开场凭空多出
 > 2026-10-27 起，设计器的**工程文件 `.design.json` 可直接导入**（`CircuitDesigner` 导入器）；
 > 它运行时读设计器的 `symbols/symbols.json` 拿引脚几何，并与设计器导出的 `.cir` **逐行对拍**。
 
-## 4.0 平台策略：macOS 默认 + 外部打包工具（ADR-015）
+## 4.0 平台策略：打包分仓 + 外部工具（ADR-015）
 
 **本仓库不做任何平台打包。** 三个平台各自一个**独立仓库**（都已落地），开发者按需拉取接进工作流：
 
@@ -376,8 +376,8 @@ steps:
 | **S1a** ✅ | **电路侧**：网表 → `Netlist` 装配代码（`rustomp-import --mna`） | 生成电路与手写网表/ngspice 逐位一致（THD 27.579% vs 27.5682%） |
 | **S1b** ✅ | **电路侧**：参数化（电位器/开关）+ `Q/J/M` 卡片 → 直接生成 `impl Circuit` | 开关把 h2 从 4.00% 打到 0.00%；GAIN 扫描单调；BJT 前级 Vb 差 2.2 µV |
 | **S1c** ✅ | **插件侧**：`rustomp-gen` 把 `rustomp.toml` → `identity.rs` / `params.rs`（`PluginParams` + `to_dsp()`）/ `plugin_impl.rs`；`--check` 防漂移 | 生成的项目 `cargo build` 成功，cdylib 导出 `clap_entry` + `GetPluginFactory` |
-| **S1d** | **界面**：`[ui]` → `panel.rs`（`PanelSpec`），`gui` feature + 手写 `editor.rs` | 与 legacy 的界面像素一致 |
-| **S2** | `rustomp pack` 驱动 + `scripts/pack/macos/{au,vst3,clap}.sh`（把现有脚本收敛进去） | 本机一条命令产出 AU/VST3/CLAP |
+| **S1d** ✅ | **界面**：`[ui]` → `panel.rs`（`PanelSpec`），`gui` feature + 手写 `editor.rs` | 与 legacy 的界面像素一致 |
+| **S2** ✅ | 统一入口：`scripts/build-all.sh` 按平台分派到各 `pack.sh`（未引入 `rustomp pack` 子命令） | 一条命令产出 AU/VST3/CLAP（mac），`--format` 出安装包 |
 | **S3** | Windows / Linux 后端 + CI 矩阵 | **Windows ✅**（v0.3.0：VST3/CLAP + MSI）；**Linux ✅**（v0.1.0：VST3/CLAP + tar.gz）；**三平台 CI ✅**（`sparklin-drive` release workflow，v0.1.9 已发布） |
 | **S4** | `standalone`（三平台） | 双击/命令行能出声 |
 | **S5** | 安装包与签名（DMG ✅ / MSI ✅ / tar.gz ✅ / pkg） | 安装包已三平台可用；签名与公证待做（M4 商业面） |
@@ -395,7 +395,9 @@ steps:
 
 ---
 
-## 10. 变更记录
+## 10. 变更记录（历史）
+
+> 本节是本文档的历史变更记录；当前状态以 §4.4、§8 与 [`status.md`](status.md) 为准。
 
 | 日期 | 内容 |
 |---|---|

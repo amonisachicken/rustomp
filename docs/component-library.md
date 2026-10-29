@@ -3,9 +3,8 @@
 > 状态：**已实现并全部对拍**（2026-10-26）—— 14 个型号进 Rust 库、MNA 装配器已在用，
 > 界面层也已消费这些器件（削波指示用二极管电流）。
 > **BJT 的动态档（C1 结电容 + C2 渡越时间）已补**（2026-10-27，E82）：`ft` 与 ngspice 差 < 5%；
-> 锗管的扩散电荷（`Tf=600ns` ⇒ 41 nF）因求解器限制暂未启用，见 §8。
-> 相关：`DEVLOG.md` E31 / ADR-012；`README.md` 的「仓库结构」
-> 下一步输入：用户将提供 LTspice 风格的器件模型，按本文的档位与参数字段导入。
+> 锗管的扩散电荷（`Tf=600ns` ⇒ 41 nF）也已打开（E85，pnjlim + 解析雅可比后全拍收敛）。
+> 相关：`DEVLOG.md` E31 / ADR-012；[`architecture.md`](architecture.md)、[`verification.md`](verification.md)。
 
 ---
 
@@ -242,7 +241,7 @@ sys.multiport(&[c, b, e], v, |vv| {
 
 | 项 | 现状 | 建议 |
 |---|---|---|
-| **动态档（C1/C2）** | BJT **全部做完**（E82 + E85）：`Cje/Cjc`（C1）+ `Tf/Tr`（C2），四个型号全开；求解器补齐了 `pnjlim` 结电压限幅 + 残差判据 + 迭代救援，锗管 41 nF 扩散电容也稳。二极管 `Cjo/tt`、MOS `Cgs/Cgd` 仍未做 | 逐档加：先补二极管的 `Cjo`（1N4007 已在用），MOS 的 `Cgs/Cgd` 最后 |
+| **动态档（C1/C2）** | BJT **全部做完**（E82 + E85）：`Cje/Cjc`（C1）+ `Tf/Tr`（C2），四个型号全开；求解器补齐了 `pnjlim` 结电压限幅 + 残差判据 + 迭代救援，锗管 41 nF 扩散电容也稳。二极管 `Cjo/tt`、MOS `Cgs/Cgd` 仍未做 | 逐档加：先补二极管的 `Cjo`（1N4007 的 SPICE 参数已就绪），MOS 的 `Cgs/Cgd` 最后 |
 | **温度建模** | 未做 | 先不做，但 `Device` 里保留 `temperature: f64` 字段位（默认 25 °C）；以后可加"温度"旋钮或运行时间漂移 |
 | **锗器件参数来源** | `models.lib` 里没有 | 用户提供的 LTspice 模型 → 映射；没有的话用「实测 V-I 扫描 + 拟合 `Is/Bf/Vaf/Ise`」，对拍框架已具备 |
 | **R/C 的非理想性** | 理想元件 | 先不做；若某电路需要，加 `esr` / `da` 字段（同样是线性项，代价低） |
@@ -304,7 +303,7 @@ could not find a valid modelname
 | 器件 | Rust 模型 | 对拍结果（`crates/rustomp-dsp/tests/devices.rs`） |
 |---|---|---|
 | `D_1N4148` / `D_1N34A` / `D_1N4007` | `devices::Diode`（静态 **D2**：`Is / N / Rs`） | **V-I 与 ngspice 完全一致（0.00%）**，覆盖 1 µA~10 mA 五个数量级 |
-| `BC549C` / `AC127` / `AC128` / `BC559C`(PNP) | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc` + 大信号结电压限制；动态 **C1**：`Cje/Cjc`（含 `Fc` 线性化），硅管再开 **C2**：`Tf/Tr`） | **Ic 与 Ib 均对拍**：AC127/AC128/BC559C ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下）；**直流工作点与 ngspice 一位不差**（锗管法兹，`tests/designer_generated_fuzz.rs`） |
+| `BC549C` / `AC127` / `AC128` / `BC559C`(PNP) | `devices::Bjt`（静态 **D3**：Gummel-Poon + `Rb/Re/Rc` + 大信号结电压限制；动态 **C1**：`Cje/Cjc`（含 `Fc` 线性化）+ **C2**：`Tf/Tr`（四个型号全开）） | **Ic 与 Ib 均对拍**：AC127/AC128/BC559C ≤0.01%，BC549C ≤0.09%（唯 Ic≈4.6 mA 处 0.67%，见下）；**直流工作点与 ngspice 一位不差**（锗管法兹，`tests/designer_generated_fuzz.rs`） |
 | `1N5817`（肖特基） | `devices::Diode`（D2） | **0.00%**（1 µA~10 mA；Vf@1 mA=0.124 V、@10 mA=0.205 V） |
 | `LedRed` / `LedGreen` / `LedBlue` | `devices::Diode`（D2） | **0.00%**（1 µA~10 mA；Vf@20 mA ≈ 1.85 / 2.29 / 3.71 V） |
 | `J201` | `devices::Jfet`（静态 **D3**：Shichman-Hodges + `Rd/Rs`） | **转移 + 输出特性均 0.00%**（含三极管区 Vds=0.2/0.5 V） |
@@ -319,7 +318,7 @@ could not find a valid modelname
 
 > 精度说明（BJT）：
 > - 实现了 `Is/Bf/Nf/Vaf/Ikf/Ise/Ne/Br/Nr/Var/Ikr/Isc/Nc` 与 `Rb/Re/Rc`；
-> - **未实现**：`Nk`（BC549C 的 `Nk=0.6339`）、`IRB/RBM`、结电容 `Cje/Cjc/Tf/Tr`（后者属 C1/C2 档）；
+> - **未实现**：`Nk`（BC549C 的 `Nk=0.6339`）、`IRB/RBM`；结电容/渡越时间见下面的动态档；
 > - BC549C 在 `Ic≈4.6 mA` 处偏 +0.67%（其余 0.00~0.09%），推测与未建模的 `Nk` 有关，
 >   远低于 5% 门槛，暂不处理 —— **不为拟合而猜模型语义**。
 >

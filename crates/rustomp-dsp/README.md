@@ -7,8 +7,8 @@
 devices/       器件库：Diode / Bjt / Jfet / Nmos / OpAmp  （型号是闭集 const）
 mna.rs         通用 MNA 装配器：Element 枚举 + Netlist<N> + 牛顿求解
 branch.rs      Branch<A,B>：两份完整电路 + 开关切换（预热 + 交叉淡化）
-engine.rs      Engine<C>：4× 过采样 + 真旁通 + 活动指示 + NaN 熔断
-oversample.rs  多相 FIR 4× 过采样（64 抽头 Kaiser 窗 sinc）
+engine.rs      Engine<C>：2×/4× 过采样 + 真旁通 + 活动指示 + NaN 熔断
+oversample.rs  多相 FIR（2× / 4× 共用；默认 4×）
 circuit.rs     与框架的唯一契约：Circuit trait
 ```
 
@@ -21,7 +21,7 @@ circuit.rs     与框架的唯一契约：Circuit trait
 | 模块 | 类型 | 库内型号 | 精度档 |
 |---|---|---|---|
 | `diode.rs` | 二极管（`Is/N/Rs`） | `D_1N4148` `D_1N34A` `D_1N4007` `D_1N5817`(肖特基) `LED_RED` `LED_GREEN` `LED_BLUE` | 静态 D2 |
-| `bjt.rs` | Gummel-Poon（含 `Rb/Re/Rc` 内层牛顿） | `BC549C` `BC559C`(PNP) `AC127` `AC128` | 静态 D3 |
+| `bjt.rs` | Gummel-Poon（含 `Rb/Re/Rc` 内层牛顿；动态 C1/C2） | `BC549C` `BC559C`(PNP) `AC127` `AC128` | 静态 D3 + 动态 C1/C2（四型号全开） |
 | `jfet.rs` | Shichman-Hodges | `J201` | 静态 D3 |
 | `mosfet.rs` | level-1（+ 体二极管单口） | `NMOS_2N7000` `NMOS_2N7000_BODY` | 静态 D3 |
 | `opamp.rs` | 单极点宏模型 + 压摆率 + 输出钳位 | `OP07` | — |
@@ -143,8 +143,8 @@ engine.set_params(BranchParams { a: asym_p, b: sym_p, select_b: true });
 
 ## 3. Engine 与过采样
 
-`Engine<C>` = `Circuit`（在 4×fs 运行）+ 多相 FIR 过采样 + 真旁通 + 活动指示 + NaN 熔断。
-**4× 是正确性下限**，不只是"为了好听"：
+`Engine<C>` = `Circuit`（按选定倍数在 2×/4× fs 运行）+ 多相 FIR 过采样 + 真旁通 + 活动指示 + NaN 熔断。
+**1× 会失效；2× 是可选下限，4× 是默认、也是更稳的档位**：
 
 | 过采样 | 电路 fs | 1 kHz | 3 kHz | 8 kHz |
 |---|---|---|---|---|
@@ -157,23 +157,11 @@ engine.set_params(BranchParams { a: asym_p, b: sym_p, select_b: true });
 
 ---
 
-## 4. 历史：fakedist v1 的整机对拍
+## 4. 早期实现的整机对拍（历史）
 
-第一版 Sparklin Drive 电路（单电源 9V、OP07、反馈环非对称二极管削波）用"一维牛顿 + WDF"
-实现，已随插件拆到独立仓库 **`sparklin-drive-legacy`**。当时的整机对拍数据（电位器 50%）：
-
-| 项目 | WDF 实现 | ngspice | 误差 |
-|---|---|---|---|
-| 直流工作点 | 4.49999 V | 4.50000 V | 0.01 mV |
-| 频响 50 Hz – 10 kHz | — | — | **≤0.31 dB** |
-| THD @0.2 V（2–9 次） | 27.650 % | 27.616 % | +0.034 pp |
-| h2–h9 | 逐次 ≤0.03 pp | | |
-
-它的三个教训仍然有效，且已被现在的器件库/MNA 继承：
-
-1. **两只二极管串联时发射系数也要翻倍**（`i = Is·(exp(u/(2·N·Vt)) − 1)`），只翻 `Rs` 会让串联支路提前导通；
-2. **不能用 ngspice 的 `.four` 当基准**（只取 1 个周期 + 线性插值，高次谐波偏低）——一律自己算 DFT；
-3. **直接以 48 kHz 跑电路会失效**，4× 过采样是正确性下限。
+早期 fakedist v1（一维牛顿 + WDF）的整机数据、以及从那次实现里得到的三条教训，
+已归档到 [`docs/history/sparklin-drive-legacy.md`](../../docs/history/sparklin-drive-legacy.md)。
+当前整机/生成电路的验证数字见 [`docs/verification.md`](../../docs/verification.md)。
 
 ---
 

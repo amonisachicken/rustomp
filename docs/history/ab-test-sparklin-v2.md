@@ -1,4 +1,8 @@
-# AB 测试复盘：Sparklin Drive v2（MNA 生成）vs legacy（手推 WDF）
+# AB 测试复盘（归档）
+
+> 归档：2026-10-29。一次性实验记录；当前验证方法/数字见 [`../verification.md`](../verification.md)。
+
+**Sparklin Drive v2（MNA 生成）vs legacy（手推 WDF）**
 
 > 时间：2026-10-25
 > 参与者：用户（听感 / 信号源 / FFT 截图）+ 助手（指标 / 台架复现 / 修复）
@@ -507,4 +511,4 @@ AB 从"听感有差异"走到"无可感差别"，一共关了四个问题：
 | 7 | 本机绝对性能会漂移 3–5×，CPU 数字必须**配对测量**、不与编译并行 |
 | 8 | "冷状态"的电路必须先**预热**再淡入 |
 
-完整清单见 `docs/pre-gui-checklist.md`。
+完整清单见 `pre-gui-checklist.md`。
