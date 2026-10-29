@@ -2,7 +2,7 @@
 
 > **这份文档回答一个问题：这么多仓库，谁负责什么？**
 >
-> 状态：**结论已定**（2026-10-27）。拆仓工作进行中见 §5 的进度表。
+> 状态：**结论已定**（2026-10-27）；**Windows 打包工具已落地**（2026-10-29，`rustomp-win-plugin` v0.3.0）。拆仓工作进行中见 §5 的进度表。
 > 相关决策：ADR-014（声明式构建两个平面）、ADR-015（macOS 默认 + 外部打包工具）。
 
 ---
@@ -24,10 +24,10 @@
 │ 电路 + GUI 产物   │ 调用  │ AU/VST3/CLAP     │      │ → ui.toml + PNG    │
 └──────────────────┘      └──────────────────┘      └────────────────────┘
                                     ▲
-                          ┌─────────┴─────────┐
-                          │ rustomp-win-plugin │  （未开工，同契约）
-                          │ rustomp-linux-plugin│
-                          └───────────────────┘
+                          ┌─────────┴──────────┐
+                          │ rustomp-win-plugin  │  （✅ v0.3.0，VST3/CLAP + MSI）
+                          │ rustomp-linux-plugin│  （⬜ 未开工）
+                          └────────────────────┘
 
 另有独立仓（不在本图数据流上）：
 - rustomp-circuit-designer  **首选**原理图设计器：原理图 → `.design.json` 工程（可直读）/ `.cir` 网表
@@ -38,7 +38,8 @@
 |---|---|---|
 | **rustomp**（本仓） | 器件模型、MNA 装配器、实时路径、代码生成、面板契约、ngspice 对拍 | 任何平台打包、素材美术、插件身份之外的业务 |
 | **rustomp-mac-plugin** | macOS 打包：AUv2 / VST3 / CLAP（universal）、clap-wrapper 补丁、签名、安装、AU 自检 | DSP、代码生成、素材 |
-| **rustomp-win-plugin** / **linux** | 各自平台的打包与宿主验证（未开工） | 同上 |
+| **rustomp-win-plugin** | Windows 打包：VST3 / CLAP（x64 + arm64 各自产物）、MSI（系统级 / 用户级两个包）、clap-probe + pluginval + PE 架构自检 | DSP、代码生成、素材、**AU / standalone**（平台不存在 / 不在范围） |
+| **rustomp-linux-plugin** | Linux 打包与宿主验证（未开工） | 同上 |
 | **sparklin-drive** | 一个**完整可构建**的参考插件：电路网表、生成物、面板产物、`build.sh` | 框架代码（只通过 tag 依赖） |
 | **rustomp-box-designer** | 面板编辑 → `ui.toml` + 素材 PNG（零依赖浏览器端） | DSP、插件身份 |
 | **rustomp-circuit-designer** | 原理图 → 工程文件 `.design.json`（**首选**，可直接导入）/ `.cir` 网表 + 指令 | 生成 Rust、打包 |
@@ -66,10 +67,17 @@
 ### 契约 B：打包工具的命令行与产物
 
 ```bash
-<packer> <plugin_dir> --variant mono|stereo|dual --format au|vst3|clap [--install] [--universal]
+<packer> <plugin_dir> --variant mono|stereo|dual --format au|vst3|clap|msi [--arch x64|arm64|both] [--install|--no-install]
 # 成功：stdout 逐行 "ARTIFACT: /abs/path"（可被脚本抓取）
-# 失败：非 0 退出 + 人话原因（缺 Xcode CLT / 缺 rust target / 素材缺失…）
+# 失败：非 0 退出 + 人话原因（缺 Xcode CLT / 缺 MSVC / 缺 rust target / 素材缺失…）
 ```
+
+两个已落地的实现（入口都叫 `pack.sh`，参数按各自平台能力略异）：
+
+| 实现 | 支持的 `--format` | 默认安装位置 |
+|---|---|---|
+| `rustomp-mac-plugin` | `au` / `vst3` / `clap` | `~/Library/Audio/Plug-Ins/` |
+| `rustomp-win-plugin` | `vst3` / `clap` / `msi`（+ `--arch x64` / `arm64` / `both`） | `%LOCALAPPDATA%\Programs\Common\` |
 
 **框架侧永远不知道平台的细节**（clap-wrapper / codesign / CMake），只知道这一行 `ARTIFACT:`。
 
@@ -119,7 +127,8 @@ designer  = ">=0.1"        # 仅记录（用于解释 ui.toml 的字段版本）
 | `tools/au-smoke/`（C）、`tools/clap-probe/` | `crates/{rustomp-dsp,rustomp-gui,rustomp-gen,rustomp-import,rustomp-oracle}` |
 | `scripts/new-plugin.sh`（建议搬或复制一份） | `docs/`（契约与生态文档） |
 
-**判断标准**：一个文件如果提到 `clap-wrapper`、`codesign`、`CMake`、`Logic`、`.component`，它就该去 mac 工具。
+**判断标准**：一个文件如果提到 `clap-wrapper`、`codesign`、`CMake`、`Logic`、`.component`，它就该去 mac 工具；
+如果提到 `vcvars`、`MSVC`、`WiX`、`%LOCALAPPDATA%`、`PE Machine`，它就该去 win 工具。
 
 `scripts/fetch-third-party.sh`（拉 ngspice 源码）服务的是"在本机编 ngspice 做对拍"，
 属于验证环境，**不进 mac 打包工具**；需要时由开发者在 `rustomp` 里跑。
@@ -142,6 +151,7 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 | **1** | 拆出 `rustomp-mac-plugin` | ✅ **已完成**（DEVLOG E71）：框架里平台词为 0（测试断言）；拆前/后 `au_smoke` + RMS 0.356170 一致 |
 | **2** | 独立发布 `sparklin-drive` | ✅ **已完成**（DEVLOG E72）：全新 clone → `./scripts/build.sh` → 6 条 `ARTIFACT`；CI 三仓 checkout |
 | **3** | `rustomp-circuit-designer` D0 | 符号库 + 网表生成 + 一键校验（`rustomp-import` + ngspice 偏差显示）；拖拽连线留 D1 |
+| **4** | 拆出 `rustomp-win-plugin` | ✅ **已完成**（2026-10-29，`v0.3.0`）：VST3/CLAP + MSI 全链路，本机 DAW 实测出声；**框架零改动**（契约 A/B 首次被第二个平台独立实现消费） |
 
 **拆仓期纪律：只搬不改。** 需要改契约（如 `[requires]`）就在第 0 步做掉。
 
@@ -159,6 +169,8 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 ```
 
 有了它，"加一个 Windows/Linux 打包工具"就是**加一个符合契约的脚本**，而不是改框架。
+Windows 工具（`rustomp-win-plugin` v0.3.0）就是照这条路落地的：**框架与契约零改动**，
+两个平台隔着同一份 `ARTIFACT:` 输出对接。
 
 ### 6.1 发布前固定动作：隔离验证
 
@@ -187,6 +199,10 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 | ~~`plugins/` 是 gitignore 却是 workspace member~~ | 全新 clone **解析不了 workspace**（已修） | 根 `Cargo.toml` 去掉插件成员 + `exclude = ["plugins"]`；插件自带 workspace；用 `RUSTOMP_GUEST=/path` 指路 |
 | **`cargo-nih-plug` 会 chdir 到"最顶层"的 `Cargo.toml`** | 插件嵌在本仓 `plugins/` 里时，会拉到 rustomp 根 → `cannot specify features for packages outside of workspace` | **插件项目必须住在本仓之外**（默认 `../<slug>`）；`new-plugin.sh` 已改为生成到 `$RUSTOMP_GUEST`；`target/` 与 `bundler.toml` 都落在插件项目根 |
 | 插件仓的生成物 | 用户可能编到过期代码 | `build.sh` 先跑 `rustomp-gen --check`（漂移即 fail），不允许跳过 |
+| Windows **只能用 MSVC**（`-gnu` 与宿主 ABI 不兼容） | 用户装了 MSYS2 的 rustc 会莫名编不出可加载的插件 | `doctor.sh` 对 `rustc -vV` 的 host 做硬校验并给出装法；`deps.lock` 钉 rust target |
+| Windows 两架构 **identity 相同**，`both` 默认只装 x64 | 同机装两份会让宿主扫到重复插件 | 工具层只装 x64；文档明确“一台机器只装一种” |
+| MSI **单包双范围不可行**（实测会两处都写，W-010） | 想要“一个安装包向导里选范围”会得到坏安装 | 按范围固定出**两个 MSI**（不同 `UpgradeCode` = 两个产品身份）；要单入口得再加 EXE 引导器 |
+| arm64 在 x64 机器上只能**静态校验** | “产物存在”≠“宿主能加载” | `RUSTOMP_REQUIRE_VERIFY=1` 时主动失败；文档写明待 ARM 机器验证 |
 
 ---
 
@@ -199,8 +215,8 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 | 代码许可 | **GPL-3.0-or-later**（链接 rustomp 决定） |
 | 素材/美术 | 建议在插件仓显式声明（同 GPL 或 CC BY-SA），避免 fork 时的犹豫 |
 | **tag 约定** | 每个仓发布即打 tag；下游**一律钉 tag**，不钉 `master`。**tag 必须在干净 checkout 里验证过才算数**（DEVLOG E74 就是没验证导致 v0.1.0 是坏的） |
-| **依赖布局** | 三个仓**必须同级**（`some-dir/{rustomp,rustomp-mac-plugin,sparklin-drive}`）——脚本按此自动发现，不假设任何绝对路径 |
-| **当前可用组合** | `rustomp v0.1.1` + `rustomp-mac-plugin v0.1.6` + `sparklin-drive v0.1.8` |（更早的 packer `v0.1.0`–`v0.1.5` 与插件 `v0.1.0`–`v0.1.7` 请勿使用：`v0.1.5` 及更早的 packer 会触发 clap-wrapper 的 CPM 联网下载，见 DEVLOG E88.3/E95） |
+| **依赖布局** | 各仓**必须同级**（`some-dir/{rustomp, rustomp-mac-plugin, rustomp-win-plugin, sparklin-drive}`，按平台取用）——脚本按此自动发现，不假设任何绝对路径 |
+| **当前可用组合** | macOS：`rustomp v0.1.1` + `rustomp-mac-plugin v0.1.6` + `sparklin-drive v0.1.8`；Windows：`rustomp ≥ v0.1.1`（工具在 `7a186e4` 上验证）+ `rustomp-win-plugin v0.3.0` |（更早的 mac packer `v0.1.0`–`v0.1.5` 与插件 `v0.1.0`–`v0.1.7` 请勿使用：`v0.1.5` 及更早的 packer 会触发 clap-wrapper 的 CPM 联网下载，见 DEVLOG E88.3/E95） |
 | **CI 必须真跑过** | 第一次 CI 是"假绿"（缺 cargo-nih-plug + `\| tee` 吞掉失败 + 上传空目录只警告），见 DEVLOG E75。判据：**产物数量 ≥1 且能下载** |
 
 ---

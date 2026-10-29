@@ -5831,6 +5831,52 @@ CPU（2× 过采样，Logic 未运行时的干净测量）：锗 4.8–6.1 µs/�
   200 s）：`build.sh` 退出码 0、6 条 ARTIFACT 都落在隔离目录、au_smoke 两次通过、
   **RMS = 0.356170 与 v0.1.7 逐位相同**（音频确实没变）、框架依赖 3 条全部来自 git tag。
 
+## E96：Windows 打包工具落地（`rustomp-win-plugin` v0.3.0，2026-10-29）
+
+**背景**：ADR-015 把 Windows 打包划给独立仓库，之后一直是"未开工"。今天
+`rustomp-win-plugin` 打到 **v0.3.0**：VST3 / CLAP（x64 + arm64）+ 系统级/用户级两个 MSI，
+已在一台真实 Windows x64 机器的 DAW 里出声。**本仓（框架与三个契约）一行未改。**
+
+### 96.1 交付了什么
+
+| 交付物 | 状态 |
+|---|---|
+| VST3 目录包（`<Name>.vst3/Contents/x86_64-win/<Name>.vst3`） | ✅ x64；DAW 实测出声 |
+| CLAP 单文件（`.clap` = DLL） | ✅ x64 |
+| arm64（`--arch arm64/both`） | ✅ 产物可用，PE `0xAA64` 已核；**运行时待 ARM 机器验证** |
+| 变体 mono / stereo / dual | ✅ 默认值取自插件 `[build] variants`，`--variant` 可覆盖 |
+| MSI 安装包（`--format msi`） | ✅ 系统级 / 用户级两个包，安装→卸载生命周期实测通过（W-010） |
+| 宿主侧自检 | ✅ clap-probe（身份/端口/声道数）+ pluginval（strictness 5）+ PE 架构核对 |
+| 环境体检 / 契约 B | ✅ `doctor.sh` 逐项给"缺什么、怎么装"；成功时 stdout 只有 `ARTIFACT:` 行 |
+
+### 96.2 对生态的意义：契约这次真的成立了
+
+- **契约 A/B 第一次被"第二个平台"独立实现消费**（C 只在体检里确认素材存在）：Windows 工具只读 `rustomp.toml`
+  （且必须经 `tools/meta/plugin_meta.py`）与已生成的 `src/generated/`，不碰 DSP、不改源码；
+- **平台差异全部留在工具仓**：MSVC/`vcvars`/WiX/`%LOCALAPPDATA%`/PE Machine 没有一个字回流到框架；
+- 与 mac 工具共用**同一个 nih-plug rev**（`de42101`，两边 `deps.lock` 各自钉住），产物形状一致；
+- 可用组合：Windows 侧 `rustomp ≥ v0.1.1`（工具在 `7a186e4` 上验证）+ `rustomp-win-plugin v0.3.0`；
+  macOS 仍是 `rustomp v0.1.1` + `rustomp-mac-plugin v0.1.6` + `sparklin-drive v0.1.8`。
+
+### 96.3 记下来的 Windows 平台事实（以后不用再猜）
+
+| 事实 | 落到的结论 |
+|---|---|
+| **Windows 没有 AU** | 格式集合 = VST3 + CLAP；请求 `--format au` 明确报错，不静默跳过 |
+| **只能用 MSVC**（`vst3-sys` 要编 Steinberg 的 C++，宿主全是 MSVC ABI） | `-gnu` 一律不行；`doctor.sh` 对 `rustc -vV` 的 host 硬校验 |
+| **没有 universal binary** | x64 / arm64 各自独立产物；两架构 identity 相同 → `--arch both` 默认只装 x64 |
+| **MSI 单包双范围不可行** | 实测出现"系统目录与用户目录同时被写"（含卸载 1603）→ 按范围固定两个包，`UpgradeCode` 不同 |
+| **没有 `auval` 等价物** | clap-probe（自写 C，~120 行）+ pluginval 双轨；arm64 只做静态校验，`REQUIRE_VERIFY=1` 时主动失败 |
+| WiX 3.14 免安装 zip 够用 | `candle`/`light` 独立 exe，不必引 .NET SDK（省 ~500 MB） |
+
+### 96.4 边界与后续
+
+- **未做**：代码签名（Authenticode，MSI 也没签）、standalone（不在范围）、CI 工作流；
+- arm64 只有静态校验 —— "产物存在"不等于"宿主能加载"，不能当通过；
+- 本仓只改文档（`README` 平台策略/快速开始、`docs/ecosystem.md`、
+  `docs/declarative-build.md` §4.0/§4.2/§4.4、`docs/pre-gui-checklist.md` 的 P3）；
+- 下一步候选：**Linux 打包工具** → Windows/macOS CI → 签名与公证。
+
 ---
 
 # 4. 技术路线决策（ADR 风格）
@@ -6118,6 +6164,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 
 | 日期 | 内容 |
 |---|---|
+| 2026-10-29 | **Windows 打包工具落地**（E96）：`rustomp-win-plugin v0.3.0` —— VST3/CLAP（x64/arm64）+ 系统级/用户级两个 MSI + clap-probe/pluginval 自检，真实 Windows 机器 DAW 出声；**框架与契约零改动**（契约 A/B 首次被第二个平台独立消费）。文档同步：README 双平台状态与 Windows 快速开始、`ecosystem.md` 仓库地图/进度/风险、`declarative-build.md` §4.0/§4.2/§4.4 改为当前状态 |
 | 2026-10-28 | **大跳变内部子步进 + 失败恢复**（E95）：`step_fixed` 在固定节点单拍变化 >0.1 V 时拆 2–8 个子步；子步失败按 k 重试，仍失败做 DC 恢复，连续 8 拍强制 reset。正常音频走原快速路径（逐位不变）；新增 `last_substeps/last_accept/last_recoveries` 诊断。实测 0.2 V 阶跃 substeps=2、0.5 V 方波零恢复；release 全仓测试全绿 |
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |
 | 2026-10-23 | 用户确认：**GPL-3 开源** / **二极管削波失真** / **macOS+Logic(AU) 优先** / 提供 breadspice 仓库。新增 E2（breadspice 侦察）、E3（ngspice 安装受阻）；新增 ADR-005/006/007；修正 §2.5（ngspice 实为 BSD-3）与新增 §2.7（nih-plug 无 AU）；ADR-002 改为自研 MNA oracle 优先；风险表重写并新增 R8–R12 |
