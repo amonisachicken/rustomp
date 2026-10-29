@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# **契约 B 的可执行测试**（docs/ecosystem.md §2 / §6）。
+# **契约 A/B 的可执行测试**（docs/ecosystem.md §2 / §6）。
 #
-# 验证三件事：
-#   1. `scripts/build-all.sh` 会把「插件目录 + 其余参数」原样交给打包工具；
+# 验证五件事：
+#   1. `scripts/build-all.sh` 会把「插件目录 + 其余参数」原样交给打包工具，并导出 RUSTOMP_ROOT；
 #   2. 打包工具的 `ARTIFACT: <路径>` 行会原样透出（框架不认识平台细节）；
-#   3. **框架源码里不许出现平台专属词**（clap-wrapper / codesign / CMake / Logic / .component）。
+#   3. 缺打包工具时给出**当前平台**可执行的提示（clone 命令）；
+#   4. 契约 A 的最小可用性：模板带 `[requires]`，`plugin_meta.py --get` 对未声明的键返回空；
+#   5. **框架源码里不许出现平台专属词**（clap-wrapper / codesign / CMake / Logic / .component）。
 #
-# 用一个假插件 + 假 packer，不需要 Xcode、不需要网络。
+# 用一个假插件 + 假 packer，不需要 Xcode/MSVC、不需要网络。
 #
 #   ./tests/packer_contract.sh
 set -euo pipefail
@@ -20,7 +22,7 @@ trap 'rm -rf "$TMP"' EXIT
 fail() { printf '✗ %s\n' "$*" >&2; exit 1; }
 ok()   { printf '  ✓ %s\n' "$*"; }
 
-echo "== 1/3 假插件 + 假 packer：参数透传与 ARTIFACT"
+echo "== 1/5 假插件 + 假 packer：参数透传、RUSTOMP_ROOT 与 ARTIFACT"
 mkdir -p "$TMP/fake-plugin" "$TMP/fake-packer"
 cat > "$TMP/fake-plugin/rustomp.toml" <<'EOF'
 [plugin]
@@ -37,22 +39,27 @@ subtype_mono = "Fa01"
 subtype_stereo = "Fa02"
 subtype_dual = "Fa03"
 [build]
+variants = ["mono", "stereo"]
 gui = false
+[requires]
+framework = ">=0.1"
+packer = ">=0.1"
 EOF
 
-# 假 packer：把收到的参数记下来，并按契约打印 ARTIFACT
+# 假 packer：把收到的参数与环境记下来，并按契约打印 ARTIFACT
 cat > "$TMP/fake-packer/pack.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" > "$(dirname "$0")/argv.txt"
+printf 'RUSTOMP_ROOT=%s\n' "${RUSTOMP_ROOT:-}" > "$(dirname "$0")/env.txt"
 [ "${1:-}" != "" ] || { echo "packer 没收到插件目录" >&2; exit 1; }
 echo "ARTIFACT: /tmp/fake/Fake.component"
 echo "ARTIFACT: /tmp/fake/Fake.vst3"
 EOF
 chmod +x "$TMP/fake-packer/pack.sh"
 
-OUT="$(RUSTOMP_MAC_PLUGIN="$TMP/fake-packer" "$ROOT/scripts/build-all.sh" \
-        "$TMP/fake-plugin" --variant stereo --no-install 2>&1)" \
+OUT="$(RUSTOMP_PACKER="$TMP/fake-packer" "$ROOT/scripts/build-all.sh" \
+        "$TMP/fake-plugin" --variant stereo --arch both --no-install 2>&1)" \
     || fail "build-all.sh 调用假 packer 失败：$OUT"
 
 grep -q '^ARTIFACT: /tmp/fake/Fake.component$' <<<"$OUT" || fail "ARTIFACT 行没有透出：$OUT"
@@ -62,16 +69,56 @@ ARGV=()
 while IFS= read -r line; do ARGV+=("$line"); done < "$TMP/fake-packer/argv.txt"   # bash 3.2 没有 mapfile
 [ "${ARGV[0]}" = "$TMP/fake-plugin" ] || fail "第一个参数不是插件目录：${ARGV[0]}"
 [ "${ARGV[1]}" = "--variant" ] && [ "${ARGV[2]}" = "stereo" ] || fail "参数没透传：${ARGV[*]}"
-[ "${ARGV[3]}" = "--no-install" ] || fail "--no-install 没透传：${ARGV[*]}"
+[ "${ARGV[3]}" = "--arch" ] && [ "${ARGV[4]}" = "both" ] || fail "--arch 没透传：${ARGV[*]}"
+[ "${ARGV[5]}" = "--no-install" ] || fail "--no-install 没透传：${ARGV[*]}"
 ok "插件目录与其余参数正确透传（${ARGV[*]}）"
 
-echo "== 2/3 找不到打包工具时给出可执行的提示"
-OUT="$(RUSTOMP_MAC_PLUGIN="$TMP/nope" "$ROOT/scripts/build-all.sh" "$TMP/fake-plugin" 2>&1 || true)"
-grep -q "rustomp-mac-plugin" <<<"$OUT" || fail "缺 packer 时没有给出安装指引：$OUT"
+grep -qx "RUSTOMP_ROOT=$ROOT" "$TMP/fake-packer/env.txt" \
+    || fail "RUSTOMP_ROOT 没有导出给打包工具：$(cat "$TMP/fake-packer/env.txt")"
+ok "RUSTOMP_ROOT 已导出"
+
+echo "== 2/5 macOS 的 RUSTOMP_MAC_PLUGIN 仍然有效（向后兼容）"
+case "$(uname -s)" in
+    Darwin)
+        OUT="$(RUSTOMP_MAC_PLUGIN="$TMP/fake-packer" "$ROOT/scripts/build-all.sh" \
+                "$TMP/fake-plugin" 2>&1)" \
+            || fail "RUSTOMP_MAC_PLUGIN 回退失效：$OUT"
+        grep -q '^ARTIFACT: ' <<<"$OUT" || fail "RUSTOMP_MAC_PLUGIN 回退没有产物：$OUT"
+        ok "RUSTOMP_MAC_PLUGIN 仍可指定打包工具"
+        ;;
+    *)
+        echo "  （非 macOS，跳过）"
+        ;;
+esac
+
+echo "== 3/5 找不到打包工具时给出可执行的提示"
+# 不给 RUSTOMP_PACKER：让平台分支给 clone 指引（两个平台都测）
+OUT="$(RUSTOMP_MAC_PLUGIN="$TMP/nope" RUSTOMP_WIN_PLUGIN="$TMP/nope" \
+    "$ROOT/scripts/build-all.sh" "$TMP/fake-plugin" 2>&1 || true)"
+grep -q "pack.sh" <<<"$OUT" || fail "缺 packer 时没有说明缺什么：$OUT"
 grep -q "git clone" <<<"$OUT" || fail "缺 packer 时没有给出 clone 命令：$OUT"
 ok "缺 packer → 明确指引"
 
-echo "== 3/3 框架源码里不许出现平台专属词"
+# 显式指定了一个不存在的路径：要说清是 RUSTOMP_PACKER 的问题，而不是乱提示
+OUT="$(RUSTOMP_PACKER="$TMP/nope" "$ROOT/scripts/build-all.sh" "$TMP/fake-plugin" 2>&1 || true)"
+grep -q "RUSTOMP_PACKER" <<<"$OUT" || fail "显式路径错了却没有提到 RUSTOMP_PACKER：$OUT"
+ok "显式 RUSTOMP_PACKER 错了 → 指出该变量"
+
+echo "== 4/5 契约 A：模板带 [requires]，--get 对未声明键返回空"
+TPL="$ROOT/template/rustomp.toml"
+REQ_PACKER="$(python3 "$ROOT/tools/meta/plugin_meta.py" "$TPL" --get requires.packer)"
+[ -n "$REQ_PACKER" ] || fail "模板没有 [requires] packer（打包器的版本校验会永远跳过）"
+REQ_FRAMEWORK="$(python3 "$ROOT/tools/meta/plugin_meta.py" "$TPL" --get requires.framework)"
+[ -n "$REQ_FRAMEWORK" ] || fail "模板没有 [requires] framework（生成器无法校验框架版本）"
+[ -z "$(python3 "$ROOT/tools/meta/plugin_meta.py" "$TPL" --get requires.does_not_exist)" ] \
+    || fail "--get 对未声明的键应输出空"
+SHELL_REQ="$(python3 "$ROOT/tools/meta/plugin_meta.py" "$TPL" --shell \
+    | sed -n 's/^REQUIRES_PACKER=//p' | tr -d "'\"")"
+[ "$SHELL_REQ" = "$REQ_PACKER" ] \
+    || fail "--shell 导出的 REQUIRES_PACKER 不对：${SHELL_REQ:-（空）}"
+ok "模板声明了 framework/packer，且 plugin_meta 导出 REQUIRES_*"
+
+echo "== 5/5 框架源码里不许出现平台专属词"
 # 只扫「代码与脚本」，文档里出现是正常的（讲背景/历史）
 # 排除：文档、以及 shell 的注释行（讲"为什么这么拆"必须能提到这些词）
 hits="$(grep -rnE "clap-wrapper|codesign|CMakeLists|\.component|Logic" \
@@ -85,4 +132,4 @@ fi
 ok "crates/ scripts/ tools/meta 里没有平台专属词"
 
 echo
-echo "== 契约 B 通过"
+echo "== 契约 A/B 通过"

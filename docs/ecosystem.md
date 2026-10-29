@@ -57,10 +57,10 @@
 [plugin] [au] [build] [circuit] [[params]] [assets] [ui] [requires]
 ```
 
-- 由**插件作者**维护 `[plugin] [au] [circuit] [[params]]`；
+- 由**插件作者**维护 `[plugin] [au] [circuit] [[params]] [requires]`；
 - 由**设计器**写 `[assets]` + `[ui]`（标记块内，其余不许碰）；
 - 由 `rustomp-gen` 读全部，生成 `plugin/src/generated/*.rs`；
-- 由**打包工具**读 `[plugin] [au] [build]`。
+- 由**打包工具**读 `[plugin] [au] [build]`（及 `[requires] packer`）。
 
 规范：`docs/declarative-build.md`、`rustomp-box-designer/docs/01-contract-panel-toml.md`。
 
@@ -103,15 +103,19 @@
 
 **唯一允许的循环**：打包工具需要 `rustomp-gen` 的产物，但**不需要 rustomp 的源码**（生成物入库）。
 
-跨仓版本用 `rustomp.toml` 的 `[requires]` 显式声明，由 `rustomp-gen` 与 packer 启动时各校验一次：
+跨仓版本用 `rustomp.toml` 的 `[requires]` 显式声明，由 `rustomp-gen`（校验 `framework`）与
+packer（校验 `packer`）各校验一次：
 
 ```toml
 [requires]
 framework = ">=0.1,<0.2"   # rustomp crates（插件 Cargo.toml 的 git tag 应对应）
 packer    = ">=0.1"        # rustomp-mac-plugin / win / linux
+packer_tag = "v0.1.6"      # 插件 build.sh 自动 clone 打包工具时钉的 tag（可选）
 designer  = ">=0.1"        # 仅记录（用于解释 ui.toml 的字段版本）
 ```
 
+语法：逗号分隔的比较式（`>=` / `>` / `<=` / `<` / `=`），空串 = 不约束；
+按 `major.minor.patch` 比较。新插件由模板自动带上 `framework` / `packer` 两行。
 不匹配就**明确报错**，不要产出一个"能编但行为不同"的插件。
 
 ---
@@ -121,11 +125,11 @@ designer  = ">=0.1"        # 仅记录（用于解释 ui.toml 的字段版本）
 | 去 `rustomp-mac-plugin` | 留在 `rustomp` |
 |---|---|
 | `scripts/build-all.sh` `build-variant.sh` `build-au.sh` `check-au.sh` | `scripts/verify.sh`（对拍 / 漂移守卫） |
-| `scripts/gen-bundler-toml.sh` `plugin-env.sh` `reset-logic-cache.sh` | `scripts/make-netlist.sh` `sim-baseline.sh` `build-ngspice.sh` |
+| `scripts/gen-bundler-toml.sh` `reset-logic-cache.sh` | `scripts/new-plugin.sh`（脚手架，与平台无关） |
 | `cmake/CMakeLists.txt`、`bundler.toml` 模板 | `tools/meta/`（manifest 读取 = **契约 A 的一部分**） |
 | `patches/0001-auv2-host-classification-and-layouts.patch` | `tools/oracle/`（ngspice 对拍） |
 | `tools/au-smoke/`（C）、`tools/clap-probe/` | `crates/{rustomp-dsp,rustomp-gui,rustomp-gen,rustomp-import,rustomp-oracle}` |
-| `scripts/new-plugin.sh`（建议搬或复制一份） | `docs/`（契约与生态文档） |
+| — | `scripts/plugin-env.sh` `make-netlist.sh` `sim-baseline.sh` `build-ngspice.sh`、`docs/` |
 
 **判断标准**：一个文件如果提到 `clap-wrapper`、`codesign`、`CMake`、`Logic`、`.component`，它就该去 mac 工具；
 如果提到 `vcvars`、`MSVC`、`WiX`、`%LOCALAPPDATA%`、`PE Machine`，它就该去 win 工具。
@@ -133,12 +137,15 @@ designer  = ">=0.1"        # 仅记录（用于解释 ui.toml 的字段版本）
 `scripts/fetch-third-party.sh`（拉 ngspice 源码）服务的是"在本机编 ngspice 做对拍"，
 属于验证环境，**不进 mac 打包工具**；需要时由开发者在 `rustomp` 里跑。
 
-`rustomp` 保留一个瘦包装，保证"一键"体验不丢：
+`rustomp` 保留一个瘦包装，保证"一条命令"体验不丢（按平台分派，框架不认识平台细节）：
 
 ```bash
 # rustomp/scripts/build-all.sh（拆分后）
-exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
-# 找不到则报错并打印 clone 命令，绝不偷偷自己编
+PACKER="$RUSTOMP_PACKER"                         # 显式指定优先
+# macOS   → 同级 rustomp-mac-plugin/pack.sh
+# Windows → 同级 rustomp-win-plugin/pack.sh
+# 其他    → 报错，提示用 RUSTOMP_PACKER 指定一个新后端
+exec "$PACKER/pack.sh" "$PLUGIN_DIR" "$@"        # 只透传 ARTIFACT: 行
 ```
 
 ---
@@ -163,9 +170,11 @@ exec "${RUSTOMP_MAC_PLUGIN:-$HOME/develop/rustomp-mac-plugin}/pack.sh" "$@"
 
 ```bash
 # rustomp/tests/packer_contract.sh —— 用假插件 + 假 packer 验证
-#  1) 入参（plugin_dir / variant / format）能被解析
+#  1) 入参（plugin_dir / variant / format / arch）能被解析并透传，且导出 RUSTOMP_ROOT
 #  2) 成功时 stdout 有且仅有 "ARTIFACT: <绝对路径>"
-#  3) 框架侧不出现平台专属词（clap-wrapper / codesign / CMake / Logic / .component）
+#  3) 缺打包工具时给出当前平台可执行的提示（clone 命令）
+#  4) 契约 A 的最小可用性：模板带 [requires]，--get/--shell 能拿到 framework/packer
+#  5) 框架侧不出现平台专属词（clap-wrapper / codesign / CMake / Logic / .component）
 ```
 
 有了它，"加一个 Windows/Linux 打包工具"就是**加一个符合契约的脚本**，而不是改框架。

@@ -60,7 +60,8 @@ nih-plug 的 trait 也叫 `Params`。生成物里如果把自己的结构体叫 
 
 `package` 必须是 kebab-case、`name/vendor` 非空、**VST3 id 恰好 16 字节**（每个变体）、
 参数 id 唯一且合法、`circuit` 字段合法且**同一字段不被两个参数映射**、
-`gui = true` 时必须有 `[ui]`。
+`gui = true` 时必须有 `[ui]`；以及**契约 A 的 `[requires] framework`**
+（`>=0.1,<0.2` 这种写法，空串 = 不约束）必须包含当前框架版本。
 
 一次报全部问题，不是只报第一个。
 

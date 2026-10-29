@@ -20,6 +20,9 @@ target/
 # 第三方源码（由 scripts/fetch-third-party.sh 拉取，不入库）
 /third_party/
 
+# Python
+__pycache__/
+
 # macOS
 .DS_Store
 

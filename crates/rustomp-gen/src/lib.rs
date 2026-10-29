@@ -53,7 +53,14 @@ pub fn load(project: &Path) -> Result<Manifest, String> {
 /// `check = true` 时只比对不写入（CI 防漂移）。
 pub fn generate(project: &Path, check: bool) -> Result<Report, String> {
     let manifest = load(project)?;
-    let errs = validate(&manifest);
+    let mut errs = validate(&manifest);
+    // 契约 A 的跳仓约束：插件声明的 framework 下界/上界必须包含当前框架版本。
+    // （packer 版本约束由各自的 pack.sh 校验；这里只负责 framework。）
+    if let Err(e) =
+        manifest::check_framework_req(&manifest.requires.framework, env!("CARGO_PKG_VERSION"))
+    {
+        errs.push(e);
+    }
     if !errs.is_empty() {
         return Err(format!(
             "rustomp.toml 校验失败：\n  - {}",

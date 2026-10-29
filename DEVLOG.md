@@ -5879,6 +5879,47 @@ CPU（2× 过采样，Logic 未运行时的干净测量）：锗 4.8–6.1 µs/�
 
 ---
 
+## E97：框架侧对齐两个打包器（2026-10-29）
+
+**背景**：E96 之后两个平台都能打包，但框架侧还有三处只存在于文档/参考插件的约定：
+
+1. `scripts/build-all.sh` 只会调 macOS 工具（Windows 只能绕过它直接调 `pack.sh`）；
+2. `[requires]` 只在文档和参考插件里，`template/` + `new-plugin.sh` 生成的新插件**没有**这两个字段
+   → 两个 packer 的版本校验永远跳过；
+3. 文档说"`rustomp-gen` 与 packer 各校验一次 `framework`/`packer`"，但生成器没实现；
+   同时 `plugin_meta.py --get` 遇到缺失键会 traceback，`--shell` 又把 `[au]` 当必需
+   （Windows 插件并不需要 AU；`[build]` 本可全部用默认值）。
+
+### 97.1 改了什么（都在框架侧，打包器一行未改）
+
+| 位置 | 改动 |
+|---|---|
+| `scripts/build-all.sh` | 按平台分派：macOS → 同级 `rustomp-mac-plugin`，Windows（MINGW/MSYS/CYGWIN）→ 同级 `rustomp-win-plugin`，其他平台明确报错；`RUSTOMP_PACKER` 可指定任意契约 B 脚本，`RUSTOMP_MAC_PLUGIN` 保持向后兼容；`--arch` 等参数原样透传，并导出 `RUSTOMP_ROOT` |
+| `template/rustomp.toml` | 新增 `[requires]`：`framework = ">=0.1,<0.2"`、`packer = ">=0.1"`，另附 `packer_tag`/`designer` 注释示例 |
+| `tools/meta/plugin_meta.py` | `--shell` 导出 `REQUIRES_FRAMEWORK/PACKER/PACKER_TAG/DESIGNER`；`--get` 对未声明的键输出空行而不是 traceback；`[au]`/`[build]` 可缺省（空值/默认 variants） |
+| `crates/rustomp-gen` | 新增 `[requires]` 模型与 `check_framework_req()`：生成前校验 `framework` 边界（逗号分隔的 `>= > <= < =`，按 major.minor.patch），不满足就报错 |
+| `tests/packer_contract.sh` | 从 3 步扩到 5 步：参数/`--arch`/`RUSTOMP_ROOT` 透传、mac 旧环境变量回退、缺包时平台化提示、模板 `[requires]` 与 `--get/--shell`、框架无平台词 |
+| `scripts/verify-isolation.sh` | 去掉一行硬编码平台词（它会让契约测试第 5 步变红）；改为只打印 clone 数量 |
+| `scripts/verify.sh` | 契约层标签改为"契约 A/B（ARTIFACT / 模板 requires / 无平台词）" |
+
+### 97.2 验证
+
+| 检查 | 结果 |
+|---|---|
+| `./tests/packer_contract.sh` | 5/5 通过（含缺包提示与模板 requires） |
+| `cargo test -p rustomp-gen` | 18 项全绿（新增 `parses_requires_section` / `checks_framework_requirement`） |
+| `new-plugin.sh` 生成到 `/tmp` | `rustomp-gen` 接受新模板；`plugin_meta --shell` 输出 `REQUIRES_FRAMEWORK='>=0.1,<0.2'`、`REQUIRES_PACKER='>=0.1'` |
+| 未做 | 没跑完整 `verify.sh` / 真机打包（避免重负载）；CI 的 `fast` 层会跑契约测试与 `cargo test --workspace` |
+
+### 97.3 边界
+
+- 平台分派只认 `uname -s` 的 Darwin / MINGW / MSYS / CYGWIN；Linux 明确报错（等 `rustomp-linux-plugin`）；
+- 框架**不解释** `--format` / `--arch` / `--variant`，原样交给 packer；
+- 版本比较只做 `major.minor.patch`，不支持 `^`/`~`/通配 —— 契约里也只写比较式；
+- 打包脚本、DSP、生成物字节均未变（只改了生成前的校验与模板；已有插件不写 `[requires]` 仍可生成）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定
@@ -6164,6 +6205,7 @@ rustomp-plugin (nih-plug)  ──►  .clap
 
 | 日期 | 内容 |
 |---|---|
+| 2026-10-29 | **框架侧对齐两个打包器**（E97）：`build-all.sh` 按平台分派（mac/win，`RUSTOMP_PACKER` 可覆盖）；`template/` 新增 `[requires]`，`plugin_meta.py` 导出 `REQUIRES_*` 且 `--get/--shell` 容忍缺省字段；`rustomp-gen` 校验 `framework` 版本边界；契约测试扩到 5 步（含 `--arch` 透传、mac 旧变量回退、模板 requires）；顺手修掉 `verify-isolation.sh` 里会让契约测试变红的一行 |
 | 2026-10-29 | **Windows 打包工具落地**（E96）：`rustomp-win-plugin v0.3.0` —— VST3/CLAP（x64/arm64）+ 系统级/用户级两个 MSI + clap-probe/pluginval 自检，真实 Windows 机器 DAW 出声；**框架与契约零改动**（契约 A/B 首次被第二个平台独立消费）。文档同步：README 双平台状态与 Windows 快速开始、`ecosystem.md` 仓库地图/进度/风险、`declarative-build.md` §4.0/§4.2/§4.4 改为当前状态 |
 | 2026-10-28 | **大跳变内部子步进 + 失败恢复**（E95）：`step_fixed` 在固定节点单拍变化 >0.1 V 时拆 2–8 个子步；子步失败按 k 重试，仍失败做 DC 恢复，连续 8 拍强制 reset。正常音频走原快速路径（逐位不变）；新增 `last_substeps/last_accept/last_recoveries` 诊断。实测 0.2 V 阶跃 substeps=2、0.5 V 方波零恢复；release 全仓测试全绿 |
 | 2026-10-23 | 建立本文件；完成阶段 0 可行性验证与 E1 实验；勘误 `prepare.md`；确定 ADR-001/003/004，ADR-002 待定 |

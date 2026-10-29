@@ -57,7 +57,7 @@
 | **框架机制** | `crates/rustomp-dsp/src/{engine,oversample,circuit,branch}.rs` | `Circuit` 契约、`Engine<C>`、4× 过采样、真旁通（`set_bypass`）、NaN 熔断、分支切换 |
 | **界面层** | `crates/rustomp-gui` | 声明式面板（`PanelSpec`）、参数桥（`ParamAccess`）、贴图生命周期、面板校验 |
 | **SPICE 模型库** | `devices/` | 清洗后的 `devices.lib` + 手写子电路 + 对拍报告 |
-| **插件外壳** | `template/` + `scripts/new-plugin.sh` + `rustomp-gen` | nih-plug 外壳 + 单声道/立体声变体（下游项目生成到 `plugins/`）；`gui = true` 时含面板模块与窗口尺寸记忆 |
+| **插件外壳** | `template/` + `scripts/new-plugin.sh` + `rustomp-gen` | nih-plug 外壳 + 单声道/立体声变体（下游项目生成到框架**同级**目录）；`gui = true` 时含面板模块与窗口尺寸记忆 |
 
 `Sparklin Drive` 是第一个用这套框架做出来的插件，也是"怎么用这个框架"的活样板。
 
@@ -111,7 +111,7 @@ crates/
   rustomp-import/       框架：外部电路导入（IR + 可插拔 Importer）+ **网表 → 装配代码生成**
     src/spice.rs        SPICE 网表导入器（.cir/.net/.sp）
     src/mna_codegen.rs  网表 → Netlist/Params/impl Circuit（参数化、器件卡片、导线合并）
-plugins/                下游插件项目的输出目录（new-plugin.sh 生成，不入库）
+plugins/                历史位置（现在默认生成到框架**同级**目录；此目录仅作兼容）
                         ↑ 参考实现见独立仓库 sparklin-drive-legacy
 template/               脚手架模板（new-plugin.sh 用；与下游插件结构同构）
 tools/
@@ -143,22 +143,25 @@ cargo test --workspace            # 不需要 ngspice；不需要任何插件
 ### macOS
 
 ```bash
+# 目录约定：框架、打包工具、插件项目都是**同级**
+#   some-dir/{rustomp, rustomp-mac-plugin, my-effect}
 # 1) 一次性：拉打包工具与它的第三方源码
-git clone git@github.com:amonisachicken/rustomp-mac-plugin.git ~/develop/rustomp-mac-plugin
-~/develop/rustomp-mac-plugin/scripts/fetch-third-party.sh
-~/develop/rustomp-mac-plugin/scripts/doctor.sh        # 体检：cargo / Xcode CLT / rust targets / 主题
+git clone git@github.com:amonisachicken/rustomp-mac-plugin.git
+./rustomp-mac-plugin/scripts/fetch-third-party.sh
+./rustomp-mac-plugin/scripts/doctor.sh        # 体检：cargo / Xcode CLT / rust targets / 主题
 
-# 2) 构建 + 安装一个插件项目（插件住在**框架之外**，例如 ../sparklin-drive）
-export RUSTOMP_MAC_PLUGIN=~/develop/rustomp-mac-plugin
-./scripts/build-all.sh ~/develop/sparklin-drive       # → AU/VST3/CLAP，装到 ~/Library/Audio/Plug-Ins/
+# 2) 构建 + 安装一个插件项目（插件住在**框架之外**）
+./scripts/build-all.sh ../my-effect            # → AU/VST3/CLAP，装到 ~/Library/Audio/Plug-Ins/
 ```
 
-`./scripts/build-all.sh` 是**瘦包装**：它把插件目录交给 `rustomp-mac-plugin/pack.sh`，
-只认 `ARTIFACT: <路径>` 这一行输出（契约 B）。找不到打包工具时它会打印 clone 命令，绝不自己编。
+`./scripts/build-all.sh` 是**统一入口**：按当前平台把插件目录交给对应的打包工具
+（macOS → `rustomp-mac-plugin`，Windows → `rustomp-win-plugin`），只认 `ARTIFACT: <路径>`
+这一行输出（契约 B）。找不到打包工具时它会打印 clone 命令，绝不会自己编；
+也可用 `RUSTOMP_PACKER=/path/to/pack.sh` 显式指定。
 
 ```bash
-~/develop/rustomp-mac-plugin/scripts/check-au.sh          # AU 自检
-~/develop/rustomp-mac-plugin/scripts/reset-logic-cache.sh # Logic 看不到插件时清缓存
+./rustomp-mac-plugin/scripts/check-au.sh          # AU 自检
+./rustomp-mac-plugin/scripts/reset-logic-cache.sh # Logic 看不到插件时清缓存
 ```
 
 ### Windows
@@ -171,11 +174,11 @@ VS Build Tools 2022 的 C++ 工作负载、Python ≥ 3.11。逐项安装命令�
 # 目录约定：框架与打包工具都是插件项目的**同级**
 #   some-dir/{rustomp, rustomp-win-plugin, my-effect}
 ./rustomp-win-plugin/scripts/doctor.sh          # 缺什么、怎么装，逐项给命令
-./rustomp-win-plugin/pack.sh ../my-effect       # → VST3 + CLAP，装到 %LOCALAPPDATA%，逐行 ARTIFACT
+./scripts/build-all.sh ../my-effect             # 自动分派到 Windows 打包工具 → VST3 + CLAP + 安装
 
-# 只产出、不安装；或额外打出「系统级 / 用户级」两个 MSI
-./rustomp-win-plugin/pack.sh ../my-effect --no-install
-./rustomp-win-plugin/pack.sh ../my-effect --format msi --no-install
+# 打包工具的全量参数也可以经 build-all 透传（或直接调用它）
+./scripts/build-all.sh ../my-effect --arch both --no-install
+./rustomp-win-plugin/pack.sh ../my-effect --format msi --no-install   # 系统级 / 用户级两个 MSI
 ```
 
 平台事实：**Windows 没有 AU**（`--format au` 会明确报错）；不做 standalone；
@@ -191,33 +194,32 @@ MSI 按安装范围固定为**两个包**（单包双范围在 Windows Installer
 ## 新建一个插件
 
 ```bash
-./scripts/new-plugin.sh "My Drive"        # 生成 plugins/my-drive/（与示例同构）
-cd plugins/my-drive
-# 1) 改 rustomp.toml：名字 / AU 四字符码 / CLAP id / 素材 / 控件坐标
-# 2) 写电路：circuit/src/（从纯增益示例 Gain 换起）
+./scripts/new-plugin.sh "My Drive"        # 生成 ../my-drive/（框架同级，与示例同构）
+# 1) 改 ../my-drive/rustomp.toml：名字 / AU 四字符码 / CLAP id / 素材 / 控件坐标
+# 2) 写电路：../my-drive/circuit/src/（从纯增益示例 Gain 换起）
 # 3) 生成网表与基线，做对拍：
-#      ./scripts/make-netlist.sh plugins/my-drive/circuit/netlist
-#      ./scripts/sim-baseline.sh plugins/my-drive/circuit/netlist
-# 4) 构建安装：
-PLUGIN_DIR=$PWD/plugins/my-drive ./scripts/build-all.sh
+./scripts/make-netlist.sh ../my-drive/circuit/netlist
+./scripts/sim-baseline.sh ../my-drive/circuit/netlist
+# 4) 构建安装（按当前平台自动分派到 mac / win 打包工具）
+./scripts/build-all.sh ../my-drive
 ```
 
 ## 电路建模的工作流
 
-以生成的项目 `plugins/my-drive` 为例：
+以生成的项目 `../my-drive` 为例：
 
 ```bash
 # 1) 面包板工程（.bread） → 中间表示 → SPICE 网表
-./scripts/make-netlist.sh plugins/my-drive/circuit/netlist
+./scripts/make-netlist.sh ../my-drive/circuit/netlist
 
 # 2) ngspice 跑 op / ac / tran+THD / 波形统计，产出 baseline.txt
-./scripts/sim-baseline.sh plugins/my-drive/circuit/netlist
+./scripts/sim-baseline.sh ../my-drive/circuit/netlist
 
-# 3) 与 DSP 实现对拍（不需要 ngspice 的快速回归）
-cargo test -p my-drive-circuit --release
+# 3) 与 DSP 实现对拍（不需要 ngspice 的快速回归；在插件自己的 workspace 里跑）
+(cd ../my-drive && cargo test -p my-drive-circuit --release)
 
 # 4) 活体对拍（每次真的跑 ngspice；没装则自动跳过）
-cargo test -p my-drive-circuit --release --test oracle
+(cd ../my-drive && cargo test -p my-drive-circuit --release --test oracle)
 ```
 
 要接入**你自己的电路**：
@@ -348,13 +350,16 @@ rustomp（框架 + 平台契约）
 | 层 | 谁提供 | 状态 |
 |---|---|---|
 | DSP / 电路 / 器件 / 代码生成 | **本仓库** | ✅ 纯 Rust，三平台都能编 |
-| macOS 打包 | **`rustomp-mac-plugin`**（本仓 `scripts/build-all.sh` 只是瘦包装） | ✅ AU/VST3/CLAP，已在 Logic 验证 |
+| macOS 打包 | **`rustomp-mac-plugin`**（`scripts/build-all.sh` 按平台分派） | ✅ AU/VST3/CLAP，已在 Logic 验证 |
 | Windows 打包 | **`rustomp-win-plugin`** | ✅ VST3/CLAP + MSI，已在本机 DAW 出声 |
 | Linux 打包 | `rustomp-linux-plugin` | ⬜ 未开工 |
 
 两个已落地的打包工具都实现**同一个契约 B**：吃 `<plugin_dir>/rustomp.toml` + 已生成的
 `src/generated/`，只读不改；成功时 stdout 逐行 `ARTIFACT: <绝对路径>`，其余日志走 stderr。
 所以接 Windows 不需要改框架、不需要改插件源码。
+
+框架侧只有一个入口 `scripts/build-all.sh`：按平台分派到对应的 `pack.sh`，参数原样透传，
+`RUSTOMP_PACKER` 可指定任意实现契约 B 的脚本。新平台 = 实现一个 `pack.sh` + 在分派里加一行。
 
 各自的平台事实（都写进了工具仓的 README / `capabilities.toml`）：
 

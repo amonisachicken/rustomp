@@ -32,6 +32,14 @@ dual_variant = false
 # 并在 plugin/src/editor.rs 里实现 `make(params, activity)`（S1d）。
 gui = false
 
+[requires]
+# 跨仓版本约束（契约 A）：packer 启动时校验 `packer`，rustomp-gen 校验 `framework`。
+# 不匹配就明确报错，不产出“能编但行为不同”的插件。
+framework = ">=0.1,<0.2"   # rustomp crates（插件 Cargo.toml 的 git tag 应对应）
+packer    = ">=0.1"        # rustomp-mac-plugin / rustomp-win-plugin
+# packer_tag = "v0.1.6"    # 插件的 build.sh 自动 clone 打包工具时钉的 tag（可选）
+# designer = ">=0.1"       # 面板设计器产物格式版本（仅记录，可选）
+
 [circuit]
 # 电路 crate 里实现 rustomp_dsp::Circuit 的类型 / 参数类型
 plugin_type = "Gain"

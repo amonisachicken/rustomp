@@ -11,6 +11,13 @@
 
 `--shell` 输出形如 `PLUGIN_NAME='Sparklin Drive'` 的赋值，供 `eval`。
 `--rust` 输出 `const` 定义，供插件 crate 的 build.rs 生成 identity.rs。
+`--get a.b.c` 取单个键；键不存在时输出空行、退出码 0（契约 A 的可选字段
+—— 例如 `requires.packer` 没写就表示"不约束"）。
+
+[au] / [build] 可以缺省：[au] 缺失时 AU_* 全部为空（Windows 插件不需要 AU），
+[build] 缺失时按 `variants = ["mono", "stereo"]`、`dual_variant = false` 处理。
+`[requires]` 会导出为 REQUIRES_FRAMEWORK / PACKER / PACKER_TAG / DESIGNER
+（未声明则为空字串），供打包脚本与插件的 build.sh 使用。
 
 只用标准库（tomllib，Python ≥3.11），不引入额外依赖。
 """
@@ -61,7 +68,12 @@ def main() -> None:
         variant = sys.argv[sys.argv.index("--variant") + 1]
 
     if mode == "--get":
-        print(get(data, sys.argv[3]))
+        if len(sys.argv) < 4:
+            sys.exit("用法: plugin_meta.py <rustomp.toml> --get <dotted.key>")
+        try:
+            print(get(data, sys.argv[3]))
+        except KeyError:
+            pass  # 未声明的可选项：输出空行，调用方用 `[ -n ... ]` 判断
         return
 
     if mode == "--json":
@@ -69,9 +81,14 @@ def main() -> None:
         return
 
     # 无 GUI 阶段可以没有 [assets] / [ui]；缺失时给空字典，避免构建脚本直接崩
-    p, au, b = data["plugin"], data["au"], data["build"]
+    # [au] / [build] 也可以缺省：Windows 打包不需要 AU，[build] 全部有默认值
+    p = data["plugin"]
+    au = data.get("au", {})
+    b = data.get("build", {})
+    r = data.get("requires", {})
     a = data.get("assets", {})
     ui = data.get("ui", {})
+    variants = b.get("variants") or ["mono", "stereo"]
 
     if mode == "--shell":
         pairs = {
@@ -84,14 +101,19 @@ def main() -> None:
             "PLUGIN_URL": p.get("url", ""),
             "PLUGIN_CLAP_ID": p["clap_id"],
             "PLUGIN_VST3_ID": p["vst3_class_id"],
-            "AU_MANUFACTURER": au["manufacturer_code"],
-            "AU_MANUFACTURER_NAME": au["manufacturer_name"],
-            "AU_BUNDLE_ID": au["bundle_id"],
-            "AU_SUBTYPE_MONO": au["subtype_mono"],
-            "AU_SUBTYPE_STEREO": au["subtype_stereo"],
-            "AU_SUBTYPE_DUAL": au["subtype_dual"],
-            "BUILD_VARIANTS": " ".join(b["variants"]),
+            "AU_MANUFACTURER": au.get("manufacturer_code", ""),
+            "AU_MANUFACTURER_NAME": au.get("manufacturer_name", ""),
+            "AU_BUNDLE_ID": au.get("bundle_id", ""),
+            "AU_SUBTYPE_MONO": au.get("subtype_mono", ""),
+            "AU_SUBTYPE_STEREO": au.get("subtype_stereo", ""),
+            "AU_SUBTYPE_DUAL": au.get("subtype_dual", ""),
+            "BUILD_VARIANTS": " ".join(variants),
             "BUILD_DUAL": "1" if b.get("dual_variant") else "0",
+            # 跨仓版本约束（契约 A；packer 自己也会再校验一次）
+            "REQUIRES_FRAMEWORK": r.get("framework", ""),
+            "REQUIRES_PACKER": r.get("packer", ""),
+            "REQUIRES_PACKER_TAG": r.get("packer_tag", ""),
+            "REQUIRES_DESIGNER": r.get("designer", ""),
             # 素材（可能没有：无 GUI 阶段的插件不声明 [assets]）
             # 现在 [assets] 是自由映射（旋钮贴图等也放这里）→ 全部导出为 ASSET_<UPPER>
             "ASSET_PANEL": _asset(path, a.get("panel")),

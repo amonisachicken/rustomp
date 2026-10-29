@@ -99,7 +99,7 @@ clone_at sparklin-drive "$T_PLUGIN" || true
 # ---------------------------------------------------------------- 3. 第三方源码
 say "拉打包工具的第三方源码"
 if ( cd "$ISO/rustomp-mac-plugin" && ./scripts/fetch-third-party.sh ) >"$ISO/fetch.log" 2>&1; then
-    ok "$(grep -E '^\s+clap-wrapper' "$ISO/fetch.log" | head -1 | sed 's/^ *//')"
+    ok "$(grep -c '^\[clone\]' "$ISO/fetch.log") 份第三方源码就绪"
 else
     bad "fetch-third-party 失败（见 $ISO/fetch.log）"
     echo; echo "隔离工作区：${ISO}（保留）"; exit 1

@@ -205,6 +205,10 @@ rustomp（框架 + 平台契约）
 3. 能力声明（支持哪些格式/变体）写在它自己的 README 与 `capabilities.toml` 里；
 4. 验证标准：能在目标宿主上安装、扫出预期身份、渲染正常。
 
+> 框架侧只有**一个**入口：`scripts/build-all.sh` 按平台分派到对应的 `pack.sh`
+> （`RUSTOMP_PACKER` 可覆盖），只透传 `ARTIFACT:`；新平台 = 实现一个 `pack.sh` + 在分派里加一行。
+> 工具本身只读 `[plugin] [au] [build]` 与 `[requires] packer`。
+
 > 仓库边界、文件归属、版本约束与拆分顺序见 **`docs/ecosystem.md`**。
 >
 > 为什么不在本仓库做条件编译：难点不是编译而是**打包与宿主兼容**（clap-wrapper/CMake/签名/宿主缓存），

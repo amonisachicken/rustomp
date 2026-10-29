@@ -25,6 +25,26 @@ pub struct Manifest {
     /// BTreeMap 保证生成顺序稳定（可 diff）。
     #[serde(default)]
     pub assets: std::collections::BTreeMap<String, String>,
+    /// 跳仓版本约束（契约 A）。rustomp-gen 只校验 `framework`；`packer` /
+    /// `packer_tag` / `designer` 由打包工具与插件自己的构建脚本使用。
+    #[serde(default)]
+    pub requires: RequiresMeta,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RequiresMeta {
+    /// 形如 `">=0.1,<0.2"`；空串 = 不约束
+    #[serde(default)]
+    pub framework: String,
+    /// 打包工具的版本下界（mac / win 的 pack.sh 自己校验）
+    #[serde(default)]
+    pub packer: String,
+    /// 插件 build.sh 自动 clone 打包工具时钉的 tag（可选）
+    #[serde(default)]
+    pub packer_tag: String,
+    /// 面板设计器产物的字段版本（仅记录）
+    #[serde(default)]
+    pub designer: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -254,6 +274,75 @@ impl Manifest {
     }
 }
 
+// ---------------------------------------------------------------- 版本约束
+
+/// 取 `(major, minor, patch)`：`"0.1.1"` / `"v0.1"` / `"0.1-rc1"`
+/// → `(0,1,1)` / `(0,1,0)` / `(0,1,0)`。
+fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
+    let s = s.trim().trim_start_matches('v');
+    let mut parts = s.split('.');
+    let major = leading_u32(parts.next()?)?;
+    let minor = match parts.next() {
+        Some(p) => leading_u32(p)?,
+        None => 0,
+    };
+    let patch = match parts.next() {
+        Some(p) => leading_u32(p)?,
+        None => 0,
+    };
+    Some((major, minor, patch))
+}
+
+fn leading_u32(s: &str) -> Option<u32> {
+    let digits: String = s
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
+}
+
+/// 校验 `[requires] framework`（契约 A）。
+///
+/// 只支持比较运算符（`>=` / `>` / `<=` / `<` / `=`），逗号分隔多个条件，
+/// 例如 `">=0.1,<0.2"`；空串表示不约束。按 `major.minor.patch` 比较
+/// （两个打包器的 `requires.packer` 只校验 `>=` 下界；常见写法两边一致）。
+pub fn check_framework_req(req: &str, current: &str) -> Result<(), String> {
+    let cur =
+        parse_version(current).ok_or_else(|| format!("当前 rustomp 版本无法解析：{current:?}"))?;
+    for part in req.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (op, rest) = ["<=", ">=", "==", "<", ">", "="]
+            .iter()
+            .find_map(|op| part.strip_prefix(op).map(|rest| (*op, rest)))
+            .ok_or_else(|| {
+                format!("[requires] framework 不支持的约束：{part:?}（支持 >= > <= < =，逗号分隔）")
+            })?;
+        let want = parse_version(rest)
+            .ok_or_else(|| format!("[requires] framework 版本号无法解析：{rest:?}"))?;
+        let ok = match op {
+            ">=" => cur >= want,
+            ">" => cur > want,
+            "<=" => cur <= want,
+            "<" => cur < want,
+            _ => cur == want,
+        };
+        if !ok {
+            return Err(format!(
+                "[requires] framework = {req:?} 不满足：当前 rustomp {current}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------- 校验
 
 /// 生成前的静态检查。返回全部问题（不是只报第一个），便于一次改完。
@@ -413,5 +502,48 @@ circuit = "gain"
         m.params.push(p2);
         let errs = validate(&m);
         assert!(errs.iter().any(|e| e.contains("电路字段")), "{errs:?}");
+    }
+
+    #[test]
+    fn parses_requires_section() {
+        let m: Manifest = toml::from_str(
+            r#"
+[plugin]
+package = "demo"
+name = "Demo"
+vendor = "HOP"
+clap_id = "com.x.demo"
+vst3_class_id = "DemoPlugIn000001"
+
+[build]
+variants = ["mono"]
+
+[requires]
+framework = ">=0.1,<0.2"
+packer = ">=0.1"
+packer_tag = "v0.1.6"
+designer = ">=0.1"
+"#,
+        )
+        .expect("带 [requires] 的 manifest 应该能解析");
+        assert_eq!(m.requires.packer, ">=0.1");
+        assert_eq!(m.requires.packer_tag, "v0.1.6");
+        // 没写 [requires] 的旧插件：全部空串，不报错
+        assert!(base().requires.framework.is_empty());
+    }
+
+    #[test]
+    fn checks_framework_requirement() {
+        assert!(check_framework_req("", "0.1.1").is_ok());
+        assert!(check_framework_req(">=0.1", "0.1.1").is_ok());
+        assert!(check_framework_req(">=0.1,<0.2", "0.1.1").is_ok());
+        assert!(check_framework_req("<0.2", "0.1.1").is_ok());
+        assert!(check_framework_req(">=0.2", "0.1.1").is_err());
+        assert!(check_framework_req(">0.1", "0.1.1").is_ok());
+        assert!(check_framework_req("=0.1.1", "0.1.1").is_ok());
+        assert!(check_framework_req("=0.1", "0.1.1").is_err());
+        // 写错语法要报错，不能静默放行
+        assert!(check_framework_req("0.1", "0.1.1").is_err());
+        assert!(check_framework_req(">=x", "0.1.1").is_err());
     }
 }
