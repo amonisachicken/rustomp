@@ -9,6 +9,7 @@ README 只放"能开工"的摘要，细节都在这里。
 
 | 文档 | 内容 | 什么时候读 |
 |---|---|---|
+| [`manual.md`](manual.md) | **全流程手动操作手册（给人看的）**：画图 → 生成电路 → 面板 → 生成外壳 → 打包安装，每步带验收判据 | 第一次做插件 / 想按部就班走一遍 |
 | [`status.md`](status.md) | **当前状态**：版本配套、能力、平台、验证摘要、已知限制、下一步 | 想知道"现在到哪了" |
 | [`architecture.md`](architecture.md) | 架构：分层、数据流、crates、仓库结构、关键机制 | 想改框架/理解数据流 |
 | [`verification.md`](verification.md) | 验证体系、逐层对拍数字、性能基线、CI/发布验证 | 改 DSP / 准备发版 |
@@ -39,6 +40,7 @@ README 只放"能开工"的摘要，细节都在这里。
 | 位置 | 内容 |
 |---|---|
 | [`../DEVLOG.md`](../DEVLOG.md) | **主历史**：按 E 编号记录每个决策、实验、实测数字、踩坑与修复 |
+| [`history/downstream-report-freedist.md`](history/downstream-report-freedist.md) | 下游 Freedist 的问题报告（原文归档）+ 逐条处置表（P0 是框架真 bug） |
 | [`history/README.md`](history/README.md) | 归档索引 + 归档流程 |
 | [`history/milestones.md`](history/milestones.md) | 已完成里程碑（S1a–S1d、打包、三平台发布…） |
 | [`history/repo-split.md`](history/repo-split.md) | 拆仓时的文件归属、顺序与开工前问题 |
@@ -47,6 +49,7 @@ README 只放"能开工"的摘要，细节都在这里。
 | [`history/pre-gui-checklist.md`](history/pre-gui-checklist.md) | 进 GUI 之前的验收清单（已全部通过） |
 | [`history/macos-host-compat.md`](history/macos-host-compat.md) | 早期 Logic/AU 兼容说明（现由 mac 打包仓维护） |
 | [`history/sparklin-drive-legacy.md`](history/sparklin-drive-legacy.md) | 早期示例插件说明（现为独立仓 `sparklin-drive`） |
+| [`history/downstream-report-freedist.md`](history/downstream-report-freedist.md) | 下游 Freedist 的问题报告（原文）+ 处置表（P0–P6） |
 | [`history/plots/`](history/plots/) | 历史波形图（880 Hz / 1 kHz 正弦/方波） |
 
 ---

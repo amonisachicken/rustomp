@@ -37,6 +37,11 @@ pub const GND: usize = 0;
 /// 正好会踩到这一点（DEVLOG E51）。
 ///
 /// 1 mΩ 在数值上等效"短路"，与生成器里"开关闭合 = 1 mΩ"是同一个约定。
+///
+/// **数值代价**：1 mΩ = 1000 S，在稠密 LU 里会让条件数变差（尤其和 1 MΩ 的偏置网络共存时）。
+/// 下游 Freedist 在 `level = 0` 端点跑过方波/阶跃，没有丢拍（`guard_trips` 为 0）；
+/// 真要更极端可以调 [`Netlist::resid_tol`] 看残差，但**不要**为了让条件数好看而改这个常量 ——
+/// "0 Ω 必须等价于短路"是电位器端点的物理约定。
 pub const MIN_RESISTANCE: f64 = 1e-3;
 
 /// 把电阻值夹到安全范围（非有限值/0/负数都变成 `MIN_RESISTANCE`）。
@@ -267,10 +272,17 @@ impl<const N: usize> Mna<N> {
         }
 
         // 等效电流源部分：i_eq = I₀ − J·V₀（从节点流向器件）
+        //
+        // **只减未知列**：固定节点的列不进 Y（上一段已跳过），若在这里减掉它，
+        // 固定列的 `J·v0` 在 LHS 不存在、在 RHS 却成了常数误差电流 ——
+        // 固定端接正偏结时（PNP 射极接 VCC）误差可达几十安，工作点会落到伪解上
+        // （下游 Freedist 报告 P0，回归见 `tests/mna.rs::pnp_emitter_on_fixed_rail_matches_ngspice`）。
         for i in 0..n {
             let mut i_eq = i0[i];
             for j in 0..n {
-                i_eq -= jac[i][j] * v0[j];
+                if nodes[j] != GND && self.fixed[nodes[j]].is_none() {
+                    i_eq -= jac[i][j] * v0[j];
+                }
             }
             self.inject(nodes[i], -i_eq);
         }
@@ -306,10 +318,14 @@ impl<const N: usize> Mna<N> {
             }
         }
         // 等效电流源：i_eq = i − J·v（从节点流向器件）
+        // **只减未知列**（理由同 `multiport`：固定列的项不进 LHS，就不能出现在 RHS）。
         for t in 0..3 {
             let mut i_eq = i[t];
             for k in 0..3 {
-                i_eq -= jac[t][k] * v0[k];
+                let nk = nodes[k];
+                if nk != GND && self.fixed[nk].is_none() {
+                    i_eq -= jac[t][k] * v0[k];
+                }
             }
             self.inject(nodes[t], -i_eq);
         }
@@ -796,6 +812,20 @@ pub struct Netlist<const N: usize> {
     pub max_iter: usize,
     /// 收敛阈值（电压，V）
     pub tol: f64,
+    /// 上一次 `solve_dc()` 的**归一化 KCL 残差**（诊断；NaN = 没算）
+    ///
+    /// DC 以前只判 Δv（`newton()`），不查残差 —— 于是"Δv 很小、KCL 并不成立"的
+    /// **伪解**会被直接接受（下游 Freedist 报告 P1）。现在最后一级（gmin = 0）
+    /// 必须残差达标，否则换起点重试，并把结果记在这里。
+    pub last_dc_resid: f64,
+    /// 上一次 `solve_dc()` 最终采用的 gmin（诊断；0.0 = 真实电路）
+    pub last_dc_gmin: f64,
+    /// 上一次 `solve_dc()` 在最后一级（gmin = 0）用了多少次牛顿迭代
+    pub last_dc_iters: usize,
+    /// 上一次 `solve_dc()` 是否换过起点重试（诊断；正常应为 false）
+    pub last_dc_retried: bool,
+    /// `true` 时 DC 残差不达标直接 `panic`（CI / 调试用；默认关闭，插件里不该崩）
+    pub strict_dc: bool,
 }
 
 impl<const N: usize> Default for Netlist<N> {
@@ -825,6 +855,11 @@ impl<const N: usize> Netlist<N> {
             has_prev2: false,
             max_iter: 200,
             tol: 1e-9,
+            last_dc_resid: f64::NAN,
+            last_dc_gmin: 0.0,
+            last_dc_iters: 0,
+            last_dc_retried: false,
+            strict_dc: false,
         }
     }
 
@@ -887,6 +922,32 @@ impl<const N: usize> Netlist<N> {
         self.sources.push((branch, a, b, value));
         self
     }
+    /// 把所有 BJT 的体电阻（`rb`/`re`/`rc`）清零，并刷新预计算常量。
+    ///
+    /// 返回被改动的管子数。**近似**（忽略 mV 级压降）换 CPU：
+    /// 每只 BJT 每次装配的内层牛顿是实时路径的热点之一（详见
+    /// [`crate::devices::bjt::Bjt::no_body_resistance`]）。
+    ///
+    /// ```no_run
+    /// # use rustomp_dsp::{Netlist, BC549C, GND};
+    /// let mut net = Netlist::<4>::new();
+    /// net.bjt(BC549C, true, 1, 2, GND);
+    /// net.strip_bjt_body_resistance();   // 4×BJT 电路上实测 RTF 1.42 → 0.88
+    /// ```
+    pub fn strip_bjt_body_resistance(&mut self) -> usize {
+        let mut n = 0;
+        for e in &mut self.elems {
+            if let Element::Bjt { model, consts, .. } = e {
+                if model.rb != 0.0 || model.re != 0.0 || model.rc != 0.0 {
+                    *model = model.no_body_resistance();
+                    *consts = model.consts();
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
     /// 声明真正的未知量个数（生成器会调用；固定节点排在它之后）。
     pub fn set_unknowns(&mut self, n: usize) {
         self.unknowns = n.min(N);
@@ -1019,24 +1080,95 @@ impl<const N: usize> Netlist<N> {
         }
     }
 
+    /// DC 求解的残差复检：把候选解代回**真实电路**（gmin = 0）看 KCL 误差。
+    ///
+    /// 与瞬态路径的 `check_residual` 同一套判据（归一化 ∞ 范数），只是这里多装一次
+    /// 线性部分 —— DC 只在初始化/reset 时跑，多一次装配无所谓。
+    fn dc_residual(&self, v: &[f64; N]) -> f64 {
+        let mut probe = Mna::<N>::new();
+        probe.set_gmin(0.0);
+        self.stamp_all(&mut probe, v, 1.0, true);
+        probe.residual_norm(v, self.solve_len())
+    }
+
     fn solve_dc_once(&mut self) -> [f64; N] {
+        let levels = [
+            1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 0.0,
+        ];
         let mut sys = Mna::<N>::new();
         let mut v = self.v;
-        for &gmin in &[
-            1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 0.0,
-        ] {
+        let mut iters_at_zero = 0;
+        for &gmin in &levels {
             sys.set_gmin(gmin);
             match self.newton(&mut sys, v, 1.0, true) {
-                Some(v_new) => v = v_new,
+                Some((v_new, iters)) => {
+                    v = v_new;
+                    if gmin == 0.0 {
+                        iters_at_zero = iters;
+                    }
+                }
                 // 这一级没收敛：保留上一级的解继续往下（下一级 gmin 更小，通常更容易）
                 None => {}
             }
+        }
+
+        // ---- 残差复检（P1）----
+        // 只看 Δv 会**假收敛**：解被按住时 Δv 很小，KCL 却还差很远（P0 触发的伪解
+        // 就是这么被接受的）。残差是最后一票。
+        let mut resid = self.dc_residual(&v);
+        self.last_dc_retried = false;
+        if self.resid_tol > 0.0 && !(resid.is_finite() && resid <= self.resid_tol) {
+            // 换起点重试：零向量 + 上一级（gmin = 1e-12）的解。
+            // 伪解通常是"从热启动点被吸过去"的，换起点能跳出来。
+            self.last_dc_retried = true;
+            sys.set_gmin(0.0);
+            let mut starts: Vec<[f64; N]> = Vec::with_capacity(3);
+            let mut zero = [0.0; N];
+            self.fill_fixed(&mut zero);
+            starts.push(zero);
+            starts.push(v);
+            for start in starts {
+                if let Some((cand, iters)) = self.newton(&mut sys, start, 1.0, true) {
+                    let r = self.dc_residual(&cand);
+                    if r.is_finite() && r < resid {
+                        resid = r;
+                        v = cand;
+                        iters_at_zero = iters;
+                    }
+                    if resid <= self.resid_tol {
+                        break;
+                    }
+                }
+            }
+        }
+        self.last_dc_resid = resid;
+        self.last_dc_gmin = 0.0;
+        self.last_dc_iters = iters_at_zero;
+
+        if std::env::var("RUSTOMP_DC_DEBUG").is_ok() {
+            eprintln!(
+                "[dc] resid={resid:.3e} iters={iters_at_zero} retried={}",
+                self.last_dc_retried
+            );
+        }
+        // 严格模式：CI / 调试里让伪解直接现形（插件里不要开，宿主会崩）
+        if self.strict_dc && self.resid_tol > 0.0 {
+            assert!(
+                resid.is_finite() && resid <= self.resid_tol,
+                "DC 残差 {resid:.3e} 未达标（可能落在伪解上；set strict_dc(true) 由调用方开启）"
+            );
         }
         v
     }
 
     /// 内层牛顿迭代：给定线性化点 `v0`，迭代到收敛或超限。
-    fn newton(&self, sys: &mut Mna<N>, mut v: [f64; N], dt: f64, dc: bool) -> Option<[f64; N]> {
+    fn newton(
+        &self,
+        sys: &mut Mna<N>,
+        mut v: [f64; N],
+        dt: f64,
+        dc: bool,
+    ) -> Option<([f64; N], usize)> {
         // 固定电位节点（电源轨 / 输入）不在 LU 的行里：`solve_len` 给它们的槽位永远是 0。
         // **必须把已知电位补回解向量**：电容的 `v_prev`、非线性器件的线性化点
         // 都直接读 `v[]`；不补的话它们会把 8.2 V 的电源轨当成 0 V，
@@ -1048,7 +1180,7 @@ impl<const N: usize> Netlist<N> {
             }
         }
         self.fill_fixed(&mut v);
-        for _ in 0..self.max_iter {
+        for iter in 0..self.max_iter {
             self.stamp_all(sys, &v, dt, dc);
             let mut v_new = sys.solve_len(self.solve_len());
             self.fill_fixed(&mut v_new);
@@ -1071,7 +1203,7 @@ impl<const N: usize> Netlist<N> {
                 v = v_new;
             }
             if max_dv < self.tol {
-                return Some(v);
+                return Some((v, iter + 1));
             }
         }
         None
@@ -1087,11 +1219,15 @@ impl<const N: usize> Netlist<N> {
         }
         let mut sys = Mna::<N>::new();
         sys.set_gmin(1e-12);
-        let v = self.newton(&mut sys, self.v, dt, false).unwrap_or_else(|| {
-            // 未收敛：退回一次更小步长的尝试（极端情况下保底）
-            self.newton(&mut sys, self.v, dt * 0.1, false)
-                .unwrap_or(self.v)
-        });
+        let v = self
+            .newton(&mut sys, self.v, dt, false)
+            .map(|(v, _)| v)
+            .unwrap_or_else(|| {
+                // 未收敛：退回一次更小步长的尝试（极端情况下保底）
+                self.newton(&mut sys, self.v, dt * 0.1, false)
+                    .map(|(v, _)| v)
+                    .unwrap_or(self.v)
+            });
         self.v = v;
         for e in &mut self.elems {
             e.commit(&self.v, dt, false);

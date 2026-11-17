@@ -154,8 +154,6 @@ impl rustomp_dsp::Circuit for Ckt {
         }
         if params.level != self.params.level {
             self.net.set_resistance(IDX_RP2A, 500000.0 * params.level);
-        }
-        if params.level != self.params.level {
             self.net.set_resistance(IDX_RP2B, 500000.0 * (1.0 - params.level));
         }
         if params.symmetric != self.params.symmetric {

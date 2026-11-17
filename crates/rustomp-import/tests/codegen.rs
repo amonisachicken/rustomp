@@ -150,3 +150,77 @@ R2 b 0 1k
     assert!(!gen.code.contains("0.001"), "导线电阻不应出现在生成代码里");
     assert!(gen.notes.iter().any(|n| n.contains("视为导线")));
 }
+
+// ---------------------------------------------------------------------------
+// P2：`M` 会被当成 milli（SPICE 语义没错），但"1MΩ 的偏置电位器"是常见笔误。
+// 这里守两件事：电位器总阻值 < 1 Ω 直接拒绝；普通电阻的 `1M` 给 warning 但放行。
+// ---------------------------------------------------------------------------
+
+fn gen_from_spice(
+    name: &str,
+    content: &str,
+) -> Result<rustomp_import::mna_codegen::Generated, String> {
+    let circuit = rustomp_import::import_str(name, content).expect("导入失败");
+    let opts = Options {
+        input: None,
+        output: None,
+        source: name.into(),
+    };
+    generate(&circuit, &opts)
+}
+
+#[test]
+fn pot_with_mega_typo_is_rejected_with_hint() {
+    let err = gen_from_spice(
+        "mega.cir",
+        "* @rustomp in=IN out=OUT\n\
+         * @rustomp param RP1A p1 pot max=1M\n\
+         * @rustomp param RP1B p1 pot max=1M invert\n\
+         V1 IN 0 DC 0\n\
+         RP1A IN OUT 0.5M\n\
+         RP1B OUT 0 0.5M\n\
+         R1 OUT 0 1meg\n",
+    )
+    .err()
+    .expect("`max=1M` 应该被拒绝");
+    assert!(err.contains("1meg"), "错误提示应给出正确写法：{err}");
+    assert!(err.contains("milli"), "错误提示应解释 M 的含义：{err}");
+}
+
+#[test]
+fn meg_is_accepted() {
+    let gen = gen_from_spice(
+        "meg.cir",
+        "* @rustomp in=IN out=OUT\n\
+         * @rustomp param RP1A p1 pot max=1meg\n\
+         V1 IN 0 DC 0\n\
+         RP1A IN OUT 0.5meg\n\
+         R1 OUT 0 1meg\n",
+    )
+    .expect("`max=1meg` 应该正常生成");
+    assert!(
+        gen.warnings.is_empty(),
+        "不该有 warning：{:?}",
+        gen.warnings
+    );
+}
+
+#[test]
+fn plain_resistor_with_mega_typo_warns_but_still_generates() {
+    let gen = gen_from_spice(
+        "warn.cir",
+        "* @rustomp in=IN out=OUT\n\
+         V1 IN 0 DC 0\n\
+         R1 IN OUT 1M\n\
+         R2 OUT 0 10k\n",
+    )
+    .expect("只警告，不阻断");
+    assert_eq!(
+        gen.warnings.len(),
+        1,
+        "应有 1 条 warning：{:?}",
+        gen.warnings
+    );
+    assert!(gen.warnings[0].contains("R1"));
+    assert!(gen.warnings[0].contains("1meg"));
+}

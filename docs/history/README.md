@@ -20,6 +20,7 @@
 | [`pre-gui-checklist.md`](pre-gui-checklist.md) | 进 GUI 前的验收清单 | 已全部通过 | [`../status.md`](../status.md) |
 | [`macos-host-compat.md`](macos-host-compat.md) | 早期 Logic / AU 兼容说明 | 已迁到 mac 打包仓 | [rustomp-mac-plugin docs/03-logic-compat.md](https://github.com/amonisachicken/rustomp-mac-plugin/blob/master/docs/03-logic-compat.md) |
 | [`sparklin-drive-legacy.md`](sparklin-drive-legacy.md) | 早期示例插件说明 | 插件已独立成仓 | [sparklin-drive](https://github.com/amonisachicken/sparklin-drive) |
+| [`downstream-report-freedist.md`](downstream-report-freedist.md) | **下游 Freedist 的问题报告（原文）+ 处置表**：P0 固定端雅可比重复计入（已修）、P1 DC 残差、P2 `1M`=milli、P3 实时开销、P4 工具链、P5 `[ui]` 整数 | 报告是一次性的、逐条已处置 | [`../verification.md`](../verification.md) / [`../manual.md`](../manual.md) |
 | [`plots/`](plots/) | 历史波形图（880 Hz / 1 kHz 正弦/方波） | 对应早期 AB/整机验证 | [`../verification.md`](../verification.md) |
 
 ---

@@ -149,14 +149,10 @@ impl rustomp_dsp::Circuit for Ckt {
         }
         if params.p1 != self.params.p1 {
             self.net.set_resistance(IDX_RP1A, 2000.0 * params.p1);
-        }
-        if params.p1 != self.params.p1 {
             self.net.set_resistance(IDX_RP1B, 2000.0 * (1.0 - params.p1));
         }
         if params.p2 != self.params.p2 {
             self.net.set_resistance(IDX_RP2A, 100000.0 * params.p2);
-        }
-        if params.p2 != self.params.p2 {
             self.net.set_resistance(IDX_RP2B, 100000.0 * (1.0 - params.p2));
         }
         self.params = params;

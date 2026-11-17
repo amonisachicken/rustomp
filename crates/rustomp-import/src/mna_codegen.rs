@@ -28,8 +28,26 @@
 use crate::{ElementKind, ImportedCircuit};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// 电位器总阻值的下限：低于 1 Ω 的"电位器"没有任何音频电路会用到，
+/// 基本都是把 `1M`（mega）写成了 SPICE 的 `1m`（milli）。
+const MIN_POT_OHMS: f64 = 1.0;
+
+/// 疑似"把 M 当 mega 用"的写法（SPICE 里 `M` 是 milli，`meg` 才是 mega）。
+///
+/// 解析本身没错（`1M` = 1 mΩ），所以**只提醒、不改数值**：
+/// 网表里确实存在合法的 `0.001`/`1mil` 之类（开关短接线），不能一刀切。
+fn looks_like_mega_typo(raw: &str, value: f64) -> bool {
+    let t = raw.trim().to_ascii_lowercase();
+    let unit: String = t
+        .trim_start_matches(|c: char| c.is_ascii_digit() || matches!(c, '.' | '+' | '-'))
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    unit.starts_with('m') && !unit.starts_with("meg") && value.abs() < 1.0 && value != 0.0
+}
+
 /// 低于等于这个阻值的电阻视为导线（breadspice 的 `WIRE` 是 0.001 Ω）。
-pub const WIRE_OHMS: f64 = 0.01;
+const WIRE_OHMS: f64 = 0.01;
 
 /// 未知量上限（`Netlist<N>` 的 `N` 是编译期常量）。
 const MAX_UNKNOWNS: usize = 64;
@@ -66,6 +84,8 @@ impl Default for Options {
 pub struct Generated {
     pub code: String,
     pub notes: Vec<String>,
+    /// 不致命、但几乎一定是写错了的地方（打印到 **stderr**，不进生成物、不改数值）
+    pub warnings: Vec<String>,
     /// 未知量个数（= `Netlist<N>` 的 `N`）
     pub unknowns: usize,
 }
@@ -229,6 +249,14 @@ fn parse_directives(notes: &[String]) -> Result<Directives, String> {
                     .find_map(|t| t.strip_prefix("max="))
                     .and_then(parse_value)
                     .ok_or_else(|| format!("参数指令缺 `max=`：{rest}"))?;
+                if !max.is_finite() || max.abs() < MIN_POT_OHMS {
+                    return Err(format!(
+                        "电位器 `{}`（字段 `{}`）的 max = {max} Ω 不合理。\n\
+                         提示：SPICE 里 `M`/`m` 是 **milli**（`1M` = 0.001 Ω），\
+                         1 MΩ 要写 `1meg`（或 `1000k`）。",
+                        tokens[1], tokens[2]
+                    ));
+                }
                 d.pots.push(PotParam {
                     elem: tokens[1].to_string(),
                     field: check_field(tokens[2])?,
@@ -388,6 +416,7 @@ impl Union {
 /// 把网表 IR 生成为 MNA 装配代码。
 pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, String> {
     let mut notes = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
     let mut dirs = parse_directives(&circuit.notes)?;
 
     // 兼容老写法：`param` 里的元素名应是**网表里的元件名**（`RP1A`），
@@ -416,6 +445,16 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                 continue;
             }
             if let Some(v) = parse_value(&e.value) {
+                // `1M` 会被当成 1 mΩ 而**在这里被并成导线**（比生成阶段更早、更难发现），
+                // 所以可疑值必须在合并这一遍就报出来（P2）。
+                if looks_like_mega_typo(&e.value, v) {
+                    warnings.push(format!(
+                        "{} 的阻值 `{}` = {v} Ω —— 像是把 `meg`（MΩ）写成了 `m`（milli）。\
+                         SPICE 里 `M` 是 milli，1 MΩ 请写 `1meg`；\
+                         这一处会被当成**导线**短接（比报错更隐蔽）。",
+                        e.name, e.value
+                    ));
+                }
                 if v.abs() <= WIRE_OHMS {
                     union.union(&e.nodes[0], &e.nodes[1]);
                     notes.push(format!("{}（{}）视为导线，合并两个节点", e.name, e.value));
@@ -639,6 +678,13 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                 }
                 let v = parse_value(&e.value)
                     .ok_or_else(|| format!("{}：读不出阻值 `{}`", e.name, e.value))?;
+                if looks_like_mega_typo(&e.value, v) {
+                    warnings.push(format!(
+                        "{} 的阻值 `{}` = {v} Ω —— 像是把 `meg`（MΩ）写成了 `m`（milli）。\
+                         SPICE 里 `M` 是 milli，1 MΩ 请写 `1meg`。",
+                        e.name, e.value
+                    ));
+                }
                 if v.abs() <= WIRE_OHMS {
                     continue; // 已并节点
                 }
@@ -984,10 +1030,26 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     code.push_str("        if (sample_rate - self.fs).abs() > 1e-9 {\n            *self = Self::new(sample_rate);\n        }\n    }\n\n");
     code.push_str("    fn set_params(&mut self, params: Params) {\n");
     code.push_str("        if params == self.params {\n            return;\n        }\n");
+    // 同一字段可能对应多个元件（电位器按 50% 展开成两段：`RP2A` / `RP2B`）→
+    // 合并成一个 `if`，否则会生成两个一模一样的分支（下游 Freedist 报告的小观察）。
+    // 顺序按字段首次出现排列，保持生成物确定性。
+    let mut grouped: Vec<(&str, Vec<(String, String)>)> = Vec::new();
     for (field, const_name, expr) in &param_writes {
+        match grouped.iter_mut().find(|(f, _)| *f == field.as_str()) {
+            Some((_, writes)) => writes.push((const_name.clone(), expr.clone())),
+            None => grouped.push((field.as_str(), vec![(const_name.clone(), expr.clone())])),
+        }
+    }
+    for (field, writes) in grouped {
         code.push_str(&format!(
-            "        if params.{field} != self.params.{field} {{\n            self.net.set_resistance({const_name}, {expr});\n        }}\n"
+            "        if params.{field} != self.params.{field} {{\n"
         ));
+        for (const_name, expr) in writes {
+            code.push_str(&format!(
+                "            self.net.set_resistance({const_name}, {expr});\n"
+            ));
+        }
+        code.push_str("        }\n");
     }
     code.push_str("        self.params = params;\n    }\n\n");
     code.push_str("    fn reset(&mut self) {\n        self.net.reset();\n        self.net.solve_dc();\n    }\n\n");
@@ -1017,6 +1079,7 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     Ok(Generated {
         code,
         notes,
+        warnings,
         unknowns,
     })
 }

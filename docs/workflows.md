@@ -1,7 +1,8 @@
 # 工作流（从零到可发布）
 
-> 这是"现在怎么做"的操作手册。规范细节见
-> [`component-library.md`](component-library.md)、[`circuit-import.md`](circuit-import.md)、
+> 这是"现在怎么做"的速查版。**想按部就班、带验收判据地走一遍（画图 → 生成电路 → 面板 → 外壳 → 打包），
+> 看 [`manual.md`](manual.md)（全流程手动操作手册）**。
+> 规范细节见 [`component-library.md`](component-library.md)、[`circuit-import.md`](circuit-import.md)、
 > [`declarative-build.md`](declarative-build.md)；平台差异见三个打包仓的 README。
 
 ---

@@ -101,6 +101,9 @@ fn main() {
         };
         match rustomp_import::mna_codegen::generate(&circuit, &opts) {
             Ok(gen) => {
+                for w in &gen.warnings {
+                    eprintln!("  ⚠ {w}");
+                }
                 for n in &gen.notes {
                     println!("  · {n}");
                 }

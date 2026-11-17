@@ -44,6 +44,13 @@ pub struct Engine<C: Circuit, O: Oversampler = DefaultOversampler> {
     /// 活动指示包络（0..1，给 GUI 的 LED）
     activity_env: f32,
     activity_decay: f64,
+    /// **熔断次数**（诊断）：`process()` 遇到非有限值/离谱电平就复位并静音一次。
+    ///
+    /// 静默丢拍以前只能靠波形分析发现（下游 Freedist 报告的"小观察"）。
+    /// 长期应为 0；一旦增长，说明前面某个环节在发散（或输入本身就是 NaN）。
+    guard_trips: u64,
+    /// 最后一次熔断前看到的湿信号（`NaN` / `inf` / 超限值），诊断用
+    last_guard_value: f64,
     /// **还没吃到过宿主的参数**（`new`/`reset`/采样率变化之后为 true）。
     ///
     /// 为什么需要它（E90）：`C::new()` 用 `Params::default()` 解了直流工作点，
@@ -70,6 +77,8 @@ impl<C: Circuit, O: Oversampler> Engine<C, O> {
             activity_env: 0.0,
             activity_decay: 0.0,
             fresh: true,
+            guard_trips: 0,
+            last_guard_value: f64::NAN,
         };
         e.set_sample_rate(fs);
         e
@@ -156,6 +165,15 @@ impl<C: Circuit, O: Oversampler> Engine<C, O> {
         }
         let wet = self.os.downsample(&up[..n]);
         if !wet.is_finite() || wet.abs() > GUARD_LIMIT {
+            // 静默丢拍要留痕：计数 + 记录坏值，供宿主/测试诊断（长期应为 0）
+            self.guard_trips += 1;
+            self.last_guard_value = wet;
+            if std::env::var("RUSTOMP_GUARD_LOG").is_ok() {
+                eprintln!(
+                    "[guard] 熔断 #{}：wet = {wet}（回直流工作点并静音这一拍）",
+                    self.guard_trips
+                );
+            }
             self.reset();
             return 0.0;
         }
@@ -187,5 +205,68 @@ impl<C: Circuit, O: Oversampler> Engine<C, O> {
 
     pub fn sample_rate(&self) -> f64 {
         self.fs
+    }
+
+    /// 累计熔断次数（诊断；长期应为 0）。
+    pub fn guard_trips(&self) -> u64 {
+        self.guard_trips
+    }
+
+    /// 最后一次熔断前看到的湿信号（没熔断过就是 `NaN`）。
+    pub fn last_guard_value(&self) -> f64 {
+        self.last_guard_value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Gain(f64);
+
+    impl Circuit for Gain {
+        type Params = f64;
+        fn new(_fs: f64) -> Self {
+            Self(1.0)
+        }
+        fn set_sample_rate(&mut self, _fs: f64) {}
+        fn set_params(&mut self, p: f64) {
+            self.0 = p;
+        }
+        fn reset(&mut self) {}
+        fn process(&mut self, x: f64) -> f64 {
+            self.0 * x
+        }
+    }
+
+    /// 熔断不能"静默丢拍"（下游报告的小观察）：计数 + 记录坏值，正常样本不误伤。
+    #[test]
+    fn guard_counts_and_records_nan() {
+        let mut e = Engine::<Gain>::new(48_000.0);
+        assert_eq!(e.guard_trips(), 0);
+        assert_eq!(e.process(f64::NAN), 0.0);
+        assert_eq!(e.guard_trips(), 1);
+        assert!(e.last_guard_value().is_nan(), "坏值应被记录");
+
+        e.process(0.1);
+        assert_eq!(e.guard_trips(), 1, "正常样本不该触发熔断");
+    }
+
+    /// 超限电平（> GUARD_LIMIT）同样算熔断，并记录那个值。
+    #[test]
+    fn guard_records_oversized_output() {
+        let mut e = Engine::<Gain>::new(48_000.0);
+        // 过采样 FIR 有启动延迟（前几个样本被抽头加权），喂到稳态才会超过 GUARD_LIMIT
+        let mut tripped_at = None;
+        for i in 0..2_000 {
+            let y = e.process(1e4);
+            if e.guard_trips() > 0 {
+                assert_eq!(y, 0.0, "熔断时这一拍应静音");
+                tripped_at = Some(i);
+                break;
+            }
+        }
+        assert!(tripped_at.is_some(), "1e4 的输入没有触发熔断");
+        assert!(e.last_guard_value() > GUARD_LIMIT);
     }
 }

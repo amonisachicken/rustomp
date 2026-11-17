@@ -4,7 +4,7 @@
 > 历史决策、实验过程与旧结论见 [`../DEVLOG.md`](../DEVLOG.md) 与 [`history/`](history/README.md)；
 > 本文件只回答"现在能做什么、验证到什么程度、还差什么"。
 >
-> 最后更新：**2026-10-29**（`rustomp v0.1.2`）
+> 最后更新：**2026-10-29**（`rustomp v0.1.2` 之后的下一次补丁：下游回归修复，见 §7）
 
 ---
 
@@ -28,8 +28,9 @@
 | 能力 | 状态 | 证据 / 入口 |
 |---|---|---|
 | **器件库** | ✅ 14 个型号闭集（二极管×4、LED×3、BJT×4、JFET、MOSFET、运放） | `crates/rustomp-dsp/tests/devices.rs` |
-| **MNA 装配器** | ✅ 任意拓扑、5 类器件、牛顿求解；DC 对拍 µV 级、瞬态 mV 级 | `crates/rustomp-dsp/tests/mna.rs` |
+| **MNA 装配器** | ✅ 任意拓扑、5 类器件、牛顿求解；DC 对拍 µV 级、瞬态 mV 级；**固定电源轨 = 理想电压源**（等价性回归） | `crates/rustomp-dsp/tests/mna.rs` |
 | **实时路径** | ✅ `step_fixed` + 固定电位节点 + 自适应牛顿（上限 8、残差 1e-6）+ 大跳变子步进/失败恢复 | `step_fixed`、DEVLOG E57/E95 |
+| **DC 工作点** | ✅ gmin 步进 + **KCL 残差复检**（不达标换起点重试）+ 诊断字段 | `solve_dc`、`last_dc_resid`、DEVLOG E101 |
 | **过采样** | ✅ **2× / 4× 可切换**（共用多相 FIR），两者上报延迟都是 15 样本 | `Oversampler`、DEVLOG E91 |
 | **分支 / 旁通** | ✅ `Branch<A,B>`（预热 + 交叉淡化）、true-bypass、NaN 熔断 | `branch.rs`、`engine.rs` |
 | **代码生成（电路）** | ✅ SPICE 网表 → `Netlist`/`Params`/`impl Circuit`，含参数/开关、器件卡片、漂移守卫 | `rustomp-import --mna` |
@@ -116,3 +117,23 @@
 - [ ] 更多示例电路（BJT 前级 / 光电压缩 / BBD）。
 
 已完成的里程碑与历史路线见 [`history/milestones.md`](history/milestones.md)。
+
+---
+
+## 7. 下游回归修复（未发版的 master）
+
+下游项目 **Freedist**（4×BJT 离散运放 fuzz）提交的问题报告逐条处理完毕；
+原文与处置表归档在 [`history/downstream-report-freedist.md`](history/downstream-report-freedist.md)。
+
+| 项 | 结论 | 影响 |
+|---|---|---|
+| **P0 固定端雅可比重复计入** | ✅ 真 bug，已修 | 固定端是**正偏结**（PNP 射极接 VCC）时 DC 会落到伪解（−147 V）；修后与 ngspice 一致（1.51 V） |
+| P1 DC 求解鲁棒性 | ✅ 加 KCL 残差复检 + 换起点重试 + 诊断字段 + `strict_dc` | 不再接受"Δv 很小但 KCL 不成立"的伪解 |
+| P2 `1M` 被当成 milli | ✅ 导入器硬校验（`pot max < 1 Ω`）+ 可疑值 warning；设计器把电位器 `M` 规范成 `meg` | 不会再静默把偏置网络短接 |
+| P3 4×BJT 实时开销 | ✅ 文档化 + `strip_bjt_body_resistance()` 杠杆 + `bjt_body_bench` 基准 | 数值路径未改（避免伤精度） |
+| P4 打包器 doctor/build 工具链不一致 | ✅ mac 打包仓新增 `lib-toolchain.sh` | 用真实 rustc 的 `target-libdir` 判断，不再"doctor 绿、构建 E0463" |
+| P5 `[ui]` 整数被静默忽略 | ✅ `rustomp-gen` 统一接受整数（含参数 `default`） | `drag_full_range_px = 220` 之类不再失效 |
+| 小观察（重复 `if` / 熔断静默 / 1 mΩ 条件数） | ✅ 修两处、文档化一处 | 生成物更干净；`guard_trips()` 可诊断 |
+
+**对既有电路的影响**：Sparklin Drive 的对拍数字**未变**（27.579 % / h2 3.92 %，逐位一致）；
+受影响的只有"固定电位端子上接非线性器件且该端有显著电导"的电路 —— 那些电路以前算的是错的。

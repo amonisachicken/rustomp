@@ -220,7 +220,12 @@ pub fn params_rs(m: &Manifest) -> String {
 fn default_expr(p: &crate::manifest::ParamMeta) -> String {
     match p.kind {
         ParamKind::Float => {
-            let default = p.default.as_ref().and_then(|v| v.as_float()).unwrap_or(0.5);
+            // 整数字面量也要认（`default = 1` 曾经被静默当成 0.5，同 P5）
+            let default = p
+                .default
+                .as_ref()
+                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                .unwrap_or(0.5);
             let range = p.range.unwrap_or([0.0, 1.0]);
             let smoothing = p.smoothing_ms.unwrap_or(20.0);
             let format = p.format.unwrap_or(ParamFormat::Percent);
@@ -531,6 +536,16 @@ fn vf(v: &toml::Value, key: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("`[ui]` 缺少数值字段 `{key}`"))
 }
 
+/// 可选数值字段：**整数和浮点都接受**（TOML 里写 `travel_deg = 270` 是整数）。
+///
+/// 之前这里只用 `as_float()`，整数会被**静默忽略**、落回默认值 ——
+/// `drag_full_range_px = 220` 不生效也不报错（下游 Freedist 报告 P5）。
+fn vf_or(v: &toml::Value, key: &str, default: f64) -> f64 {
+    v.get(key)
+        .and_then(|x| x.as_float().or_else(|| x.as_integer().map(|i| i as f64)))
+        .unwrap_or(default)
+}
+
 fn vstr<'a>(v: &'a toml::Value, key: &str) -> Result<&'a str, String> {
     v.get(key)
         .and_then(|x| x.as_str())
@@ -600,16 +615,11 @@ pub fn panel_rs(m: &Manifest) -> Result<Option<String>, String> {
         let c = vpair(k, "center")?;
         let size = vpair(k, "image_size")?;
         let render = k.get("render").and_then(|x| x.as_str()).unwrap_or("rotate");
-        let (amin, amax) = match k.get("travel_deg").and_then(|x| x.as_float()) {
-            Some(travel) => (-travel / 2.0, travel / 2.0),
-            None => (
-                k.get("angle_min")
-                    .and_then(|x| x.as_float())
-                    .unwrap_or(-135.0),
-                k.get("angle_max")
-                    .and_then(|x| x.as_float())
-                    .unwrap_or(135.0),
-            ),
+        let travel = vf_or(k, "travel_deg", f64::NAN);
+        let (amin, amax) = if travel.is_finite() {
+            (-travel / 2.0, travel / 2.0)
+        } else {
+            (vf_or(k, "angle_min", -135.0), vf_or(k, "angle_max", 135.0))
         };
         out.push_str("        rustomp_gui::KnobSpec {\n");
         out.push_str(&format!("            param: \"{}\",\n", vstr(k, "param")?));
@@ -638,23 +648,17 @@ pub fn panel_rs(m: &Manifest) -> Result<Option<String>, String> {
         ));
         out.push_str(&format!(
             "            pointer_len: {},\n",
-            rf(k.get("pointer_len")
-                .and_then(|x| x.as_float())
-                .unwrap_or(0.0))
+            rf(vf_or(k, "pointer_len", 0.0))
         ));
         out.push_str(&format!(
             "            pointer_width: {},\n",
-            rf(k.get("pointer_width")
-                .and_then(|x| x.as_float())
-                .unwrap_or(1.0))
+            rf(vf_or(k, "pointer_width", 1.0))
         ));
         out.push_str(&format!("            angle_min: {},\n", rf(amin)));
         out.push_str(&format!("            angle_max: {},\n", rf(amax)));
         out.push_str(&format!(
             "            drag_range: {},\n",
-            rf(k.get("drag_full_range_px")
-                .and_then(|x| x.as_float())
-                .unwrap_or(260.0))
+            rf(vf_or(k, "drag_full_range_px", 260.0))
         ));
         out.push_str("        },\n");
     }
@@ -712,9 +716,7 @@ pub fn panel_rs(m: &Manifest) -> Result<Option<String>, String> {
         ));
         out.push_str(&format!(
             "            press_scale: {},\n",
-            rf(t.get("press_scale")
-                .and_then(|x| x.as_float())
-                .unwrap_or(0.9))
+            rf(vf_or(t, "press_scale", 0.9))
         ));
         out.push_str("        },\n");
     }
@@ -738,9 +740,7 @@ pub fn panel_rs(m: &Manifest) -> Result<Option<String>, String> {
         out.push_str(&format!("            radius: {},\n", rf(vf(b, "radius")?)));
         out.push_str(&format!(
             "            press_scale: {},\n",
-            rf(b.get("press_scale")
-                .and_then(|x| x.as_float())
-                .unwrap_or(0.9))
+            rf(vf_or(b, "press_scale", 0.9))
         ));
         out.push_str(&format!(
             "            image_hold: \"{}\",\n",
@@ -929,6 +929,100 @@ image_size = [14.35, 14.35]
         assert!(s.contains("window: (360u32, 672u32)"));
         assert!(s.contains("image_hold: \"3pdt_alt_hold\""));
         assert!(s.contains("image_size: (14.35, 14.35)"));
+    }
+
+    /// 整数写法必须生效（P5）：TOML 里 `travel_deg = 270`、`drag_full_range_px = 220`
+    /// 是整数，之前只读 `as_float()` → 静默落回默认值（拖拽距离变成 260）。
+    #[test]
+    fn panel_rs_accepts_integer_ui_fields() {
+        let m: Manifest = toml::from_str(
+            r##"
+[plugin]
+package = "p"
+name = "P"
+vendor = "V"
+clap_id = "x"
+vst3_class_id = "0123456789abcdef"
+
+[build]
+gui = true
+
+[ui]
+svg_width = 60
+svg_height = 112
+window_width = 360
+window_height = 672
+background = "#faf1e0"
+
+[[ui.knobs]]
+param = "gain"
+center = [15, 24]
+radius = 10
+asset = "knob_round_dark"
+image_size = [20, 20]
+travel_deg = 270
+drag_full_range_px = 220
+pointer_len = 0
+pointer_width = 2
+
+[[ui.leds]]
+param = "clip_indicator"
+center = [30, 12]
+radius = 2
+off_color = "#800000"
+on_color = "#ff0000"
+
+[[ui.toggles]]
+param = "symmetric"
+image_up = "toggle_small_up"
+image_down = "toggle_small_down"
+x = 26
+y_up = 38
+y_down = 39
+width = 8
+height = 9
+pivot = [30, 43]
+press_scale = 1
+
+[[ui.buttons]]
+param = "bypass"
+center = [30, 83]
+radius = 7
+press_scale = 1
+image_hold = "3pdt_alt_hold"
+image_size = [14, 14]
+"##,
+        )
+        .unwrap();
+        let s = panel_rs(&m).unwrap().unwrap();
+        assert!(
+            s.contains("angle_min: -135.0"),
+            "travel_deg=270 没生效\n{s}"
+        );
+        assert!(s.contains("angle_max: 135.0"), "travel_deg=270 没生效\n{s}");
+        assert!(
+            s.contains("drag_range: 220.0"),
+            "drag_full_range_px=220 没生效\n{s}"
+        );
+        assert!(
+            s.contains("pointer_width: 2.0"),
+            "整数 pointer_width 没生效\n{s}"
+        );
+        assert!(
+            s.contains("press_scale: 1.0"),
+            "整数 press_scale 没生效\n{s}"
+        );
+    }
+
+    #[test]
+    fn float_default_of_integer_param_is_accepted() {
+        let mut m = manifest();
+        m.params[0].default = Some(toml::Value::Integer(1));
+        let s = params_rs(&m);
+        assert!(
+            s.contains("FloatParam::new(\"Gain\", 1.0"),
+            "整数 default=1 被当成 0.5 了\n{s}"
+        );
     }
 
     #[test]

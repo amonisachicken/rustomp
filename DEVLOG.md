@@ -6108,6 +6108,82 @@ workflow_dispatch  ── 只构建（dry-run）；传 publish_tag=v0.1.9 可对
 
 ---
 
+## E101：下游 Freedist 的问题报告逐条处置（P0 固定端雅可比，2026-10-29）
+
+**背景**：下游项目 **Freedist**（离散运放 fuzz，4×BJT + 2×二极管，17 节点）在
+`rustomp v0.1.2` 上做完插件（逐点对拍、三平台打包都通了），提交了一份问题报告。
+原文与逐条处置表归档在
+[`docs/history/downstream-report-freedist.md`](docs/history/downstream-report-freedist.md)。
+
+### 101.1 P0：固定电位端子的雅可比被重复计入（**真 bug**）
+
+**根因**：`mna.rs` 的 `stamp_ports()` / `multiport()` 里，固定节点的**列**被从 `Y` 里跳过
+（`self.fixed[nk].is_none()`），但 `i_eq = i − J·v0` 仍然减了**全部列**的 `J·v0`。
+固定列在 LHS 不存在、在 RHS 却成了常数误差电流 —— 不抵消。
+
+**为什么一直没暴露**：误差量级 = `Σ_fixed J·v0`。固定端是**反偏结**（NPN 集电极接 VCC）时
+`dic/dvbc` 很小；只有固定端**正偏**（PNP 射极接 VCC）才会被 `gm × 9 V` 放大成几十安。
+现有电路（Sparklin Drive：固定 VCC + OP07 + 二极管）恰好全在安全侧。
+
+**结果**（报告里的最小复现，PNP 射极固定 9 V / 基极固定 8.3 V）：
+
+| 实现 | `Vc` |
+|---|---|
+| ngspice | **1.51008 V** |
+| 修复前 | **−147.246 V**（伪解） |
+| 修复后 | 1.510 V（与 ngspice 一致） |
+
+**修法**：`i_eq` 只减**未知列**（固定节点在这一轮里 `v_k ≡ v0_k`，两边抵消）。
+
+**回归**（`crates/rustomp-dsp/tests/mna.rs`）：
+1. 报告里的复现 + ngspice 对照；
+2. **等价性不变量**：`fix_node(n, V)` 与"理想电压源把 n 钉在 V"必须给出同一个解
+   （BJT / JFET / MOSFET × DC + 瞬态）—— 这条不依赖魔法数字，能同时守住两条装配路径。
+
+### 101.2 P1：DC 求解没有残差复检
+
+`solve_dc_once` 从 `gmin=1e-3` 步进到 0，`newton()` 只判 `Δv < tol`，**没有 KCL 残差复检**
+（瞬态路径的 `step_fixed_once` 有）。P0 诱发的伪解正是"Δv 很小、KCL 不成立"。
+修法：最后一级（gmin = 0）必须过 `residual_norm` 复检，不达标就从零向量/上一级解换起点重试；
+新增诊断字段 `last_dc_resid / last_dc_gmin / last_dc_iters / last_dc_retried` 与 `strict_dc`
+（CI 用；插件里不开）。实测正常电路：二极管 9.3e-17、BJT 1.9e-11、PNP 固定轨 2.9e-13，
+且 `last_dc_retried == false`（不付额外代价）。
+
+### 101.3 P2：`1M` 被当成 milli
+
+SPICE 语义没错（`M` = milli），但"1 MΩ 的偏置电位器"是常见笔误，而且**静默**：
+`half_value("1M")` → `0.5M` → 0.0005 Ω → 整个偏置网络被短接。修法两侧都加护栏：
+
+| 位置 | 行为 |
+|---|---|
+| `rustomp-import` | `pot max < 1 Ω` **硬错误**（提示"1 MΩ 要写 1meg"）；普通电阻后缀含 `m` 且 < 1 Ω → **warning**（不改值；`0.001` 短接线不受影响） |
+| `rustomp-circuit-designer` | 电位器值 `M` 规范成 `meg`（`0.5meg`），同时给 `pot-value-milli` 提示（不阻断：导出结果是对的） |
+
+### 101.4 P3/P4/P5 与小观察
+
+- **P3（4×BJT 太重）**：**不改数值路径**。新增 `Bjt::no_body_resistance()` +
+  `Netlist::strip_bjt_body_resistance()`（官方化下游手改字段的做法），README 新增
+  「按电路规模估实时开销」；基准 `tests/bjt_body_bench.rs`（`--ignored`）。
+  本机 pretty-face（2×AC127）实测只差 7%，下游硅管 4×BJT 差 38% —— 收敛次数决定，
+  所以文档写明"别当通用常数，量自己的电路"。
+- **P4（doctor 与 build 不是同一套 rust）**：mac 打包器新增 `scripts/lib-toolchain.sh`，
+  doctor 与 build-variant 共用；判据改成 `rustc --print target-libdir --target …` 里
+  有没有 `libcore-*.rlib`（比 `rustup target list` 可靠）。用 fake PATH 复现验证过。
+- **P5（`[ui]` 整数被静默忽略）**：`travel_deg / pointer_len / pointer_width /
+  press_scale / drag_full_range_px` 以及参数 `default` 统一"浮点或整数"。
+- **小观察**：codegen 的重复 `if` 按字段合并（电位器两段共用一个分支）；
+  `Engine::guard_trips()` / `last_guard_value()` 让熔断不再静默；`MIN_RESISTANCE` 的
+  条件数代价写进注释（不改常量）。
+
+### 101.5 影响面
+
+- Sparklin Drive 的对拍数字**未变**：27.579 % / h2 3.92 %（与 E49/E42 逐位一致）；
+- 生成物有两处变化（合并 `if`），`tests/generated/*.rs` 已重新生成，漂移守卫通过；
+- **下游插件项目需要重新生成**（`rustomp-gen` / `rustomp-import --mna`）才能消掉重复 `if`
+  —— 不重新生成也能编译（只是多两个分支）。
+
+---
+
 # 4. 技术路线决策（ADR 风格）
 
 ### ADR-001 电路分块策略 ✅ 已定

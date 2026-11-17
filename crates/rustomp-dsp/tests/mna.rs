@@ -7,7 +7,7 @@
 //!
 //! 没有 ngspice 时自动跳过（运放那组不需要 ngspice）。
 
-use rustomp_dsp::{Netlist, BC549C, D_1N4148, GND, J201, OP07};
+use rustomp_dsp::{Netlist, BC549C, BC559C, D_1N4148, GND, J201, NMOS_2N7000, OP07};
 use rustomp_oracle::Oracle;
 
 const LIB: &str = include_str!("../../../devices/devices.lib");
@@ -270,4 +270,230 @@ fn opamp_noninverting_stage() {
     // 该频段会被引擎的抽取滤波器滤掉，音频带内不受影响。
     println!("  80 kHz 处 |H|={last:.2}（近 Nyquist 地板，非零是设计取舍）");
     assert!(last < 6.5, "高频端应明显滚降（实测 {last:.2}）");
+}
+
+// ---------------------------------------------------------------------------
+// 固定电位端子（电源轨 / 输入端口）上的非线性器件
+//
+// 下游 Freedist 报告（P0）：`stamp_ports` / `multiport` 里，固定节点的**列**被
+// 从 Y 里跳过，但 `i_eq = i − J·v0` 仍然减了全部列的 `J·v0`。固定列在 LHS 不存在、
+// 在 RHS 却成了常数误差电流 —— 只要固定端接的是**正偏结**（PNP 射极接 VCC），
+// 误差就是几十安量级，工作点直接落到伪解上。
+//
+// 这一组测试守着两件事：
+//   ① 报告里的最小复现（PNP 射极固定 9 V、基极固定 8.3 V）必须与 ngspice 一致；
+//   ② **等价性不变量**：同一个电位用「固定节点」和「理想电压源」两种方式给，
+//      解必须相同。这条不依赖任何魔法数字，能同时守住 BJT / JFET / MOSFET 两条路径。
+// ---------------------------------------------------------------------------
+
+/// 报告里的最小复现：PNP 射极接固定 9 V 轨、基极固定 8.3 V。
+///
+/// ngspice 同网表：`vc ≈ 1.51 V`；带 bug 时落到 −147 V 附近的伪解。
+#[test]
+fn pnp_emitter_on_fixed_rail_matches_ngspice() {
+    // 节点：0=GND，1=集电极（未知），2=基极（固定），3=射极（固定）
+    let mut net = Netlist::<4>::new();
+    net.set_unknowns(2);
+    net.fix_node(3, 9.0); // 射极 = VCC
+    net.fix_node(2, 8.3); // 基极 → Vbe = 0.7 V
+    net.resistor(1, GND, 2200.0);
+    net.bjt(BC559C, false, 1, 2, 3);
+    let v = net.solve_dc();
+
+    println!("\n=== 固定电源轨上的 PNP（DC）===");
+    println!("  Vc = {:.4} V", v[1]);
+
+    if let Some(oracle) = Oracle::discover_or_skip() {
+        let body = "VCC vcc 0 9\nVB b 0 8.3\nRC c 0 2.2k\nQ1 c b vcc BC559C";
+        let vc_spice = spice_op(&oracle, body, "v(c)");
+        println!(
+            "  ngspice={vc_spice:.5}  差={:.2} mV",
+            (v[1] - vc_spice).abs() * 1e3
+        );
+        assert!(
+            (v[1] - vc_spice).abs() < 2e-3,
+            "Vc = {:.4} V，ngspice = {vc_spice:.5} V —— 差得太多",
+            v[1]
+        );
+    }
+    assert!(
+        (0.5..3.0).contains(&v[1]),
+        "Vc = {:.4} V 落在伪解上（应为 ~1.51 V）",
+        v[1]
+    );
+}
+
+/// 等价性不变量：`fix_node(n, V)` 与"理想电压源把 n 钉在 V"必须解出同一个电路。
+#[test]
+fn fixed_node_equals_ideal_voltage_source() {
+    // ---- ① BJT（PNP：射极 + 基极都钉死）----
+    let mut fixed = Netlist::<4>::new();
+    fixed.set_unknowns(2);
+    fixed.fix_node(3, 9.0);
+    fixed.fix_node(2, 8.3);
+    fixed.resistor(1, GND, 2200.0);
+    fixed.bjt(BC559C, false, 1, 2, 3);
+    let v_fixed = fixed.solve_dc();
+
+    // 节点：0=GND，1=c，2=b，3=e；支路：4=基极源，5=射极源
+    let mut sourced = Netlist::<6>::new();
+    sourced
+        .resistor(1, GND, 2200.0)
+        .bjt(BC559C, false, 1, 2, 3)
+        .voltage_source(4, 2, GND, 8.3)
+        .voltage_source(5, 3, GND, 9.0);
+    let v_sourced = sourced.solve_dc();
+
+    println!("\n=== 固定节点 vs 理想电压源（等价性）===");
+    println!(
+        "  BJT  PNP  Vc: fixed={:.6}  source={:.6}",
+        v_fixed[1], v_sourced[1]
+    );
+    assert!(
+        (v_fixed[1] - v_sourced[1]).abs() < 1e-6,
+        "BJT 两种接法不一致：{:.6} vs {:.6}",
+        v_fixed[1],
+        v_sourced[1]
+    );
+
+    // ---- ② JFET（漏极固定 9 V、栅极固定 −0.5 V）----
+    let mut fixed = Netlist::<4>::new();
+    fixed.set_unknowns(2);
+    fixed.fix_node(2, -0.5);
+    fixed.fix_node(3, 9.0);
+    fixed.resistor(1, GND, 1000.0);
+    fixed.jfet(J201, 3, 2, 1);
+    let v_fixed = fixed.solve_dc();
+
+    let mut sourced = Netlist::<6>::new();
+    sourced
+        .resistor(1, GND, 1000.0)
+        .jfet(J201, 3, 2, 1)
+        .voltage_source(4, 2, GND, -0.5)
+        .voltage_source(5, 3, GND, 9.0);
+    let v_sourced = sourced.solve_dc();
+
+    println!(
+        "  JFET      Vs: fixed={:.6}  source={:.6}",
+        v_fixed[1], v_sourced[1]
+    );
+    assert!(
+        (v_fixed[1] - v_sourced[1]).abs() < 1e-6,
+        "JFET 两种接法不一致：{:.6} vs {:.6}",
+        v_fixed[1],
+        v_sourced[1]
+    );
+
+    // ---- ③ MOSFET（漏极固定 9 V、栅极固定 3 V）----
+    let mut fixed = Netlist::<4>::new();
+    fixed.set_unknowns(2);
+    fixed.fix_node(2, 3.0);
+    fixed.fix_node(3, 9.0);
+    fixed.resistor(1, GND, 1000.0);
+    fixed.mosfet(NMOS_2N7000, 3, 2, 1);
+    let v_fixed = fixed.solve_dc();
+
+    let mut sourced = Netlist::<6>::new();
+    sourced
+        .resistor(1, GND, 1000.0)
+        .mosfet(NMOS_2N7000, 3, 2, 1)
+        .voltage_source(4, 2, GND, 3.0)
+        .voltage_source(5, 3, GND, 9.0);
+    let v_sourced = sourced.solve_dc();
+
+    println!(
+        "  MOSFET    Vs: fixed={:.6}  source={:.6}",
+        v_fixed[1], v_sourced[1]
+    );
+    assert!(
+        (v_fixed[1] - v_sourced[1]).abs() < 1e-6,
+        "MOSFET 两种接法不一致：{:.6} vs {:.6}",
+        v_fixed[1],
+        v_sourced[1]
+    );
+}
+
+/// 瞬态也要一致：固定输入节点（插件生成的 `build()` 就是这么做的）与理想源驱动。
+#[test]
+fn fixed_input_equals_ideal_source_in_transient() {
+    let dt = 1.0 / 192_000.0; // 4× 过采样下的电路采样率
+
+    // 固定输入：基极电位每拍用 `set_fixed` 写入
+    let mut fixed = Netlist::<4>::new();
+    fixed.set_unknowns(2);
+    let idx_b = fixed.fix_node(2, 8.3);
+    fixed.fix_node(3, 9.0);
+    fixed.resistor(1, GND, 2200.0);
+    fixed.bjt(BC559C, false, 1, 2, 3);
+    fixed.solve_dc();
+
+    // 理想源：同一个基极电位用电压源给（支路 4）
+    let mut sourced = Netlist::<6>::new();
+    sourced
+        .resistor(1, GND, 2200.0)
+        .bjt(BC559C, false, 1, 2, 3)
+        .voltage_source(4, 2, GND, 8.3)
+        .voltage_source(5, 3, GND, 9.0);
+    sourced.solve_dc();
+
+    let mut worst = 0.0f64;
+    for i in 0..400 {
+        let vb = 8.3 + 0.05 * (i as f64 * 0.05).sin();
+        fixed.set_fixed(idx_b, vb);
+        sourced.set_voltage(0, vb);
+        let a = fixed.step(dt);
+        let b = sourced.step(dt);
+        worst = worst.max((a[1] - b[1]).abs());
+    }
+    println!("\n=== 瞬态等价性（PNP，400 拍）===");
+    println!("  集电极最大偏差 = {:.3} µV", worst * 1e6);
+    assert!(worst < 1e-3, "瞬态偏差 {:.1} mV 太大", worst * 1e3);
+}
+
+/// DC 解必须真的满足 KCL（P1）：`solve_dc()` 之后 `last_dc_resid` 要达标，
+/// 而且**不该**靠"换起点重试"来兜（正常电路一次就该收敛，否则说明起点或收敛判据有问题）。
+#[test]
+fn dc_solution_satisfies_kcl() {
+    // ① 二极管削波
+    let mut net = Netlist::<4>::new();
+    net.resistor(1, 2, 1000.0)
+        .diode(D_1N4148, 2, GND)
+        .diode(D_1N4148, GND, 2)
+        .voltage_source(3, 1, GND, 0.6);
+    net.solve_dc();
+    println!("\n=== DC 残差（KCL 复检）===");
+    println!(
+        "  二极管削波：resid={:.2e} iters={} retried={}",
+        net.last_dc_resid, net.last_dc_iters, net.last_dc_retried
+    );
+    assert!(net.last_dc_resid.is_finite() && net.last_dc_resid <= 1e-6);
+
+    // ② BJT 共射
+    let mut net = Netlist::<5>::new();
+    net.resistor(1, 2, 4700.0)
+        .resistor(1, 3, 470_000.0)
+        .bjt(BC549C, true, 2, 3, GND)
+        .voltage_source(4, 1, GND, 9.0);
+    net.solve_dc();
+    println!(
+        "  BJT 共射：resid={:.2e} iters={} retried={}",
+        net.last_dc_resid, net.last_dc_iters, net.last_dc_retried
+    );
+    assert!(net.last_dc_resid.is_finite() && net.last_dc_resid <= 1e-6);
+    assert!(!net.last_dc_retried, "正常电路不该走重试通道");
+
+    // ③ 固定电源轨上的 PNP（P0 的电路：以前这里会落到伪解）
+    let mut net = Netlist::<4>::new();
+    net.set_unknowns(2);
+    net.fix_node(3, 9.0);
+    net.fix_node(2, 8.3);
+    net.resistor(1, GND, 2200.0);
+    net.bjt(BC559C, false, 1, 2, 3);
+    net.solve_dc();
+    println!(
+        "  PNP 固定轨：resid={:.2e} iters={} retried={}",
+        net.last_dc_resid, net.last_dc_iters, net.last_dc_retried
+    );
+    assert!(net.last_dc_resid.is_finite() && net.last_dc_resid <= 1e-6);
+    assert!(!net.last_dc_retried, "P0 修好后这里不该再需要重试");
 }
