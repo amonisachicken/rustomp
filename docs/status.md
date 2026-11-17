@@ -4,7 +4,7 @@
 > 历史决策、实验过程与旧结论见 [`../DEVLOG.md`](../DEVLOG.md) 与 [`history/`](history/README.md)；
 > 本文件只回答"现在能做什么、验证到什么程度、还差什么"。
 >
-> 最后更新：**2026-10-29**（`rustomp v0.1.2` 之后的下一次补丁：下游回归修复，见 §7）
+> 最后更新：**2026-10-29**（`rustomp v0.1.3`：下游回归修复，见 §7）
 
 ---
 
@@ -12,11 +12,11 @@
 
 | 组件 | 当前版本 | 说明 |
 |---|---|---|
-| **rustomp（本仓）** | `v0.1.2` | 框架 / 代码生成 / 对拍 |
-| `rustomp-mac-plugin` | `v0.1.7` | macOS：AU / VST3 / CLAP（universal）+ DMG |
+| **rustomp（本仓）** | `v0.1.3` | 框架 / 代码生成 / 对拍 |
+| `rustomp-mac-plugin` | `v0.1.8` | macOS：AU / VST3 / CLAP（universal）+ DMG |
 | `rustomp-win-plugin` | `v0.3.0` | Windows：VST3 / CLAP（x64/arm64）+ MSI |
 | `rustomp-linux-plugin` | `v0.1.0` | Linux：VST3 / CLAP + 可复现 tar.gz |
-| 参考插件 `sparklin-drive` | `v0.1.9` | 三平台 prerelease 已发布（未签名） |
+| 参考插件 `sparklin-drive` | `v0.1.10` | 三平台正式版已发布（未签名） |
 | `nih-plug` / `cargo-nih-plug` | rev `de42101` | 三个打包仓的 `deps.lock` 必须一致 |
 
 完整的依赖方向、版本约束与当前组合见 [`ecosystem.md`](ecosystem.md)。
@@ -120,7 +120,7 @@
 
 ---
 
-## 7. 下游回归修复（未发版的 master）
+## 7. 下游回归修复（`v0.1.3`，2026-10-29）
 
 下游项目 **Freedist**（4×BJT 离散运放 fuzz）提交的问题报告逐条处理完毕；
 原文与处置表归档在 [`history/downstream-report-freedist.md`](history/downstream-report-freedist.md)。

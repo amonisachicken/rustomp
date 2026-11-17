@@ -16,7 +16,7 @@
 ```
 
 **本仓只做框架**：器件 / MNA / 实时 / 代码生成 / 面板契约 / ngspice 对拍。
-平台打包与具体插件都是独立仓库。当前版本 **`v0.1.2`**（2026-10-29），
+平台打包与具体插件都是独立仓库。当前版本 **`v0.1.3`**（2026-10-29），
 配套的打包器与参考插件版本见 [`docs/status.md`](docs/status.md)。
 
 ---
@@ -193,7 +193,7 @@ some-dir/
 
 **版本配套**：插件 `rustomp.toml` 的 `[requires]` 声明 `framework` / `packer`，
 `rustomp-gen` 与打包器启动时各校验一次；下游依赖一律钉 git tag，不钉 `master`。
-当前组合：`rustomp v0.1.2` + mac `v0.1.7` + win `v0.3.0` + linux `v0.1.0` + `sparklin-drive v0.1.9`。
+当前组合：`rustomp v0.1.3` + mac `v0.1.8` + win `v0.3.0` + linux `v0.1.0` + `sparklin-drive v0.1.10`。
 
 > 新平台 = 实现一个符合契约 B 的 `pack.sh`，再在 `build-all.sh` 的分派里加一行。
 

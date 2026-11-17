@@ -6,9 +6,8 @@
 > 想知道"每条规范为什么这样定"，读 [`architecture.md`](architecture.md) 与
 > [`../DEVLOG.md`](../DEVLOG.md)。
 >
-> 本文按 **2026-10 的现状**写：框架 `rustomp v0.1.2`（master 上另有未发版的下游回归修复，
-> 见 `DEVLOG.md` E101）、macOS 打包器 `v0.1.7`、Windows `v0.3.0`、Linux `v0.1.0`。
-> 命令里的 tag 一律以插件仓自己声明为准。
+> 本文按 **2026-10 的现状**写：框架 `rustomp v0.1.3`、macOS 打包器 `v0.1.8`、
+> Windows `v0.3.0`、Linux `v0.1.0`。命令里的 tag 一律以插件仓自己声明为准。
 
 ---
 
@@ -85,8 +84,8 @@ workspace 根，然后报 `cannot specify features for packages outside of works
 ```bash
 mkdir -p ~/develop && cd ~/develop
 
-# 框架（tag 与你插件项目 Cargo.toml 里钉的一致；当前 v0.1.2）
-git clone --depth 1 --branch v0.1.2 https://github.com/amonisachicken/rustomp.git
+# 框架（tag 与你插件项目 Cargo.toml 里钉的一致；当前 v0.1.3）
+git clone --depth 1 --branch v0.1.3 https://github.com/amonisachicken/rustomp.git
 
 # 两个设计器（只走路线 B 时可以不拉）
 git clone https://github.com/amonisachicken/rustomp-circuit-designer.git
@@ -957,7 +956,7 @@ tag `v*` → macOS / Windows / Linux 各自构建 → 汇总改名 + `SHA256SUMS
 | 参数拖动没反应 | `param` 的元素名写错（写了位号 `P1A`） | 改成展开后的元件名 `RP1A`，重生成 |
 | 生成的 `Ckt` 无视输入（输出是纯直流） | 网表缺 `in=`，或 `in=` 写成了不存在的节点 | 补/改 `* @rustomp in=IN out=OUT` |
 | 方波听起来"嗡嗡"、频谱基频以下有隆起 | 牛顿迭代不足（欠收敛） | 网表加 `* @rustomp newton=8`，重生成 |
-| 音量旋钮拧到头静音 | 电位器端点算出 0 Ω → 导纳无穷大 | 框架已夹到 1 mΩ；确认用的是 `v0.1.2` 及以上 |
+| 音量旋钮拧到头静音 | 电位器端点算出 0 Ω → 导纳无穷大 | 框架已夹到 1 mΩ；确认用的是 `v0.1.3` 及以上 |
 | `rustomp-gen` 报 `[assets] … 指向的文件不存在` | 只贴了 `ui.toml`，没放 PNG | 从素材包补齐 `assets/` |
 | 生成物与 manifest 不一致 | 改了 `rustomp.toml`/网表没重生成 | 重跑 `rustomp-gen` / `rustomp-import --mna` |
 | `requires.packer` 不满足 | 打包器版本旧 | checkout 到插件 `[requires] packer_tag` |
