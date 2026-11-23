@@ -28,7 +28,7 @@
 
 | 能力 | 状态 | 证据 / 入口 |
 |---|---|---|
-| **器件库** | ✅ 14 个型号闭集（二极管×4、LED×3、BJT×4、JFET、MOSFET、运放） | `crates/rustomp-dsp/tests/devices.rs` |
+| **器件库** | ✅ 19 个型号闭集（二极管×4、LED×3、BJT×4、JFET、MOSFET、运放、**电子管×5**） | `crates/rustomp-dsp/tests/{devices,triode}.rs` |
 | **线性元件** | ✅ R / C / **L（含绕线电阻 `rdc`）** / **耦合电感（变压器，2..=4 绕组）**；都不占未知量，DC 退化成 `rdc` | `mna.rs`、`tests/mna.rs`、`tests/generated_inductor.rs`、`tests/generated_transformer.rs` |
 | **MNA 装配器** | ✅ 任意拓扑、5 类器件、牛顿求解；DC 对拍 µV 级、瞬态 mV 级；**固定电源轨 = 理想电压源**（等价性回归） | `crates/rustomp-dsp/tests/mna.rs` |
 | **实时路径** | ✅ `step_fixed` + 固定电位节点 + 自适应牛顿（上限 8、残差 1e-6）+ 大跳变子步进/失败恢复 | `step_fixed`、DEVLOG E57/E95 |
@@ -86,6 +86,8 @@
 - **运放**：单极点 + 压摆率 + 输出钳位；未建模失调、输入偏置电流、共模范围、噪声。
   192 kHz 下 -3 dB 偏低约 26%（无延迟进代数环的代价，近 Nyquist 有增益地板）。
 - **BC549C** 在 `Ic≈4.6 mA` 处偏 +0.67%：疑似未建模 `Nk`，没有为拟合去猜 SPICE 语义。
+- **电子管**：只有三极管（Koren 模型，12AX7/12AT7/12AU7/12AY7/6SN7）；**五极管 / 束射四极管未做**
+  （Koren 的五极管模型多一个帘栅支路 + `ATAN` 膝，需要单独标定）；没有灯丝、麦克风效应、噪声。
 - **电感 / 变压器**：只有理想 L + 串阻 + 互感 `K`（ngspice 的 `L` 没有磁芯模型，
   饱和度/磁滞做不了）；**没有"理想变压器"（k=1）**元素 —— 紧耦合请拆成励磁电感 + 漏感；
   最多 4 个绕组；**设计器还没有变压器符号**（M3：6 脚、初/次级带中心抽头，抽头默认 50%）。
@@ -122,7 +124,9 @@
 - [ ] Windows / Linux arm64 真机验证。
 - [ ] 设计器 D1（原理图拖拽连线、面板更多控件）。
 - [ ] `--gui` 脚手架与 `panel.rs` 并入 `rustomp-gen`。
-- [ ] 更多示例电路（BJT 前级 / 光电压缩 / BBD / 电子管）。
+- [ ] 五极管 / 束射四极管（EL34 / 6L6 / 6550，Koren 五极管模型 + 帘栅支路）。
+- [ ] 电子管示例插件（12AX7 双级 + tone stack）。
+- [ ] 更多示例电路（BJT 前级 / 光电压缩 / BBD）。
 
 已完成的里程碑与历史路线见 [`history/milestones.md`](history/milestones.md)。
 

@@ -25,6 +25,7 @@ circuit.rs     与框架的唯一契约：Circuit trait
 | `jfet.rs` | Shichman-Hodges | `J201` | 静态 D3 |
 | `mosfet.rs` | level-1（+ 体二极管单口） | `NMOS_2N7000` `NMOS_2N7000_BODY` | 静态 D3 |
 | `opamp.rs` | 单极点宏模型 + 压摆率 + 输出钳位 | `OP07` | — |
+| `triode.rs` | **Koren 模型**（1996 / 12-97 两种本体）+ 栅流 + 极间电容 | `T12AX7` `T12AT7` `T12AU7` `T12AY7`(拟合) `T6SN7` | 静态 D3 |
 
 对拍（`cargo test -p rustomp-dsp --release --test devices -- --nocapture`）：
 
@@ -35,6 +36,24 @@ circuit.rs     与框架的唯一契约：Circuit trait
 | `J201` | 转移 + 输出特性 | **0.00%** |
 | `2N7000` | 沟道 8 点 + 体二极管 3 点 | **≤0.01%** |
 | `OP07` | 闭环 -3 dB | **<2%**（4× 过采样） |
+
+### 电子三极管（`triode.rs`）
+
+`Triode::plate(vpk, vgk)` 返回 `(Ip, gm, gp)`（**解析导数**），`Triode::grid(vgk)` 返回栅流：
+
+```text
+V96（Koren Tube.lib 1996）：E1 = Va/KP·log(1+exp(KP·(1/MU + (Vg+VCT)/sqrt(KVB + Va²))))
+                            Ia = 2·E1^EX/KG1
+V97（Koren Tube97.lib 12/97）：分母 sqrt(KVB² + Va²)，Ia = 2·(E1/KG1)^EX
+```
+
+- **两种本体不能混用参数**：6SN7 的官方参数配 V96 会给 53 mA（应 9 mA）。
+- 栅流 = `RGI + 二极管`（正栅才导通，内部二分求解）—— 过载时的"格子阻塞"来源。
+- 极间电容 `CCG/CGP/CCP` 作为元素状态装配，`CGP` 的米勒效应是共阴级高频滚降主因。
+
+对拍（`tests/triode.rs`，Va=250）：12AX7 0.95 mA / gm 1.67 / Rp 53.7 kΩ（手册 1.2 / 1.6 / 62.5 k），
+6SN7 8.86 mA / 2.73 / 7.4 k（手册 9 / 2.6 / 7.7 k）；与 ngspice 参考实现逐点差 <0.03%；
+12AX7 共阴级（Ra=100k / Rk=1.5k / VHT=300）：Vp=203 V、1 kHz 增益 60.9×。
 
 ### 三条来自实战的约定
 

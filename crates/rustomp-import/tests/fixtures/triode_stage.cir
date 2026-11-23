@@ -1,0 +1,12 @@
+* 12AX7 共阴放大级（三极管器件模型的端到端夹具）
+* 典型工作点：VHT=300 V、Ra=100k、Rk=1.5k → Vp≈196…203 V、Ia≈1 mA、增益≈60×
+VHT HT 0 300
+RP HT P 100k
+RK K 0 1.5k
+CK K 0 22u
+CIN IN G 22n
+RG G 0 1meg
+X1 P G K 12AX7
+* @rustomp in=VIN out=P
+VIN IN 0 DC 0 AC 0.2 SIN(0 0.2 1k)
+.end

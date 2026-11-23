@@ -16,15 +16,18 @@
 //! | JFET `J201` | ✅ 静态完整（Shichman-Hodges D3，含 Rd/Rs） |
 //! | MOSFET `2N7000` | ✅ 静态完整（level-1 D3，含 Rd/Rs；体二极管单独接） |
 //! | 运放 `OP07`（通用单运放） | ✅ 参数 + 单极点状态（随 MNA 使用） |
+//! | 三极管 `T12AX7` / `T12AT7` / `T12AU7` / `T12AY7` / `T6SN7` | ✅ Koren 模型（两种本体）+ 栅流 + 极间电容 |
 
 pub mod bjt;
 pub mod diode;
 pub mod jfet;
 pub mod mosfet;
 pub mod opamp;
+pub mod triode;
 
 pub use bjt::{Bjt, BjtConsts, BjtEval, AC127, AC128, BC549C, BC559C};
 pub use diode::{Diode, D_1N34A, D_1N4007, D_1N4148, D_1N5817, LED_BLUE, LED_GREEN, LED_RED};
 pub use jfet::{Jfet, J201};
 pub use mosfet::{Nmos, NMOS_2N7000, NMOS_2N7000_BODY};
 pub use opamp::{OpAmp, OpAmpModel, OpAmpState, OP07};
+pub use triode::{PlateEval, Triode, TriodeLaw, T12AT7, T12AU7, T12AX7, T12AY7, T6SN7};

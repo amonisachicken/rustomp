@@ -21,9 +21,9 @@ pub mod oversample;
 pub use branch::{Branch, BranchParams};
 pub use circuit::Circuit;
 pub use devices::{
-    Bjt, Diode, Jfet, Nmos, OpAmp, OpAmpModel, OpAmpState, AC127, AC128, BC549C, BC559C, D_1N34A,
-    D_1N4007, D_1N4148, D_1N5817, J201, LED_BLUE, LED_GREEN, LED_RED, NMOS_2N7000,
-    NMOS_2N7000_BODY, OP07,
+    Bjt, Diode, Jfet, Nmos, OpAmp, OpAmpModel, OpAmpState, PlateEval, Triode, TriodeLaw, AC127,
+    AC128, BC549C, BC559C, D_1N34A, D_1N4007, D_1N4148, D_1N5817, J201, LED_BLUE, LED_GREEN,
+    LED_RED, NMOS_2N7000, NMOS_2N7000_BODY, OP07, T12AT7, T12AU7, T12AX7, T12AY7, T6SN7,
 };
 pub use engine::Engine;
 pub use mna::{inductance_matrix, Element, Mna, Netlist, GND, MAX_WINDINGS};

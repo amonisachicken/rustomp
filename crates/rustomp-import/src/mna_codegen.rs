@@ -106,6 +106,12 @@ fn model_const(name: &str) -> Option<(&'static str, ModelKind)> {
         "ledgreen" | "led_green" => ("LED_GREEN", ModelKind::Diode),
         "ledblue" | "led_blue" => ("LED_BLUE", ModelKind::Diode),
         "op07" | "op07a" => ("OP07", ModelKind::OpAmp),
+        // 电子三极管（Koren 模型；见 rustomp-dsp 的 devices/triode.rs）
+        "12ax7" => ("T12AX7", ModelKind::Triode),
+        "12at7" => ("T12AT7", ModelKind::Triode),
+        "12au7" => ("T12AU7", ModelKind::Triode),
+        "12ay7" => ("T12AY7", ModelKind::Triode),
+        "6sn7" => ("T6SN7", ModelKind::Triode),
         // BJT（极性由常量名决定）
         "bc549c" => ("BC549C", ModelKind::BjtNpn),
         "bc559c" => ("BC559C", ModelKind::BjtPnp),
@@ -122,6 +128,7 @@ fn model_const(name: &str) -> Option<(&'static str, ModelKind)> {
 enum ModelKind {
     Diode,
     OpAmp,
+    Triode,
     BjtNpn,
     BjtPnp,
     Jfet,
@@ -1001,8 +1008,29 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                 let model = e.model.as_deref().unwrap_or("");
                 let (const_name, kind) = model_const(model)
                     .ok_or_else(|| unknown_model_error(circuit, model, "子电路"))?;
+                // 三极管：`X<p> <g> <k> <型号>` → net.triode(T12AX7, p, g, k)
+                if kind == ModelKind::Triode {
+                    if e.nodes.len() < 3 {
+                        return Err(format!(
+                            "{}：三极管需要 3 个引脚 <屏> <栅> <阴>，只有 {}",
+                            e.name,
+                            e.nodes.len()
+                        ));
+                    }
+                    uses.insert(const_name.into());
+                    body.push(format!("    // {} {}（p g k）", e.name, model));
+                    body.push(format!(
+                        "    net.triode({}, {}, {}, {});",
+                        const_name,
+                        node_expr(idx(&e.nodes[0]), &node_index),
+                        node_expr(idx(&e.nodes[1]), &node_index),
+                        node_expr(idx(&e.nodes[2]), &node_index)
+                    ));
+                    elem_count += 1;
+                    continue;
+                }
                 if kind != ModelKind::OpAmp {
-                    return Err(format!("{}：子电路 {model} 目前只支持运放", e.name));
+                    return Err(format!("{}：子电路 {model} 目前只支持运放/三极管", e.name));
                 }
                 if e.nodes.len() < 5 {
                     return Err(format!(
@@ -1385,7 +1413,8 @@ fn fmt_f64(v: f64) -> String {
 fn unknown_model_error(circuit: &ImportedCircuit, model: &str, kind: &str) -> String {
     let known = [
         "1N4148", "1N34A", "1N4007", "1N5817", "LedRed", "LedGreen", "LedBLUE", "OP07A", //
-        "BC549C", "BC559C", "AC127", "AC128", "J201", "2N7000",
+        "BC549C", "BC559C", "AC127", "AC128", "J201", "2N7000", //
+        "12AX7", "12AT7", "12AU7", "12AY7", "6SN7",
     ];
     let mut msg = format!(
         "{kind}模型 `{model}` 不在闭集表里（已知：{}）",

@@ -1,0 +1,18 @@
+* 四只管子一次跑完：ngspice -b devices/tubes-check.cir
+* 需要同目录的 triode-koren.inc 与仓库根目录的 tubes.txt
+* 每只管子的屏极串一个 0 V 源，用来**分别读出**各自电流。
+.include devices/triode-koren.inc
+.include tubes.txt
+VP p 0 250
+VG g 0 -2
+VA1 p p1 0
+X1 p1 g 0 12AX7
+VA2 p p2 0
+X2 p2 g 0 12AT7
+VA3 p p3 0
+X3 p3 g 0 12AY7
+.control
+op
+print i(VA1) i(VA2) i(VA3)
+.endc
+.end

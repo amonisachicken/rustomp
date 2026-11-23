@@ -702,6 +702,19 @@ pub enum Element {
         /// `H = M·(L/dt)`
         h: core::cell::Cell<[[f64; MAX_WINDINGS]; MAX_WINDINGS]>,
     },
+    /// **电子三极管**（屏 / 栅 / 阴三端，Koren 模型；见 `devices/triode.rs`）。
+    ///
+    /// 非线性部分走 [`Mna::stamp_ports`]（解析雅可比：`gm = ∂Ip/∂Vg`、`gp = ∂Ip/∂Va`），
+    /// 极间电容 `CCG / CGP / CCP` 用**本元素自己的历史电压**做后向欧拉伴生模型
+    /// （`CGP` 的米勒效应是共阴级高频滚降的主因）。
+    Triode {
+        model: crate::devices::Triode,
+        p: usize,
+        g: usize,
+        k: usize,
+        /// 极间电容的上一拍电压 `[v(p,g), v(g,k), v(p,k)]`
+        cap_v: [f64; 3],
+    },
     /// 运放（单极点宏模型；`branch` 是输出电压源支路）
     OpAmp {
         model: OpAmpModel,
@@ -789,6 +802,33 @@ fn coupled_matrices(
     m_cell.set(m);
     h_cell.set(h);
     (m, h)
+}
+
+/// 三端节点的固定数组（`stamp_ports` 需要 `[usize; 3]`）。
+#[inline]
+fn p_nodes(p: usize, g: usize, k: usize) -> [usize; 3] {
+    [p, g, k]
+}
+
+/// **元素自带状态**的电容伴生模型（后向欧拉）：`i = (C/dt)·(v − v_prev)`。
+///
+/// DC 时电容开路（不装配）；`commit` 里用当拍解记录 `v_prev`。
+#[inline]
+fn stamp_local_cap<const N: usize>(
+    sys: &mut Mna<N>,
+    a: usize,
+    b: usize,
+    c: f64,
+    v_prev: f64,
+    dt: f64,
+    dc: bool,
+) {
+    if dc || dt <= 0.0 || c <= 0.0 {
+        return;
+    }
+    let g = c / dt;
+    sys.conductance(a, b, g);
+    sys.current_source(a, b, -g * v_prev);
 }
 
 impl Element {
@@ -917,6 +957,31 @@ impl Element {
                     vec![id, 0.0, -id]
                 });
             }
+            Element::Triode {
+                model,
+                p,
+                g,
+                k,
+                cap_v,
+            } => {
+                let vp = if p == GND { 0.0 } else { v[p] };
+                let vg = if g == GND { 0.0 } else { v[g] };
+                let vk = if k == GND { 0.0 } else { v[k] };
+                let ev = model.plate(vp - vk, vg - vk);
+                let (ig, gg) = model.grid(vg - vk);
+                let ik = -(ev.ip + ig);
+                // jac[端][电压]：屏、栅、阴三行（阴 = 负的其余两行，保证 KCL）
+                let jac = [
+                    [ev.gp, ev.gm, -(ev.gp + ev.gm)],
+                    [0.0, gg, -gg],
+                    [-(ev.gp), -(ev.gm + gg), ev.gp + ev.gm + gg],
+                ];
+                sys.stamp_ports(&p_nodes(p, g, k), [vp, vg, vk], &[ev.ip, ig, ik], &jac);
+                // 极间电容（伴生模型；DC 时开路）
+                stamp_local_cap(sys, p, g, model.cgp, cap_v[0], dt, dc);
+                stamp_local_cap(sys, g, k, model.ccg, cap_v[1], dt, dc);
+                stamp_local_cap(sys, p, k, model.ccp, cap_v[2], dt, dc);
+            }
             Element::Resistor { a, b, r } => sys.resistor(a, b, r),
             Element::Capacitor { a, b, c, v_prev } => {
                 // **直流时电容开路**（不装配）。
@@ -1013,6 +1078,7 @@ impl Element {
                 | Element::Bjt { .. }
                 | Element::Jfet { .. }
                 | Element::Mosfet { .. }
+                | Element::Triode { .. }
         )
     }
 
@@ -1065,6 +1131,13 @@ impl Element {
                     }
                 }
                 *i_prev = next;
+            }
+            // 三极管：极间电容的历史电压（DC 也记录 —— 首拍直接进入稳态）
+            Element::Triode { p, g, k, cap_v, .. } => {
+                let vp = if *p == GND { 0.0 } else { v[*p] };
+                let vg = if *g == GND { 0.0 } else { v[*g] };
+                let vk = if *k == GND { 0.0 } else { v[*k] };
+                *cap_v = [vp - vg, vg - vk, vp - vk];
             }
             // 电感状态：用**提交点的电压**反算这一拍的电流（与装配时的 g/h 同一套公式）
             Element::Inductor {
@@ -1273,6 +1346,29 @@ impl<const N: usize> Netlist<N> {
             v_prev: 0.0,
         })
     }
+    /// 电子三极管：屏 / 栅 / 阴三端（Koren 模型，见 `devices/triode.rs` 的型号常量）。
+    ///
+    /// ```no_run
+    /// # use rustomp_dsp::{Netlist, T12AX7, GND};
+    /// let mut net = Netlist::<6>::new();
+    /// net.triode(T12AX7, 1, 2, GND);
+    /// ```
+    pub fn triode(
+        &mut self,
+        model: crate::devices::Triode,
+        p: usize,
+        g: usize,
+        k: usize,
+    ) -> &mut Self {
+        self.push(Element::Triode {
+            model,
+            p,
+            g,
+            k,
+            cap_v: [0.0; 3],
+        })
+    }
+
     /// 电感：`l` 是电感量（H），`rdc` 是绕线电阻（Ω，DC 时电感就等于它）。
     ///
     /// `rdc = 0` 会被 `floor_resistance` 夹到 1 mΩ；真实电路请写真实 DCR。
@@ -1966,6 +2062,9 @@ impl<const N: usize> Netlist<N> {
             }
             if let Element::Inductor { i_prev, .. } = e {
                 *i_prev = 0.0;
+            }
+            if let Element::Triode { cap_v, .. } = e {
+                *cap_v = [0.0; 3];
             }
             if let Element::CoupledInductors { i_prev, .. } = e {
                 *i_prev = [0.0; MAX_WINDINGS];

@@ -11,7 +11,7 @@ use rustomp_import::mna_codegen::{generate, Options};
 use std::path::Path;
 
 /// (夹具, 生成物, 生成物头部写的文件名)
-const CASES: [(&str, &str, &str); 4] = [
+const CASES: [(&str, &str, &str); 5] = [
     (
         "tests/fixtures/sparklin_drive.cir",
         "../rustomp-dsp/tests/generated/sparklin_drive.rs",
@@ -31,6 +31,11 @@ const CASES: [(&str, &str, &str); 4] = [
         "tests/fixtures/transformer.cir",
         "../rustomp-dsp/tests/generated/transformer.rs",
         "transformer.cir",
+    ),
+    (
+        "tests/fixtures/triode_stage.cir",
+        "../rustomp-dsp/tests/generated/triode_stage.rs",
+        "triode_stage.cir",
     ),
 ];
 
