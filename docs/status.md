@@ -180,5 +180,6 @@ M0–M3 四个阶段，框架与设计器各发一版（`rustomp v0.1.4` + `rust
 | `sparklin-notch` | L + **电容倍增器**（OP07 反相放大器把 C 放大 1+A 倍），FREQ 电位器扫 f0 | 241 Hz（−48.6 dB）→ 774 Hz（−27.2 dB）；CPU 15.6% 单核 |
 | `sparklin-x10` | 1:10 升压音频变压器（Lp 1 H / Ls 100 H / k 0.9999） | 1 kHz **9.43（+19.5 dB）**，20 Hz 7.54；CPU 7.2% 单核 |
 | `sparklin-valve` | 三级 12AX7 + Big Muff 式单旋钮 tone stack（Koren 三极管模型） | 小信号 GAIN 0.1→1：0.5→3.6×；TONE 在 4 kHz 有 7.8× 摆幅；CPU **39%** 单核（15 未知量、2× 过采样） |
+| `sparklin-tube-boost` | **单级 12AU7 甲类提升**（设计器里画的 tube-boost：Ra=33k / Rk=1k / HT=200 V / 10k 音量电位器） | Vp=96.97 V / Ia=3.12 mA（ngspice 96.94）；LEVEL 12 点 0.82×、全开 8.09×；1 V 输入 THD 3.9%（H2≫H3）；CPU **15.8%** 单核（6 未知量、4× 过采样） |
 
-两个插件都已装上本机（AU `Sn02/Sn03`、`Xn02/Xn03`），在 Logic 里实测正常。
+四个插件都已装上本机（AU `Sn02/Sn03`、`Xn02/Xn03`、`Sv02/Sv03`、`Tb02/Tb03`）。
