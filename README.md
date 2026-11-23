@@ -16,7 +16,7 @@
 ```
 
 **本仓只做框架**：器件 / MNA / 实时 / 代码生成 / 面板契约 / ngspice 对拍。
-平台打包与具体插件都是独立仓库。当前版本 **`v0.1.3`**（2026-10-29），
+平台打包与具体插件都是独立仓库。当前版本 **`v0.1.4`**（2026-11-23），
 配套的打包器与参考插件版本见 [`docs/status.md`](docs/status.md)。
 
 ---
@@ -29,6 +29,7 @@
 |---|---|
 | **Rust crates** | `rustomp-dsp` / `rustomp-gui` / `rustomp-gen` / `rustomp-import` / `rustomp-oracle` |
 | **器件库** | 闭集器件模型，参数与 SPICE 对齐，逐型号与 ngspice 对拍 |
+| **线性元件** | R / C / **L（含绕线电阻）** / **耦合电感（变压器，2..=4 绕组）**；都不占未知量 |
 | **生成器** | 网表 → 可实时运行的 `Circuit`；`rustomp.toml` → 插件身份/参数/面板 |
 | **脚手架** | `template/` + `scripts/new-plugin.sh`：生成一个可构建的插件项目 |
 | **验证体系** | `verify.sh` 9 层：fmt / 测试 / 契约 / 2×漂移守卫 / 四层 ngspice 对拍 |
@@ -193,7 +194,7 @@ some-dir/
 
 **版本配套**：插件 `rustomp.toml` 的 `[requires]` 声明 `framework` / `packer`，
 `rustomp-gen` 与打包器启动时各校验一次；下游依赖一律钉 git tag，不钉 `master`。
-当前组合：`rustomp v0.1.3` + mac `v0.1.8` + win `v0.3.0` + linux `v0.1.0` + `sparklin-drive v0.1.10`。
+当前组合：`rustomp v0.1.4` + mac `v0.1.8` + win `v0.3.0` + linux `v0.1.0` + 设计器 `v0.2.0` + `sparklin-drive v0.1.10`。
 
 > 新平台 = 实现一个符合契约 B 的 `pack.sh`，再在 `build-all.sh` 的分派里加一行。
 

@@ -6,8 +6,8 @@
 > 想知道"每条规范为什么这样定"，读 [`architecture.md`](architecture.md) 与
 > [`../DEVLOG.md`](../DEVLOG.md)。
 >
-> 本文按 **2026-10 的现状**写：框架 `rustomp v0.1.3`、macOS 打包器 `v0.1.8`、
-> Windows `v0.3.0`、Linux `v0.1.0`。命令里的 tag 一律以插件仓自己声明为准。
+> 本文按 **2026-11 的现状**写：框架 `rustomp v0.1.4`、macOS 打包器 `v0.1.8`、
+> 设计器 `v0.2.0`、Windows `v0.3.0`、Linux `v0.1.0`。命令里的 tag 一律以插件仓自己声明为准。
 
 ---
 
@@ -84,8 +84,8 @@ workspace 根，然后报 `cannot specify features for packages outside of works
 ```bash
 mkdir -p ~/develop && cd ~/develop
 
-# 框架（tag 与你插件项目 Cargo.toml 里钉的一致；当前 v0.1.3）
-git clone --depth 1 --branch v0.1.3 https://github.com/amonisachicken/rustomp.git
+# 框架（tag 与你插件项目 Cargo.toml 里钉的一致；当前 v0.1.4）
+git clone --depth 1 --branch v0.1.4 https://github.com/amonisachicken/rustomp.git
 
 # 两个设计器（只走路线 B 时可以不拉）
 git clone https://github.com/amonisachicken/rustomp-circuit-designer.git
@@ -212,6 +212,7 @@ cd frontend && npm install && npm run dev
 | `r` | 放电阻 | 左键连点连续放，`esc` 结束 |
 | `c` | 放电容 | 同上 |
 | `g` | 放地 | 同上（接地必备，给单键） |
+| `l` | 放电感 | 同上（数值 = 电感量，单位默认 mH） |
 | `w` | 画导线 | 点一下定起点 → 只能走横竖 → 再点定终点，继续点继续画 |
 | `q` | 删除 | 点元件删元件；点导线**删整段直线** |
 | `m` | 移动 | 点起 → 点落；手持时 `esc` 放回原处 |

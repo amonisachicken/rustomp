@@ -4,7 +4,7 @@
 > 历史决策、实验过程与旧结论见 [`../DEVLOG.md`](../DEVLOG.md) 与 [`history/`](history/README.md)；
 > 本文件只回答"现在能做什么、验证到什么程度、还差什么"。
 >
-> 最后更新：**2026-10-29**（`rustomp v0.1.3`：下游回归修复，见 §7）
+> 最后更新：**2026-11-23**（`rustomp v0.1.4`：电感 / 耦合电感（变压器）+ 设计器 v0.2.0，见 §8）
 
 ---
 
@@ -12,11 +12,12 @@
 
 | 组件 | 当前版本 | 说明 |
 |---|---|---|
-| **rustomp（本仓）** | `v0.1.3` | 框架 / 代码生成 / 对拍 |
+| **rustomp（本仓）** | `v0.1.4` | 框架 / 代码生成 / 对拍 |
 | `rustomp-mac-plugin` | `v0.1.8` | macOS：AU / VST3 / CLAP（universal）+ DMG |
 | `rustomp-win-plugin` | `v0.3.0` | Windows：VST3 / CLAP（x64/arm64）+ MSI |
 | `rustomp-linux-plugin` | `v0.1.0` | Linux：VST3 / CLAP + 可复现 tar.gz |
 | 参考插件 `sparklin-drive` | `v0.1.10` | 三平台正式版已发布（未签名） |
+| 设计器 `rustomp-circuit-designer` | `v0.2.0` | 电感 + 6 脚变压器（符号 / 展开 / 抽头滑块） |
 | `nih-plug` / `cargo-nih-plug` | rev `de42101` | 三个打包仓的 `deps.lock` 必须一致 |
 
 完整的依赖方向、版本约束与当前组合见 [`ecosystem.md`](ecosystem.md)。
@@ -121,7 +122,7 @@
 - [ ] Windows / Linux arm64 真机验证。
 - [ ] 设计器 D1（原理图拖拽连线、面板更多控件）。
 - [ ] `--gui` 脚手架与 `panel.rs` 并入 `rustomp-gen`。
-- [ ] 更多示例电路（BJT 前级 / 光电压缩 / BBD）。
+- [ ] 更多示例电路（BJT 前级 / 光电压缩 / BBD / 电子管）。
 
 已完成的里程碑与历史路线见 [`history/milestones.md`](history/milestones.md)。
 
@@ -144,3 +145,35 @@
 
 **对既有电路的影响**：Sparklin Drive 的对拍数字**未变**（27.579 % / h2 3.92 %，逐位一致）；
 受影响的只有"固定电位端子上接非线性器件且该端有显著电导"的电路 —— 那些电路以前算的是错的。
+
+---
+
+## 8. 电感 / 变压器（`v0.1.4`，2026-11-23）
+
+M0–M3 四个阶段，框架与设计器各发一版（`rustomp v0.1.4` + `rustomp-circuit-designer v0.2.0`）。
+
+| 阶段 | 内容 |
+|---|---|
+| **M0** 装配器 | `Element::Inductor`：`g = 1/(rdc + L/dt)` + 历史电流，DC 退化成 `rdc`（0 夹到 1 mΩ）；`commit()` 用提交点电压反算 `i_prev`（复位不"砰"） |
+| **M1** 导入/生成 | `L` 严格解析（多一个 token 就报错——ngspice 会把它当别的意思，实测差 10×）；`net.inductor(...)`；解析结果改成四态 `Element/Skip/Warn/Fatal`，不再"出错降级成 note 就跳过这一行" |
+| **M2** 耦合电感 | `Element::CoupledInductors`（2..=4 绕组，不占未知量）、`Mna::stamp_port_admittance`、`inductance_matrix`（自感 + k → 完整矩阵）、`K` 解析 + 分组 + Cholesky 正定校验；`H = (I + dt·L⁻¹R)⁻¹` 避免灾难性抵消 |
+| **M3** 设计器 | 电感 / 6 脚变压器符号（自绘，20 个符号）、`l` 单键、抽头滑块（默认 50%）、展开成 4 绕组 + 6 个 `K`；`.design.json` 直读也做同样展开 |
+
+**验收**（全部有测试守着）：
+
+| 判据 | 结果 |
+|---|---|
+| RL 阶跃 vs 解析（dt=τ/20 → τ/80） | 0.90% → 0.23%（一阶收敛）；vs ngspice 0.45% |
+| LC 谐振频率 | 503.25 vs 503.29 Hz（0.01%） |
+| 变压器匝比 / 反射阻抗 | 0.49949 vs 0.49950；3981.9 vs 3998.9 Ω（0.42%） |
+| 6 脚变压器（4 绕组，抽头 50%） | 抽头分压 0.5000；匝比 0.4995 |
+| 生成 + 实时（RL 低通 / 2 绕组变压器） | 0.8399 vs 解析 0.8461（−0.73%）/ 0.06889 vs ngspice 0.06879 V（0.14%） |
+
+**两个示例插件**（本地，用来验证"L 真的能做出声音"）：
+
+| 插件 | 电路 | 实测 |
+|---|---|---|
+| `sparklin-notch` | L + **电容倍增器**（OP07 反相放大器把 C 放大 1+A 倍），FREQ 电位器扫 f0 | 241 Hz（−48.6 dB）→ 774 Hz（−27.2 dB）；CPU 15.6% 单核 |
+| `sparklin-x10` | 1:10 升压音频变压器（Lp 1 H / Ls 100 H / k 0.9999） | 1 kHz **9.43（+19.5 dB）**，20 Hz 7.54；CPU 7.2% 单核 |
+
+两个插件都已装上本机（AU `Sn02/Sn03`、`Xn02/Xn03`），在 Logic 里实测正常。
