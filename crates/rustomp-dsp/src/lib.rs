@@ -26,5 +26,5 @@ pub use devices::{
     NMOS_2N7000_BODY, OP07,
 };
 pub use engine::Engine;
-pub use mna::{Element, Mna, Netlist, GND};
+pub use mna::{inductance_matrix, Element, Mna, Netlist, GND, MAX_WINDINGS};
 pub use oversample::{Oversampler, Oversampler2x, Oversampler4x};

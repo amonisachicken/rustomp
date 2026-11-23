@@ -36,6 +36,7 @@ impl Importer for SpiceNetlist {
 
     fn import(&self, path: &Path, content: &str) -> Result<ImportedCircuit, ImportError> {
         let mut elements = Vec::new();
+        let mut couplings: Vec<crate::Coupling> = Vec::new();
         let mut notes = Vec::new();
         let mut in_subckt: Option<String> = None;
         let mut title = String::new();
@@ -75,6 +76,7 @@ impl Importer for SpiceNetlist {
             }
             match parse_element(line) {
                 Parsed::Element(el) => elements.push(el),
+                Parsed::Coupling(c) => couplings.push(c),
                 Parsed::Skip => {}
                 Parsed::Warn(msg) => notes.push(msg),
                 // 致命：整份网表失败（不再"记录一条 note 然后当作没看见"）
@@ -105,6 +107,7 @@ impl Importer for SpiceNetlist {
             name: title,
             format: "spice",
             elements,
+            couplings,
             ground_nets: vec!["0".into()],
             notes,
         })
@@ -135,6 +138,8 @@ fn join_continuations(content: &str) -> Vec<String> {
 enum Parsed {
     /// 认识的元件
     Element(Element),
+    /// `K` 行：互感关系（不是元件）
+    Coupling(crate::Coupling),
     /// 认识但不需要保留（例如已经被上层处理掉的行）
     Skip,
     /// 不认识的元件前缀：保留原文并提示（可能改变电路行为）
@@ -194,14 +199,24 @@ fn parse_element(line: &str) -> Parsed {
                 model: None,
             }
         }
-        // 互感/耦合：M1 还没实现。**必须报错**：静默忽略会得到"两个互不相干的电感"，
-        // 声音全错但没有任何征兆。
+        // 互感：`K<名> <L1> <L2> <k>`（k 可为负 = 反相；|k| 必须 < 1）
         'k' => {
-            return Parsed::Fatal(format!(
-                "{name}：互感/耦合（`K`）暂不支持。\n\
-                 现在会被静默忽略 → 变压器会退化成两个独立电感，所以这里直接报错。\n\
-                 先用两个独立电感（没有 K）验证别的部分，或等 M2 的耦合电感支持"
-            ));
+            if tokens.len() != 4 {
+                return Parsed::Fatal(format!(
+                    "{name}：`K` 只接受 `<L1> <L2> <k>`（收到 {} 个字段）",
+                    tokens.len() - 1
+                ));
+            }
+            // 耦合系数是**纯数**（没有单位后缀），而且可以是负数（反相），
+            // 所以直接 parse —— `parse_value` 不吃前导负号（它按 SPICE 元件值写的）。
+            let Ok(k) = tokens[3].trim().parse::<f64>() else {
+                return Parsed::Fatal(format!("{name}：耦合系数 `{}` 读不出数值", tokens[3]));
+            };
+            return Parsed::Coupling(crate::Coupling {
+                a: tokens[1].to_string(),
+                b: tokens[2].to_string(),
+                k,
+            });
         }
         'd' => {
             // D<name> anode cathode model  （模型名可省略 = 默认二极管）

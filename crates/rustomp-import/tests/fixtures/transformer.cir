@@ -1,0 +1,12 @@
+* 变压器（M2 夹具：K 耦合 + 次级负载）
+*
+* 注意：ngspice 的 `L` 没有 DCR 参数，绕线电阻要写成串联电阻（这里用 RDRV 兼作源内阻）。
+* 匝比 = √(L2/L1) = √0.25 = 2:1；次级负载 1 kΩ 折算到初级 = 4 kΩ。
+VS1 in 0 DC 0 AC 0.2 SIN(0 0.2 1k)
+RDRV in p 100
+L1 p 0 1
+L2 s 0 0.25
+K1 L1 L2 0.999
+RL s 0 1k
+* @rustomp in=VS1 out=s
+.end

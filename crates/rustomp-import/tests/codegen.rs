@@ -11,7 +11,7 @@ use rustomp_import::mna_codegen::{generate, Options};
 use std::path::Path;
 
 /// (夹具, 生成物, 生成物头部写的文件名)
-const CASES: [(&str, &str, &str); 3] = [
+const CASES: [(&str, &str, &str); 4] = [
     (
         "tests/fixtures/sparklin_drive.cir",
         "../rustomp-dsp/tests/generated/sparklin_drive.rs",
@@ -26,6 +26,11 @@ const CASES: [(&str, &str, &str); 3] = [
         "tests/fixtures/inductor_rl.cir",
         "../rustomp-dsp/tests/generated/inductor_rl.rs",
         "inductor_rl.cir",
+    ),
+    (
+        "tests/fixtures/transformer.cir",
+        "../rustomp-dsp/tests/generated/transformer.rs",
+        "transformer.cir",
     ),
 ];
 
@@ -258,15 +263,91 @@ fn inductor_without_value_is_rejected() {
     assert!(err.to_string().contains("电感缺少数值"));
 }
 
-/// `K` 现在必须**报错**（M2 才实现）；静默忽略 = 变压器退化成两个独立电感。
+/// `K` 必须**分组**成一个 `coupled_inductors`（而不是两个独立电感）。
 #[test]
-fn coupling_k_is_rejected_for_now() {
-    let err = rustomp_import::import_str("tr.cir", "L1 a 0 10m\nL2 b 0 2.5m\nK1 L1 L2 0.98\n")
+fn coupling_groups_into_one_coupled_inductor() {
+    let gen = gen_from_spice(
+        "tr.cir",
+        "* @rustomp in=VS1 out=s\n\
+         VS1 in 0 DC 0 AC 0.1\n\
+         L1 p 0 1\n\
+         L2 s 0 0.25\n\
+         K1 L1 L2 0.999\n\
+         R1 s 0 1k\n",
+    )
+    .expect("生成失败");
+    assert!(
+        gen.code.contains("net.coupled_inductors("),
+        "应该生成 coupled_inductors：\n{}",
+        gen.code
+    );
+    assert!(
+        gen.code.contains("inductance_matrix("),
+        "电感矩阵应由框架的 inductance_matrix 构造"
+    );
+    // 两个 L 只生成一个元件
+    assert_eq!(
+        gen.code.matches("net.coupled_inductors(").count(),
+        1,
+        "一组耦合只该生成一次"
+    );
+    assert!(!gen.code.contains("net.inductor("), "组内不该再发单只电感");
+}
+
+/// `k = ±1` 会让电感矩阵奇异 → 必须报错并给修法。
+#[test]
+fn coupling_with_k_equal_one_is_rejected() {
+    for k in ["1", "-1", "1.5"] {
+        let err = gen_from_spice(
+            "tr.cir",
+            &format!("* @rustomp in=VS1 out=s\nVS1 in 0 DC 0\nL1 p 0 1\nL2 s 0 0.25\nK1 L1 L2 {k}\nR1 s 0 1k\n"),
+        )
         .err()
-        .expect("`K` 应该报错");
-    let msg = err.to_string();
-    assert!(msg.contains("暂不支持"), "应说明暂不支持：{msg}");
-    assert!(msg.contains("两个独立电感"), "应说明静默忽略的后果：{msg}");
+        .unwrap_or_else(|| panic!("k={k} 应该被拒绝"));
+        assert!(err.contains("励磁电感"), "应给出拆漏感的修法：{err}");
+    }
+}
+
+/// `K` 引用一个不存在的电感 / 引用电阻 → 报错并列出可用的电感。
+#[test]
+fn coupling_to_unknown_inductor_is_rejected() {
+    let err = gen_from_spice(
+        "tr.cir",
+        "* @rustomp in=VS1 out=s\nVS1 in 0 DC 0\nL1 p 0 1\nR1 s 0 1k\nK1 L1 L9 0.9\n",
+    )
+    .err()
+    .expect("引用不存在的 L 应该报错");
+    assert!(err.contains("不存在的电感"), "{err}");
+    assert!(err.contains("L1"), "应列出可用的电感：{err}");
+}
+
+/// 一组耦合的绕组数超过上限（4）→ 报错。
+#[test]
+fn coupling_group_too_large_is_rejected() {
+    let mut src = String::from("* @rustomp in=VS1 out=s\nVS1 in 0 DC 0\n");
+    for i in 0..5 {
+        src.push_str(&format!("L{i} n{i} 0 1\n"));
+    }
+    for i in 1..5 {
+        src.push_str(&format!("K{i} L0 L{i} 0.9\n"));
+    }
+    src.push_str("R1 s 0 1k\n");
+    let err = gen_from_spice("big.cir", &src)
+        .err()
+        .expect("5 个绕组应该被拒绝");
+    assert!(err.contains("最多支持 4"), "{err}");
+}
+
+/// 没有被 `K` 牵着的电感仍然生成单只 `net.inductor`。
+#[test]
+fn uncoupled_inductor_stays_single() {
+    let gen = gen_from_spice(
+        "l.cir",
+        "* @rustomp in=VS1 out=out\nVS1 in 0 DC 0\nL1 in out 10m\nR1 out 0 1k\n",
+    )
+    .expect("生成失败");
+    assert!(gen.code.contains("net.inductor("));
+    assert!(!gen.code.contains("coupled_inductors"));
 }
 
 /// 不认识的元件前缀要留提示（以前是 `Ok(None)` 静默丢）。

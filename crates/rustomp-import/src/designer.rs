@@ -619,6 +619,8 @@ pub fn import_with_table(
         elements,
         ground_nets: vec!["0".into()],
         notes,
+        // 设计器还没有变压器符号（M3 才加）；先留空
+        couplings: Vec::new(),
     })
 }
 

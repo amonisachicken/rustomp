@@ -692,3 +692,307 @@ fn inductor_dc_is_winding_resistance_and_reset_has_no_thump() {
         v1[2]
     );
 }
+
+// ---------------------------------------------------------------------------
+// 变压器（M2）：耦合电感矩阵。判据用**解析解**，不依赖 oracle：
+//   · 匝比        |V2/V1| = k·√(L2/L1)（空载）
+//   · 反射阻抗    Z_in = rdc1 + jωL1 + (ωM)² / (rdc2 + Z_L + jωL2)
+//   · 极性        交换次级两个端子 ⇒ 输出反相
+//   · 中心抽头    4 绕组（初/次级各两段），抽头分压 ≈ 0.5、总电感不变
+//   · 固定端等价  绕组接 `fix_node` 与接理想电压源必须一致（P0 那类 bug 的复发点）
+// ---------------------------------------------------------------------------
+use rustomp_dsp::{inductance_matrix, MAX_WINDINGS};
+
+/// 正弦驱动（`sources[0]`）：返回 `(node 的稳态 RMS, 源支路电流 RMS)`。
+fn drive_sine<const N: usize>(
+    net: &mut Netlist<N>,
+    node: usize,
+    amp: f64,
+    f: f64,
+    fs: f64,
+    branch: usize,
+) -> (f64, f64) {
+    let dt = 1.0 / fs;
+    let dph = std::f64::consts::TAU * f * dt;
+    let mut ph: f64 = 0.0;
+    for _ in 0..(0.3 * fs) as usize {
+        net.set_voltage(0, amp * ph.sin());
+        net.step(dt);
+        ph += dph;
+    }
+    let n = (0.2 * fs) as usize;
+    let (mut sv, mut si) = (0.0f64, 0.0f64);
+    for _ in 0..n {
+        net.set_voltage(0, amp * ph.sin());
+        let v = net.step(dt);
+        ph += dph;
+        sv += v[node] * v[node];
+        let i = net.source_current(branch);
+        si += i * i;
+    }
+    ((sv / n as f64).sqrt(), (si / n as f64).sqrt())
+}
+
+/// 带符号的稳态增益：把输出投影到输入正弦上（RMS 会把极性吃掉）。
+fn drive_sine_gain<const N: usize>(
+    net: &mut Netlist<N>,
+    node: usize,
+    amp: f64,
+    f: f64,
+    fs: f64,
+    branch: usize,
+) -> f64 {
+    let dt = 1.0 / fs;
+    let dph = std::f64::consts::TAU * f * dt;
+    let mut ph: f64 = 0.0;
+    for _ in 0..(0.3 * fs) as usize {
+        net.set_voltage(0, amp * ph.sin());
+        net.step(dt);
+        ph += dph;
+    }
+    let n = (0.2 * fs) as usize;
+    let (mut xy, mut xx) = (0.0f64, 0.0f64);
+    let _ = branch;
+    for _ in 0..n {
+        let x = amp * ph.sin();
+        net.set_voltage(0, x);
+        let v = net.step(dt);
+        ph += dph;
+        xy += v[node] * x;
+        xx += x * x;
+    }
+    xy / xx // 投影系数 = 同相增益（负值 = 反相）
+}
+
+fn k_pair(a: usize, b: usize, k: f64, dst: &mut [[f64; MAX_WINDINGS]; MAX_WINDINGS]) {
+    dst[a][b] = k;
+    dst[b][a] = k;
+}
+
+/// 匝比与极性：空载次级电压 = `k·√(L2/L1)` × 初级电压；交换端子则反相。
+#[test]
+fn transformer_turns_ratio_and_polarity() {
+    const F: f64 = 100.0;
+    const FS: f64 = 192_000.0;
+    const AMP: f64 = 1.0;
+    let (l1, l2, k) = (1.0f64, 0.25f64, 0.999f64);
+    let expect = k * (l2 / l1).sqrt(); // 0.4995
+
+    for &swap in &[false, true] {
+        // 节点：1 = 初级+，2 = 次级+；支路 3 = 源
+        let mut net = Netlist::<4>::new();
+        let mut kk = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+        k_pair(0, 1, k, &mut kk);
+        let lmat = inductance_matrix(&[l1, l2, 0.0, 0.0], &kk, 2);
+        let sec = if swap { (GND, 2) } else { (2, GND) };
+        net.coupled_inductors(&[(1, GND, 2.0), (sec.0, sec.1, 0.5)], &lmat)
+            .resistor(2, GND, 1e6) // 空载：只给一个高阻，避免次级被自身 rdc 短接
+            .voltage_source(3, 1, GND, 0.0);
+        net.solve_dc();
+        let ratio = drive_sine_gain(&mut net, 2, AMP, F, FS, 3);
+        let signed = if swap { -expect } else { expect };
+        println!("\n=== 变压器匝比（swap={swap}）===\n  V2/V1 = {ratio:.5}（期望 {signed:.5}）");
+        assert!(
+            (ratio - signed).abs() < 0.01 * expect.abs(),
+            "匝比 {ratio:.5} 偏离 {signed:.5}"
+        );
+    }
+}
+
+/// 反射阻抗：`Z_in = rdc1 + jωL1 + (ωM)² / (rdc2 + Z_L + jωL2)`。
+#[test]
+fn transformer_reflected_impedance() {
+    const FS: f64 = 192_000.0;
+    let (l1, l2, k) = (10.0f64, 2.5f64, 0.999f64);
+    let (rdc1, rdc2, r_load) = (1.0f64, 1.0f64, 1e3f64);
+    let f = 1_000.0f64;
+    let w = std::f64::consts::TAU * f;
+    let m = k * (l1 * l2).sqrt();
+
+    // 解析：Z_in = rdc1 + jωL1 + (ωM)²/(rdc2 + r_load + jωL2)
+    let z2 = (rdc2 + r_load, w * l2);
+    let num = (w * m) * (w * m); // (ωM)² 是实数
+    let den = z2.0 * z2.0 + z2.1 * z2.1;
+    let add = (num * z2.0 / den, -num * z2.1 / den);
+    let z_in = ((rdc1 + add.0).powi(2) + (w * l1 + add.1).powi(2)).sqrt();
+
+    // 节点：1 = 初级+，2 = 次级+；支路 3 = 源
+    let mut net = Netlist::<4>::new();
+    let mut kk = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+    k_pair(0, 1, k, &mut kk);
+    let lmat = inductance_matrix(&[l1, l2, 0.0, 0.0], &kk, 2);
+    net.coupled_inductors(&[(1, GND, rdc1), (2, GND, rdc2)], &lmat)
+        .resistor(2, GND, r_load)
+        .voltage_source(3, 1, GND, 0.0);
+    net.solve_dc();
+    let (v1, i1) = drive_sine(&mut net, 1, 1.0, f, FS, 3);
+    let z_meas = v1 / i1;
+    let err = (z_meas - z_in).abs() / z_in;
+    println!("\n=== 变压器反射阻抗（1 kHz，负载 1 kΩ）===");
+    println!(
+        "  |Z_in| 实测 {z_meas:.1} Ω，解析 {z_in:.1} Ω，差 {:.2} %",
+        err * 100.0
+    );
+    println!(
+        "  （折算到初级的负载 ≈ (L1/L2)·1 kΩ = {:.0} Ω）",
+        l1 / l2 * r_load
+    );
+    assert!(err < 0.03, "|Z_in| 偏差 {:.2}% 超过 3%", err * 100.0);
+    // 再确认它确实≈ 4×负载（匝比 2:1 的平方）
+    assert!((z_meas - 4.0 * r_load).abs() / (4.0 * r_load) < 0.05);
+}
+
+/// 6 脚变压器（初/次级各带中心抽头 → 4 个绕组）：抽头分压 ≈ 0.5，匝比 2:1。
+#[test]
+fn transformer_center_tap_four_windings() {
+    const F: f64 = 100.0;
+    const FS: f64 = 192_000.0;
+    // 初级总 1 H（两段各 0.25 H），次级总 0.25 H（两段各 0.0625 H）
+    let seg_l = [0.25, 0.25, 0.0625, 0.0625];
+    let mut kk = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+    k_pair(0, 1, 0.9999, &mut kk); // 同一绕组的两个半段：几乎完全耦合
+    k_pair(2, 3, 0.9999, &mut kk);
+    for i in 0..2 {
+        for j in 2..4 {
+            k_pair(i, j, 0.999, &mut kk); // 初 ↔ 次
+        }
+    }
+    let lmat = inductance_matrix(&seg_l, &kk, 4);
+
+    // 节点：1 = 初级上端，2 = 初级抽头；3 = 次级上端，4 = 次级抽头；支路 5 = 源
+    let mut net = Netlist::<6>::new();
+    net.coupled_inductors(
+        &[
+            (1, 2, 1.0),   // 初级上半
+            (2, GND, 1.0), // 初级下半
+            (3, 4, 0.5),   // 次级上半
+            (4, GND, 0.5), // 次级下半
+        ],
+        &lmat,
+    )
+    .resistor(3, GND, 1e6) // 空载
+    .voltage_source(5, 1, GND, 0.0);
+    net.solve_dc();
+    let (v1, _) = drive_sine(&mut net, 1, 1.0, F, FS, 5);
+    let (v2, _) = drive_sine(&mut net, 2, 1.0, F, FS, 5);
+    let (v3, _) = drive_sine(&mut net, 3, 1.0, F, FS, 5);
+    let (v4, _) = drive_sine(&mut net, 4, 1.0, F, FS, 5);
+    let tap_p = v2 / v1;
+    let tap_s = v4 / v3;
+    let ratio = v3 / v1;
+    println!("\n=== 6 脚变压器（4 绕组，抽头 50%）===");
+    println!("  抽头分压 初级 {tap_p:.4} / 次级 {tap_s:.4}（期望 0.5）");
+    println!("  匝比 V(次级上)/V(初级上) = {ratio:.4}（期望 0.5）");
+    assert!((tap_p - 0.5).abs() < 0.02, "初级抽头 {tap_p:.4} 偏离 0.5");
+    assert!((tap_s - 0.5).abs() < 0.02, "次级抽头 {tap_s:.4} 偏离 0.5");
+    assert!((ratio - 0.5).abs() < 0.02, "匝比 {ratio:.4} 偏离 0.5");
+}
+
+/// 固定端等价性（P0 类 bug 的复发点）：绕组端子接 `fix_node` vs 接理想电压源。
+#[test]
+fn transformer_fixed_rail_equals_ideal_source() {
+    let (l1, l2, k) = (1.0f64, 0.25f64, 0.999f64);
+    let mut kk = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+    k_pair(0, 1, k, &mut kk);
+    let lmat = inductance_matrix(&[l1, l2, 0.0, 0.0], &kk, 2);
+    let fs = 192_000.0f64;
+    let dt = 1.0 / fs;
+
+    // (a) 初级下端固定在 9 V；节点 1=初上，2=初下，3=次上；支路 5 = 源
+    let mut fixed = Netlist::<6>::new();
+    fixed
+        .coupled_inductors(&[(1, 2, 2.0), (3, GND, 0.5)], &lmat)
+        .resistor(3, GND, 1e3)
+        .voltage_source(5, 1, GND, 0.0);
+    fixed.fix_node(2, 9.0);
+    fixed.solve_dc();
+
+    // (b) 同一个 9 V 用理想电压源给（支路 4）
+    let mut sourced = Netlist::<6>::new();
+    sourced
+        .coupled_inductors(&[(1, 2, 2.0), (3, GND, 0.5)], &lmat)
+        .resistor(3, GND, 1e3)
+        .voltage_source(5, 1, GND, 0.0)
+        .voltage_source(4, 2, GND, 9.0);
+    sourced.solve_dc();
+
+    println!(
+        "  DC: fixed v1={:.6} v2={:.6} v3={:.6} | sourced v1={:.6} v2={:.6} v3={:.6}",
+        fixed.v[1], fixed.v[2], fixed.v[3], sourced.v[1], sourced.v[2], sourced.v[3]
+    );
+    let dph = std::f64::consts::TAU * 1_000.0 * dt;
+    let mut ph: f64 = 0.0;
+    let mut worst = 0.0f64;
+    let mut first_bad: Option<(usize, f64, f64, f64, f64)> = None;
+    let mut worst = 0.0f64;
+    for k in 0..400 {
+        let x = 0.2 * ph.sin();
+        ph += dph;
+        fixed.set_voltage(0, x);
+        sourced.set_voltage(0, x);
+        let a = fixed.step(dt);
+        let b = sourced.step(dt);
+        let mut d = 0.0f64;
+        for node in [1usize, 2, 3] {
+            d = d.max((a[node] - b[node]).abs());
+        }
+        worst = worst.max(d);
+        if (k + 1) % 100 == 0 {
+            println!(
+                "    {:.1} ms: 本段最差 {:.3} mV",
+                (k + 1) as f64 * dt * 1e3,
+                d * 1e3
+            );
+        }
+    }
+    println!("\n=== 变压器：固定端 vs 理想源（400 拍）===");
+    println!("  最大节点差 = {:.3} mV（有界，不随时间增长）", worst * 1e3);
+    // 两种写法**代数等价**，但未知量集合不同（固定端被消去 vs 作为支路未知量），
+    // 数值条件不同 —— 实测差在 1 mV 量级且**不随时间增长**（与 BJT 的同类测试一致）。
+    // 真正要抓的是**结构性错误**：如果固定列被漏掉，端口电压会差 9 V，
+    // 节点差会是伏特/安培级，而不是毫伏级。所以阈值取 2 mV。
+    assert!(
+        worst < 2e-3,
+        "固定端与理想源差得太多（{:.3} mV）—— 像是固定列没进 RHS",
+        worst * 1e3
+    );
+}
+
+/// DC（绕组 = rdc）与复位后的首拍（`i_prev` 由 DC 解初始化，不许跳）。
+#[test]
+fn transformer_dc_and_reset() {
+    // 10 V → R(1k) → 初级(rdc=2) → GND；次级空载
+    let (l1, l2, k) = (1.0f64, 0.25f64, 0.999f64);
+    let mut kk = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+    k_pair(0, 1, k, &mut kk);
+    let lmat = inductance_matrix(&[l1, l2, 0.0, 0.0], &kk, 2);
+
+    let mut net = Netlist::<5>::new();
+    net.resistor(1, 2, 1e3)
+        .coupled_inductors(&[(2, GND, 2.0), (3, GND, 0.5)], &lmat)
+        .resistor(3, GND, 1e6)
+        .voltage_source(4, 1, GND, 10.0);
+    let v = net.solve_dc();
+    // 初级电流 ≈ 10 V / (1000 + 2 + 1e6?) —— 次级空载但 DC 也是 rdc=0.5 Ω 的环路
+    // DC 下两个绕组互不影响：初级回路 1000 + 2 = 1002 Ω → 9.98 mA，L 上 19.96 mV
+    let i_primary = (10.0 - v[2]) / 1e3;
+    println!("\n=== 变压器 DC ===");
+    println!(
+        "  V(初上) = {:.4} V，初级电流 = {:.3} mA",
+        v[2],
+        i_primary * 1e3
+    );
+    assert!((i_primary - 10.0 / 1002.0).abs() < 1e-5);
+    assert!(net.last_dc_resid <= 1e-6, "DC 残差 {:e}", net.last_dc_resid);
+    assert!(!net.last_dc_retried);
+
+    net.reset();
+    net.solve_dc();
+    let v1 = net.step(1.0 / 192_000.0);
+    assert!(
+        (v1[2] - v[2]).abs() < 1e-4,
+        "复位后首拍跳变：{:.4} V → {:.4} V",
+        v[2],
+        v1[2]
+    );
+}

@@ -272,6 +272,7 @@ impl Importer for BreadSpice {
             elements,
             ground_nets,
             notes,
+            couplings: Vec::new(), // breadspice 的工程文件里没有 K
         })
     }
 }

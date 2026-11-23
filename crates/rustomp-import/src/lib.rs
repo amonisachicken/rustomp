@@ -92,6 +92,19 @@ pub struct ImportedCircuit {
     pub ground_nets: Vec<String>,
     /// 导入过程中的提示/待人工确认项
     pub notes: Vec<String>,
+    /// 互感（SPICE 的 `K` 行）：`K1 L1 L2 0.99`。
+    ///
+    /// `K` **没有节点**，是"两个元件之间的关系"而不是元件本身，所以不能塞进
+    /// `elements`（塞进去会被当成一个两端元件，静默毁掉变压器）。
+    pub couplings: Vec<Coupling>,
+}
+
+/// 一对耦合电感（`K` 行）。`k` 可以为负（反相），`|k|` 必须 < 1。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Coupling {
+    pub a: String,
+    pub b: String,
+    pub k: f64,
 }
 
 impl ImportedCircuit {

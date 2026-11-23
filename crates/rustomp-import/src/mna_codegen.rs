@@ -49,6 +49,10 @@ fn looks_like_mega_typo(raw: &str, value: f64) -> bool {
 /// 低于等于这个阻值的电阻视为导线（breadspice 的 `WIRE` 是 0.001 Ω）。
 const WIRE_OHMS: f64 = 0.01;
 
+/// 耦合电感的最大绕组数 —— **必须与 `rustomp_dsp::MAX_WINDINGS` 一致**
+/// （生成物里 `inductance_matrix` 的数组长度按它来）。
+const MAX_WINDINGS: usize = 4;
+
 /// 未知量上限（`Netlist<N>` 的 `N` 是编译期常量）。
 const MAX_UNKNOWNS: usize = 64;
 
@@ -611,6 +615,80 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
         return Err(format!("输出节点 {output_name} 被合并到地了"));
     }
 
+    // ---- 4.5) 互感（`K`）：先把电感按耦合关系分组 ----
+    //
+    // `K` 是"两个元件之间的关系"，不是元件；一组 `L` + `K` 生成**一个**
+    // `net.coupled_inductors(...)`。校验放在这里（生成前），错误信息带元素名。
+    let ind_names: Vec<String> = circuit
+        .elements
+        .iter()
+        .filter(|e| e.kind == ElementKind::Inductor)
+        .map(|e| e.name.clone())
+        .collect();
+    // 并查集（按名字）
+    let mut parent: Vec<usize> = (0..ind_names.len()).collect();
+    fn find(p: &mut [usize], mut i: usize) -> usize {
+        while p[i] != i {
+            let j = p[p[i]];
+            p[i] = j;
+            i = j;
+        }
+        i
+    }
+    let mut group_of: BTreeMap<String, usize> = BTreeMap::new();
+    for c in &circuit.couplings {
+        if !(c.k.is_finite() && c.k != 0.0 && c.k.abs() < 1.0) {
+            return Err(format!(
+                "耦合 `{}`–`{}` 的 k = {} 不合法：要求 0 < |k| < 1（k = ±1 会让电感矩阵奇异，\
+                 紧耦合请拆成励磁电感 + 漏感）",
+                c.a, c.b, c.k
+            ));
+        }
+        let ia = ind_names.iter().position(|n| *n == c.a);
+        let ib = ind_names.iter().position(|n| *n == c.b);
+        let (Some(ia), Some(ib)) = (ia, ib) else {
+            return Err(format!(
+                "耦合 `{}`–`{}` 引用了不存在的电感（现有：{}）",
+                c.a,
+                c.b,
+                ind_names.join("、")
+            ));
+        };
+        let (ra, rb) = (find(&mut parent, ia), find(&mut parent, ib));
+        if ra != rb {
+            parent[ra] = rb;
+        }
+        group_of.insert(c.a.clone(), ra.min(rb));
+        group_of.insert(c.b.clone(), ra.min(rb));
+    }
+    // 规范化根（union 之后），再按"首次出现顺序"排组
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    let mut roots: Vec<usize> = Vec::new();
+    for name in &ind_names {
+        let Some(_) = group_of.get(name) else {
+            continue;
+        };
+        let i = ind_names.iter().position(|n| n == name).unwrap();
+        let root = find(&mut parent, i);
+        match roots.iter().position(|r| *r == root) {
+            Some(g) => groups[g].push(name.clone()),
+            None => {
+                roots.push(root);
+                groups.push(vec![name.clone()]);
+            }
+        }
+    }
+    for g in &groups {
+        if g.len() > MAX_WINDINGS {
+            return Err(format!(
+                "一组耦合电感有 {} 个绕组（{}）：最多支持 {}",
+                g.len(),
+                g.join("、"),
+                MAX_WINDINGS
+            ));
+        }
+    }
+
     // ---- 5) 元件 → 代码 ----
     let mut body: Vec<String> = Vec::new();
     let mut uses: BTreeSet<String> = BTreeSet::new();
@@ -724,6 +802,89 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                         "{}：电感量必须是正数（收到 `{}` = {l} H）",
                         e.name, e.value
                     ));
+                }
+                // 有 `K` 牵着的电感：整组在**第一个成员**处一次性生成
+                let group = groups.iter().position(|g| g.contains(&e.name));
+                if let Some(gi) = group {
+                    if groups[gi][0] != e.name {
+                        continue; // 组内其余成员：已随组生成
+                    }
+                    let members = &groups[gi];
+                    let n = members.len();
+                    let mut ports: Vec<(usize, usize)> = Vec::with_capacity(n);
+                    let mut lvals = [0.0f64; MAX_WINDINGS];
+                    let mut kk = [[0.0f64; MAX_WINDINGS]; MAX_WINDINGS];
+                    for (m, name) in members.iter().enumerate() {
+                        let el = circuit
+                            .elements
+                            .iter()
+                            .find(|x| x.name == *name)
+                            .expect("组内成员一定存在");
+                        lvals[m] = parse_value(&el.value)
+                            .ok_or_else(|| format!("{}：读不出电感量 `{}`", el.name, el.value))?;
+                        if !(lvals[m].is_finite() && lvals[m] > 0.0) {
+                            return Err(format!("{}：电感量必须是正数", el.name));
+                        }
+                        ports.push((idx(&el.nodes[0]), idx(&el.nodes[1])));
+                    }
+                    for c in &circuit.couplings {
+                        let ia = members.iter().position(|m| *m == c.a);
+                        let ib = members.iter().position(|m| *m == c.b);
+                        if let (Some(ia), Some(ib)) = (ia, ib) {
+                            kk[ia][ib] = c.k;
+                            kk[ib][ia] = c.k;
+                        }
+                    }
+                    // 正定性：k 太接近 1、或几组 k 自相矛盾（k12·k23 > k13 之类）都会在这里现形
+                    let lmat = inductance_matrix_of(&lvals, &kk, n);
+                    if !is_positive_definite(&lmat, n) {
+                        return Err(format!(
+                            "耦合电感组（{}）的电感矩阵不是正定：k 太大或自相矛盾。\n\
+                             提示：|k| 必须 < 1（紧耦合请拆成励磁电感 + 漏感），\
+                             同一对电感只能耦合一次。",
+                            members.join(" + ")
+                        ));
+                    }
+                    body.push(format!(
+                        "    // 变压器：{}（{n} 个绕组，k 见矩阵）；DC 时每个绕组 = 1 mΩ",
+                        members.join(" + ")
+                    ));
+                    body.push("    net.coupled_inductors(".to_string());
+                    let port_list = ports
+                        .iter()
+                        .map(|(a, b)| {
+                            format!(
+                                "({}, {}, 0.0)",
+                                node_expr(*a, &node_index),
+                                node_expr(*b, &node_index)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    body.push(format!("        &[{port_list}],"));
+                    let l_list = lvals
+                        .iter()
+                        .map(|v| fmt_f64(*v))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    body.push("        &rustomp_dsp::inductance_matrix(".to_string());
+                    body.push(format!("            &[{l_list}],"));
+                    body.push("            &[".to_string());
+                    for row in &kk {
+                        let cells = row
+                            .iter()
+                            .map(|v| fmt_f64(*v))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        body.push(format!("                [{cells}],"));
+                    }
+                    body.push("            ],".to_string());
+                    body.push(format!("            {n},"));
+                    body.push("        ),".to_string());
+                    body.push("    );".to_string());
+                    elem_count += 1;
+                    saw_inductor = true;
+                    continue;
                 }
                 let (na, nb) = (idx(&e.nodes[0]), idx(&e.nodes[1]));
                 body.push(format!(
@@ -1170,6 +1331,49 @@ fn node_expr(index: usize, index_map: &BTreeMap<String, usize>) -> String {
         }
     }
     format!("{index}")
+}
+
+/// 与 `rustomp_dsp::inductance_matrix` 同一个公式（生成器侧用来做正定校验）。
+fn inductance_matrix_of(
+    l: &[f64; MAX_WINDINGS],
+    k: &[[f64; MAX_WINDINGS]; MAX_WINDINGS],
+    n: usize,
+) -> [[f64; MAX_WINDINGS]; MAX_WINDINGS] {
+    let mut m = [[0.0f64; MAX_WINDINGS]; MAX_WINDINGS];
+    for i in 0..n {
+        m[i][i] = l[i];
+        for j in 0..n {
+            if i != j {
+                m[i][j] = k[i][j] * (l[i] * l[j]).sqrt();
+            }
+        }
+    }
+    m
+}
+
+/// Cholesky 正定检查（`L = C·Cᵀ`，对角必须 > 0）。
+fn is_positive_definite(l: &[[f64; MAX_WINDINGS]; MAX_WINDINGS], n: usize) -> bool {
+    let mut c = [[0.0f64; MAX_WINDINGS]; MAX_WINDINGS];
+    for i in 0..n {
+        for j in 0..=i {
+            let mut sum = l[i][j];
+            for k in 0..j {
+                sum -= c[i][k] * c[j][k];
+            }
+            if i == j {
+                if !(sum > 0.0) || !sum.is_finite() {
+                    return false;
+                }
+                c[i][i] = sum.sqrt();
+            } else {
+                if c[j][j] == 0.0 {
+                    return false;
+                }
+                c[i][j] = sum / c[j][j];
+            }
+        }
+    }
+    true
 }
 
 fn fmt_f64(v: f64) -> String {

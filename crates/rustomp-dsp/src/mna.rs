@@ -44,6 +44,87 @@ pub const GND: usize = 0;
 /// "0 Ω 必须等价于短路"是电位器端点的物理约定。
 pub const MIN_RESISTANCE: f64 = 1e-3;
 
+/// 耦合电感（变压器）支持的最大绕组数。
+///
+/// 设计器将来只出 6 脚变压器（初/次级各带中心抽头 = 4 个绕组），
+/// 4 是"够用且不至于把 L 矩阵求逆搞慢"的上限。
+pub const MAX_WINDINGS: usize = 4;
+
+/// n×n 求逆（Gauss-Jordan + 部分主元）。奇异返回 `None`。
+fn invert_n(
+    mut a: [[f64; MAX_WINDINGS]; MAX_WINDINGS],
+    n: usize,
+) -> Option<[[f64; MAX_WINDINGS]; MAX_WINDINGS]> {
+    let mut inv = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+    for i in 0..n {
+        inv[i][i] = 1.0;
+    }
+    for col in 0..n {
+        // 部分主元：电感矩阵（含互感）条件数可能很大，必须选主元
+        let mut pivot = col;
+        let mut best = a[col][col].abs();
+        for row in (col + 1)..n {
+            let v = a[row][col].abs();
+            if v > best {
+                best = v;
+                pivot = row;
+            }
+        }
+        if !(best > 1e-300) {
+            return None;
+        }
+        if pivot != col {
+            a.swap(col, pivot);
+            inv.swap(col, pivot);
+        }
+        let d = a[col][col];
+        for c in 0..n {
+            a[col][c] /= d;
+            inv[col][c] /= d;
+        }
+        for row in 0..n {
+            if row == col {
+                continue;
+            }
+            let f = a[row][col];
+            if f == 0.0 {
+                continue;
+            }
+            for c in 0..n {
+                a[row][c] -= f * a[col][c];
+                inv[row][c] -= f * inv[col][c];
+            }
+        }
+    }
+    Some(inv)
+}
+
+/// 由**自感 + 耦合系数**构造完整电感矩阵：`L_ij = k_ij·√(L_i·L_j)`，`L_ii = L_i`。
+///
+/// 网表里的 `L` + `K` 就是这两个量；生成器把 `K` 折成矩阵时调用这里，
+/// 保证"网表语义"只有一处实现。
+///
+/// `k` 只读上三角（下三角由对称性填充），对角线忽略。
+/// **不自带校验**：`0 < k < 1` 与正定性由调用方（生成器）负责。
+pub fn inductance_matrix(
+    l: &[f64; MAX_WINDINGS],
+    k: &[[f64; MAX_WINDINGS]; MAX_WINDINGS],
+    n: usize,
+) -> [[f64; MAX_WINDINGS]; MAX_WINDINGS] {
+    let n = n.min(MAX_WINDINGS);
+    let mut m = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+    for i in 0..n {
+        m[i][i] = l[i];
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            m[i][j] = k[i][j] * (l[i] * l[j]).sqrt();
+        }
+    }
+    m
+}
+
 /// 把电阻值夹到安全范围（非有限值/0/负数都变成 `MIN_RESISTANCE`）。
 #[inline]
 pub fn floor_resistance(r: f64) -> f64 {
@@ -178,6 +259,73 @@ impl<const N: usize> Mna<N> {
     pub fn inject(&mut self, node: usize, i: f64) {
         if node != GND && node < N && self.fixed[node].is_none() {
             self.rhs[node] += i;
+        }
+    }
+
+    /// **多端口导纳矩阵**：`i_k = Σ_l M[k][l]·v_l`，其中 `v_k = V(ports[k].0) − V(ports[k].1)`，
+    /// `i_k` 从 `ports[k].0` 经元件流向 `ports[k].1`。
+    ///
+    /// 固定节点（电源轨 / 输入）的处理与 [`Self::conductance`] **完全一致**：
+    /// 固定节点的行不进矩阵；它的电压是已知的，所以 `M[k][l]·v_fixed` 移到 RHS。
+    /// 地按"固定 0 V"处理。
+    ///
+    /// ⚠️ 这是耦合电感/变压器唯一的新装配入口，也是 P0（固定端雅可比重复计入）
+    /// 最容易复发的地方 —— 由 `tests/mna.rs` 的"固定轨 vs 理想源"等价性测试守着。
+    pub fn stamp_port_admittance(
+        &mut self,
+        ports: &[(usize, usize)],
+        m: &[[f64; MAX_WINDINGS]; MAX_WINDINGS],
+        n: usize,
+    ) {
+        let n = n.min(MAX_WINDINGS).min(ports.len());
+        // 先把"哪些端子电位已知"算出来（避免边读 self 边改 self.y 的借用冲突）
+        let mut known = [[None::<f64>; 2]; MAX_WINDINGS];
+        for k in 0..n {
+            for (t, node) in [(0, ports[k].0), (1, ports[k].1)] {
+                known[k][t] = if node == GND {
+                    Some(0.0)
+                } else {
+                    self.fixed_voltage(node)
+                };
+            }
+        }
+        for k in 0..n {
+            for t in 0..2 {
+                if known[k][t].is_some() {
+                    continue; // 固定行 / 地：不出现在矩阵里
+                }
+                let (node_k, s_k) = if t == 0 {
+                    (ports[k].0, 1.0)
+                } else {
+                    (ports[k].1, -1.0)
+                };
+                if node_k >= N {
+                    continue;
+                }
+                for l in 0..n {
+                    let mkl = m[k][l];
+                    if mkl == 0.0 {
+                        continue;
+                    }
+                    for u in 0..2 {
+                        let (node_l, s_l) = if u == 0 {
+                            (ports[l].0, 1.0)
+                        } else {
+                            (ports[l].1, -1.0)
+                        };
+                        let coef = s_k * s_l * mkl;
+                        match known[l][u] {
+                            // 固定列：把已知电压移到 RHS
+                            Some(v) => self.rhs[node_k] -= coef * v,
+                            None => {
+                                if node_l < N {
+                                    self.y[node_k][node_l] += coef;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -521,6 +669,39 @@ pub enum Element {
         /// 上一拍的电流（A），流向 `a → b`
         i_prev: f64,
     },
+    /// **耦合电感 / 变压器**（2..=[`MAX_WINDINGS`] 个绕组，后向欧拉伴生模型）。
+    ///
+    /// 模型：`v = R·i + L·di/dt`，`R = diag(rdc)`，`L` 是完整电感矩阵
+    /// （对角是自感，非对角是互感 `M_ij = k_ij·√(L_i·L_j)`）。
+    ///
+    /// ```text
+    /// BE:  i_n = M·v_n + H·i_{n-1} ,  M = (R + L/dt)^{-1} ,  H = M·(L/dt)
+    /// DC:  每个绕组退化成自己的 rdc（理想 L 在 DC 是短路）
+    /// ```
+    ///
+    /// 与 [`Element::Inductor`] 一样**不占未知量**：矩阵装配走
+    /// [`Mna::stamp_port_admittance`]，历史电流作为电流源注入。
+    ///
+    /// 为什么用"完整 L 矩阵 + 求逆"而不是支路方程/理想变压器：不引入新未知量
+    /// （`solve_len` 是稠密 O(n³)），也不需要 `k = 1`（那会让 L 矩阵奇异）。
+    CoupledInductors {
+        /// 每个绕组的 `(节点a, 节点b)`；电流流向 `a → b`
+        ports: [(usize, usize); MAX_WINDINGS],
+        /// 绕组数（2..=MAX_WINDINGS）
+        n: usize,
+        /// 完整电感矩阵（H，对称正定）
+        l: [[f64; MAX_WINDINGS]; MAX_WINDINGS],
+        /// 每个绕组的绕线电阻（Ω）
+        rdc: [f64; MAX_WINDINGS],
+        /// 上一拍每个绕组的电流（A，`a → b`）
+        i_prev: [f64; MAX_WINDINGS],
+        /// `M`/`H` 的 dt 缓存（`dt` 只在子步进/采样率变化时改，正常音频恒等）
+        cache_dt: core::cell::Cell<f64>,
+        /// `M = (R + L/dt)^{-1}`
+        m: core::cell::Cell<[[f64; MAX_WINDINGS]; MAX_WINDINGS]>,
+        /// `H = M·(L/dt)`
+        h: core::cell::Cell<[[f64; MAX_WINDINGS]; MAX_WINDINGS]>,
+    },
     /// 运放（单极点宏模型；`branch` 是输出电压源支路）
     OpAmp {
         model: OpAmpModel,
@@ -532,6 +713,82 @@ pub enum Element {
         /// 直流求解时输出已饱和 → 钉在这个电压上（`None` = 正常）
         pin: Option<f64>,
     },
+}
+
+/// `M = (R + L/dt)^{-1}` 与 `H = M·(L/dt)`，按 `dt` 缓存（只有子步进/采样率变化才重算）。
+///
+/// **计算顺序很关键**：直接求 `(R + L/dt)^{-1}` 会踩灾难性抵消 ——
+/// 矩阵元素量级是 `L/dt`（例如 1 H / 5 µs = 2·10⁵），而 `H = M·(L/dt)` 的结果
+/// 几乎就是单位矩阵（≈ I − dt·L⁻¹R），有效数字被吃光，稳态复现误差 ~1e-4
+/// （实测：固定端 vs 理想源的等价性测试里表现为 1 mV 级的漂移）。
+///
+/// 所以换成"先求 L⁻¹"的等价形式（两者都是 n×n、量级 O(1)）：
+///
+/// ```text
+/// Li = L⁻¹
+/// H  = (I + dt·Li·R)⁻¹        // ≈ I − dt·Li·R，条件数接近 1
+/// M  = H·(dt·Li)
+/// ```
+///
+/// 单绕组时退化成 `H = L/(L + dt·rdc)`、`M = dt/(L + dt·rdc)`，与 M1 的公式一致。
+///
+/// `L` 奇异（例如 `k = 1`）时退回**逐绕组独立**的近似 —— 绝不返回 NaN。
+/// 但那是"错得不明显"的降级，所以 `rustomp-import` 在 codegen 阶段就校验 `L` 正定。
+fn coupled_matrices(
+    l: &[[f64; MAX_WINDINGS]; MAX_WINDINGS],
+    rdc: &[f64; MAX_WINDINGS],
+    n: usize,
+    cache_dt: &core::cell::Cell<f64>,
+    m_cell: &core::cell::Cell<[[f64; MAX_WINDINGS]; MAX_WINDINGS]>,
+    h_cell: &core::cell::Cell<[[f64; MAX_WINDINGS]; MAX_WINDINGS]>,
+    dt: f64,
+) -> (
+    [[f64; MAX_WINDINGS]; MAX_WINDINGS],
+    [[f64; MAX_WINDINGS]; MAX_WINDINGS],
+) {
+    if cache_dt.get() == dt {
+        return (m_cell.get(), h_cell.get());
+    }
+    let n = n.min(MAX_WINDINGS);
+    // Li = L⁻¹；奇异时退回逐绕组独立（对角）
+    let li = invert_n(*l, n).unwrap_or_else(|| {
+        let mut d = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+        for k in 0..n {
+            d[k][k] = if l[k][k] != 0.0 { 1.0 / l[k][k] } else { 0.0 };
+        }
+        d
+    });
+    // H = (I + dt·Li·R)⁻¹（R 是对角阵，所以是给第 j 列乘 rdc[j]）
+    let mut a = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+    for i in 0..n {
+        for j in 0..n {
+            a[i][j] = dt * li[i][j] * floor_resistance(rdc[j]);
+        }
+        a[i][i] += 1.0;
+    }
+    let h = invert_n(a, n).unwrap_or_else(|| {
+        // (I + 小量)⁻¹ 一般不会失败；真失败就退回对角
+        let mut d = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+        for k in 0..n {
+            d[k][k] = 1.0 / (1.0 + dt * li[k][k] * floor_resistance(rdc[k]));
+        }
+        d
+    });
+    // M = H·(dt·Li)
+    let mut m = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+    for i in 0..n {
+        for j in 0..n {
+            let mut acc = 0.0;
+            for t in 0..n {
+                acc += h[i][t] * dt * li[t][j];
+            }
+            m[i][j] = acc;
+        }
+    }
+    cache_dt.set(dt);
+    m_cell.set(m);
+    h_cell.set(h);
+    (m, h)
 }
 
 impl Element {
@@ -693,6 +950,37 @@ impl Element {
                 let h = g * (l / dt) * i_prev;
                 sys.stamp_lin(a, b, g, h);
             }
+            Element::CoupledInductors {
+                ref ports,
+                n,
+                ref rdc,
+                i_prev,
+                ref l,
+                ref cache_dt,
+                m: ref m_cell,
+                h: ref h_cell,
+            } => {
+                let n = n.min(MAX_WINDINGS);
+                // DC：每个绕组就是它的绕线电阻（互相之间没有直流通路）
+                if dc || dt <= 0.0 {
+                    for k in 0..n {
+                        sys.resistor(ports[k].0, ports[k].1, floor_resistance(rdc[k]));
+                    }
+                    return;
+                }
+                let (m, h) = coupled_matrices(l, rdc, n, cache_dt, m_cell, h_cell, dt);
+                // 历史电流：h_k = Σ_l H[k][l]·i_prev[l]
+                let mut hs = [0.0f64; MAX_WINDINGS];
+                for k in 0..n {
+                    for j in 0..n {
+                        hs[k] += h[k][j] * i_prev[j];
+                    }
+                }
+                sys.stamp_port_admittance(&ports[..n], &m, n);
+                for k in 0..n {
+                    sys.current_source(ports[k].0, ports[k].1, hs[k]);
+                }
+            }
             Element::OpAmp {
                 model,
                 state,
@@ -739,6 +1027,44 @@ impl Element {
                 let va = if *a == GND { 0.0 } else { v[*a] };
                 let vb = if *b == GND { 0.0 } else { v[*b] };
                 *v_prev = va - vb;
+            }
+            // 耦合电感：i_k = Σ_l M[k][l]·v_l + Σ_l H[k][l]·i_prev[l]
+            Element::CoupledInductors {
+                ports,
+                n,
+                rdc,
+                i_prev,
+                l,
+                cache_dt,
+                m: m_cell,
+                h: h_cell,
+            } => {
+                let n = (*n).min(MAX_WINDINGS);
+                let vp: [f64; MAX_WINDINGS] = core::array::from_fn(|k| {
+                    if k >= n {
+                        return 0.0;
+                    }
+                    let (a, b) = ports[k];
+                    let va = if a == GND { 0.0 } else { v[a] };
+                    let vb = if b == GND { 0.0 } else { v[b] };
+                    va - vb
+                });
+                let mut next = [0.0f64; MAX_WINDINGS];
+                if dc || dt <= 0.0 {
+                    for k in 0..n {
+                        next[k] = vp[k] / floor_resistance(rdc[k]);
+                    }
+                } else {
+                    let (m, h) = coupled_matrices(l, rdc, n, cache_dt, m_cell, h_cell, dt);
+                    for k in 0..n {
+                        let mut acc = 0.0;
+                        for j in 0..n {
+                            acc += m[k][j] * vp[j] + h[k][j] * i_prev[j];
+                        }
+                        next[k] = acc;
+                    }
+                }
+                *i_prev = next;
             }
             // 电感状态：用**提交点的电压**反算这一拍的电流（与装配时的 g/h 同一套公式）
             Element::Inductor {
@@ -1021,6 +1347,56 @@ impl<const N: usize> Netlist<N> {
             }
         }
         n
+    }
+
+    /// **耦合电感 / 变压器**：`windings[k] = (节点a, 节点b, 绕线电阻)`，
+    /// `l` 是**完整的电感矩阵**（对角自感，非对角互感 `M_ij = k_ij·√(L_i·L_j)`）。
+    ///
+    /// 绕组数 2..=[`MAX_WINDINGS`]；`l` 应当对称正定（`k < 1`）。DC 时每个绕组退化成
+    /// 自己的 `rdc`。生成的代码由 `rustomp-import` 负责把 `L` + `K` 折算成这张矩阵。
+    ///
+    /// ```no_run
+    /// # use rustomp_dsp::{Netlist, MAX_WINDINGS, GND};
+    /// let l1 = 1.0f64;   // 1 H
+    /// let l2 = 0.25f64;  // 匝比 2:1
+    /// let k = 0.999f64;
+    /// let mut l = [[0.0; MAX_WINDINGS]; MAX_WINDINGS];
+    /// l[0][0] = l1;
+    /// l[1][1] = l2;
+    /// let m = k * (l1 * l2).sqrt();
+    /// l[0][1] = m;
+    /// l[1][0] = m;
+    ///
+    /// let mut net = Netlist::<5>::new();
+    /// net.coupled_inductors(&[(1, GND, 0.0), (2, GND, 0.0)], &l);
+    /// ```
+    pub fn coupled_inductors(
+        &mut self,
+        windings: &[(usize, usize, f64)],
+        l: &[[f64; MAX_WINDINGS]; MAX_WINDINGS],
+    ) -> &mut Self {
+        assert!(
+            (2..=MAX_WINDINGS).contains(&windings.len()),
+            "耦合电感需要 2..={MAX_WINDINGS} 个绕组（收到 {}）",
+            windings.len()
+        );
+        let n = windings.len();
+        let mut ports = [(GND, GND); MAX_WINDINGS];
+        let mut rdc = [0.0; MAX_WINDINGS];
+        for k in 0..n {
+            ports[k] = (windings[k].0, windings[k].1);
+            rdc[k] = floor_resistance(windings[k].2);
+        }
+        self.push(Element::CoupledInductors {
+            ports,
+            n,
+            l: *l,
+            rdc,
+            i_prev: [0.0; MAX_WINDINGS],
+            cache_dt: core::cell::Cell::new(f64::NAN),
+            m: core::cell::Cell::new([[0.0; MAX_WINDINGS]; MAX_WINDINGS]),
+            h: core::cell::Cell::new([[0.0; MAX_WINDINGS]; MAX_WINDINGS]),
+        })
     }
 
     /// 声明真正的未知量个数（生成器会调用；固定节点排在它之后）。
@@ -1590,6 +1966,9 @@ impl<const N: usize> Netlist<N> {
             }
             if let Element::Inductor { i_prev, .. } = e {
                 *i_prev = 0.0;
+            }
+            if let Element::CoupledInductors { i_prev, .. } = e {
+                *i_prev = [0.0; MAX_WINDINGS];
             }
             if let Element::Bjt {
                 q,
