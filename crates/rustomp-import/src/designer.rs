@@ -573,6 +573,17 @@ pub fn import_with_table(
             continue;
         }
 
+        // 变压器：设计器把它展开成"4 个 L + 6 个 K"，`.design.json` 直读这边还没有
+        // 对应的展开逻辑（M3 只做了设计器侧）。给一条能照做的错误，别让人对着
+        // "暂不支持 T 类元件"猜。
+        if p.symbol == "transformer" {
+            return Err(ImportError::Parse(format!(
+                "{}：变压器暂不支持从 `.design.json` 直读。\n\
+                 请在设计器里「生成网表」导出 `.cir`，再用 `rustomp-import --mna <网表.cir>`\n\
+                 （网表里是 4 个 L + 6 个 K，直读路径没有这套展开）",
+                p.r#ref
+            )));
+        }
         let kind = kind_of(&p.symbol, &sym.spice.prefix);
         let name = if sym.spice.prefix == "X" && !p.r#ref.starts_with('X') {
             // SPICE 靠首字母区分器件类型：运放实例必须以 X 开头
