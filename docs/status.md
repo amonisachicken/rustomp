@@ -113,8 +113,8 @@
 
 - [ ] 器件动态档补齐：二极管 `Cjo/tt`、MOSFET `Cgs/Cgd`。
 - [x] 设计器变压器符号（M3）：6 脚封装、初/次级中心抽头可滑动（默认 50%），
-      导出 4 绕组 + 6 个 `K`（`rustomp-circuit-designer v0.2.0`）。
-      `.design.json` 直读仍未支持（先导出 `.cir`）。
+      导出 4 绕组 + 6 个 `K`（`rustomp-circuit-designer v0.2.0`）；
+      `.design.json` 直读也已支持（导入器侧同样展开）。
 - [ ] 电位器 A/C taper。
 - [ ] 预设与状态管理。
 - [ ] `pkg` 安装包 + Developer ID 签名/公证；Windows Authenticode。

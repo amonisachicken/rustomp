@@ -84,6 +84,18 @@ pub struct Part {
     pub rot: i32,
     #[serde(default = "no_mirror")]
     pub mirror: String,
+    /// 变压器：匝比 `n_p/n_s`（默认 2）
+    #[serde(default)]
+    pub ratio: Option<f64>,
+    /// 变压器：耦合系数（默认 0.999；0 < k < 1）
+    #[serde(default)]
+    pub k: Option<f64>,
+    /// 变压器：初级抽头位置（0..1，默认 0.5，从打点端量起）
+    #[serde(default)]
+    pub tap_p: Option<f64>,
+    /// 变压器：次级抽头位置（0..1，默认 0.5）
+    #[serde(default)]
+    pub tap_s: Option<f64>,
 }
 
 fn no_mirror() -> String {
@@ -527,6 +539,7 @@ pub fn import_with_table(
 
     // ---- 7) 元件 ----
     let mut elements: Vec<Element> = Vec::new();
+    let mut couplings: Vec<crate::Coupling> = Vec::new();
     for p in &parts_sorted {
         let Some(sym) = table.symbols.get(&p.symbol) else {
             continue;
@@ -573,16 +586,23 @@ pub fn import_with_table(
             continue;
         }
 
-        // 变压器：设计器把它展开成"4 个 L + 6 个 K"，`.design.json` 直读这边还没有
-        // 对应的展开逻辑（M3 只做了设计器侧）。给一条能照做的错误，别让人对着
-        // "暂不支持 T 类元件"猜。
-        if p.symbol == "transformer" {
-            return Err(ImportError::Parse(format!(
-                "{}：变压器暂不支持从 `.design.json` 直读。\n\
-                 请在设计器里「生成网表」导出 `.cir`，再用 `rustomp-import --mna <网表.cir>`\n\
-                 （网表里是 4 个 L + 6 个 K，直读路径没有这套展开）",
-                p.r#ref
-            )));
+        // 变压器（6 脚）：展开成 4 个绕组 + 6 条耦合，与设计器导出网表的规则**逐字一致**
+        // （设计器 `backend/src/netlist.rs` 的同名逻辑；两侧都有测试）
+        if p.symbol == "transformer" && nodes.len() == 6 {
+            let (els, cs, note) = expand_transformer(
+                &p.r#ref,
+                &nodes,
+                p.value.as_deref().unwrap_or("1"),
+                p.ratio.unwrap_or(2.0),
+                p.k.unwrap_or(0.999),
+                p.tap_p.unwrap_or(0.5),
+                p.tap_s.unwrap_or(0.5),
+            )
+            .map_err(ImportError::Parse)?;
+            elements.extend(els);
+            couplings.extend(cs);
+            notes.push(note);
+            continue;
         }
         let kind = kind_of(&p.symbol, &sym.spice.prefix);
         let name = if sym.spice.prefix == "X" && !p.r#ref.starts_with('X') {
@@ -630,9 +650,105 @@ pub fn import_with_table(
         elements,
         ground_nets: vec!["0".into()],
         notes,
-        // 设计器还没有变压器符号（M3 才加）；先留空
-        couplings: Vec::new(),
+        couplings,
     })
+}
+
+/// 变压器（6 脚）→ 4 个绕组 + 6 条耦合。**与设计器 `netlist.rs` 的规则逐字一致**：
+///
+/// ```text
+/// Ls_total = L_p / 匝比²
+/// L 上段 = a²·L_total，L 下段 = (1−a)²·L_total  （a 从打点端量起）
+/// 同绕组两个半段 k = 0.9999；初↔次用用户 k
+/// ```
+///
+/// 返回 `(元件, 耦合, 提示)`。参数越界直接报错（不生成"看起来能跑"的错网表）。
+fn expand_transformer(
+    rname: &str,
+    nodes: &[String],
+    lp_raw: &str,
+    ratio: f64,
+    k: f64,
+    tap_p: f64,
+    tap_s: f64,
+) -> Result<(Vec<Element>, Vec<crate::Coupling>, String), String> {
+    debug_assert_eq!(nodes.len(), 6);
+    let lp = crate::mna_codegen::parse_value(lp_raw)
+        .ok_or_else(|| format!("{ref_}：读不出初级电感 `{lp_raw}`（单位 H）", ref_ = rname))?;
+    if !(lp.is_finite() && lp > 0.0) {
+        return Err(format!("{rname}：初级电感必须 > 0（收到 `{lp_raw}`）"));
+    }
+    if !(ratio.is_finite() && ratio > 0.0) {
+        return Err(format!("{rname}：匝比必须 > 0（收到 {ratio}）"));
+    }
+    if !(k > 0.0 && k < 1.0) {
+        return Err(format!(
+            "{rname}：耦合系数必须 0 < k < 1（收到 {k}）；紧耦合请拆励磁电感 + 漏感"
+        ));
+    }
+    for (what, a) in [("初级", tap_p), ("次级", tap_s)] {
+        if !(a > 0.0 && a < 1.0) {
+            return Err(format!(
+                "{rname}：{what}抽头位置必须 0 < a < 1（收到 {a}）—— 贴到端点会得到 0 H 的绕组"
+            ));
+        }
+    }
+    let ls = lp / (ratio * ratio);
+    let (lpa, lpb) = (lp * tap_p * tap_p, lp * (1.0 - tap_p) * (1.0 - tap_p));
+    let (lsa, lsb) = (ls * tap_s * tap_s, ls * (1.0 - tap_s) * (1.0 - tap_s));
+    let seg = |suffix: &str, a: &str, b: &str, l: f64| Element {
+        name: format!("L{}{suffix}", rname),
+        kind: ElementKind::Inductor,
+        nodes: vec![a.to_string(), b.to_string()],
+        value: fmt_num(l),
+        model: None,
+    };
+    let els = vec![
+        seg("A", &nodes[0], &nodes[1], lpa),
+        seg("B", &nodes[1], &nodes[2], lpb),
+        seg("C", &nodes[3], &nodes[4], lsa),
+        seg("D", &nodes[4], &nodes[5], lsb),
+    ];
+    let pairs = [
+        ("A", "B", 0.9999_f64),
+        ("C", "D", 0.9999),
+        ("A", "C", k),
+        ("A", "D", k),
+        ("B", "C", k),
+        ("B", "D", k),
+    ];
+    let cs = pairs
+        .iter()
+        .map(|(x, y, kk)| crate::Coupling {
+            a: format!("L{}{x}", rname),
+            b: format!("L{}{y}", rname),
+            k: *kk,
+        })
+        .collect();
+    let note = format!(
+        "{rname}：变压器展开成 4 个绕组 + 6 条耦合（初级 {lp_raw} H，匝比 {ratio}:1，\
+         k={k}，抽头 {:.0}%/{:.0}%）",
+        tap_p * 100.0,
+        tap_s * 100.0
+    );
+    Ok((els, cs, note))
+}
+
+/// 数值 → 网表文本（≤9 位小数、去尾零；过大/过小用科学计数法）。确定性。
+fn fmt_num(v: f64) -> String {
+    if !v.is_finite() {
+        return "0".into();
+    }
+    if v != 0.0 && (v.abs() < 1e-6 || v.abs() >= 1e7) {
+        return format!("{v:e}");
+    }
+    let t = format!("{v:.9}");
+    let t = t.trim_end_matches('0').trim_end_matches('.');
+    if t.is_empty() || t == "-0" {
+        "0".into()
+    } else {
+        t.to_string()
+    }
 }
 
 fn kind_of(symbol: &str, prefix: &str) -> ElementKind {
@@ -674,5 +790,65 @@ fn half_value(value: &str) -> String {
             format!("{txt}{unit}")
         }
         Err(_) => value.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nodes() -> Vec<String> {
+        ["A1", "AT", "A2", "B1", "BT", "B2"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    /// 抽头 50% / 匝比 2:1：初级两段 0.25 H，次级两段 0.0625 H；6 条耦合。
+    #[test]
+    fn transformer_expands_to_four_windings_and_six_couplings() {
+        let (els, cs, note) =
+            expand_transformer("T1", &nodes(), "1", 2.0, 0.999, 0.5, 0.5).expect("展开失败");
+        assert_eq!(els.len(), 4);
+        assert_eq!(cs.len(), 6);
+        let names: Vec<&str> = els.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["LT1A", "LT1B", "LT1C", "LT1D"]);
+        assert_eq!(els[0].value, "0.25");
+        assert_eq!(els[1].value, "0.25");
+        assert_eq!(els[2].value, "0.0625");
+        assert_eq!(els[3].value, "0.0625");
+        // 同绕组两段 0.9999，跨绕组 4 条用用户 k
+        assert_eq!(cs.iter().filter(|c| c.k == 0.9999).count(), 2);
+        assert_eq!(cs.iter().filter(|c| c.k == 0.999).count(), 4);
+        assert!(note.contains("4 个绕组"), "{note}");
+    }
+
+    /// 抽头位置真的会改变分段电感（a=0.3 → 0.09 / 0.49）。
+    #[test]
+    fn transformer_tap_changes_segment_inductance() {
+        let (els, _, _) =
+            expand_transformer("T1", &nodes(), "1", 1.0, 0.999, 0.3, 0.7).expect("展开失败");
+        assert_eq!(els[0].value, "0.09");
+        assert_eq!(els[1].value, "0.49");
+        // 1:1 时次级总电感 = 1 H，抽头 0.7 → 上段 0.49、下段 0.09
+        assert_eq!(els[2].value, "0.49");
+        assert_eq!(els[3].value, "0.09");
+    }
+
+    /// 参数越界必须报错（不生成"看起来能跑"的错网表）。
+    #[test]
+    fn transformer_rejects_bad_params() {
+        for (lp, ratio, k, tp, ts) in [
+            ("0", 2.0, 0.999, 0.5, 0.5),
+            ("1", 0.0, 0.999, 0.5, 0.5),
+            ("1", 2.0, 1.0, 0.5, 0.5),
+            ("1", 2.0, 0.999, 0.0, 0.5),
+            ("1", 2.0, 0.999, 0.5, 1.0),
+        ] {
+            let err = expand_transformer("T1", &nodes(), lp, ratio, k, tp, ts)
+                .err()
+                .unwrap_or_else(|| panic!("lp={lp} ratio={ratio} k={k} tp={tp} ts={ts} 应该报错"));
+            assert!(err.contains("T1"), "{err}");
+        }
     }
 }
