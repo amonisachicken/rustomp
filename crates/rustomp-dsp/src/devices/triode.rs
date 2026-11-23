@@ -99,18 +99,19 @@ impl Triode {
         let de1_dva = l / self.kp + (vpk / self.kp) * logistic * du_dva;
         let de1_dvg = (vpk / self.kp) * logistic * du_dvg;
 
-        // Ia 与 dIa/dE1
+        // Ia 与 dIa/dE1（`x^(EX-1)` 用 `x^EX / x` 算，省一次 powf —— 热路径）
         let (ip, dip_de1) = match self.law {
-            TriodeLaw::V96 => (
-                2.0 * e1.powf(self.ex) / self.kg1,
-                2.0 * self.ex * e1.powf(self.ex - 1.0) / self.kg1,
-            ),
+            TriodeLaw::V96 => {
+                let p = e1.powf(self.ex);
+                (
+                    2.0 * p / self.kg1,
+                    2.0 * self.ex * (p / e1) / self.kg1,
+                )
+            }
             TriodeLaw::V97 => {
                 let r = e1 / self.kg1;
-                (
-                    2.0 * r.powf(self.ex),
-                    2.0 * self.ex * r.powf(self.ex - 1.0) / self.kg1,
-                )
+                let p = r.powf(self.ex);
+                (2.0 * p, 2.0 * self.ex * (p / r) / self.kg1)
             }
         };
         PlateEval {
