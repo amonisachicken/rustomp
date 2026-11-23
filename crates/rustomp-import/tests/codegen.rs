@@ -11,7 +11,7 @@ use rustomp_import::mna_codegen::{generate, Options};
 use std::path::Path;
 
 /// (夹具, 生成物, 生成物头部写的文件名)
-const CASES: [(&str, &str, &str); 2] = [
+const CASES: [(&str, &str, &str); 3] = [
     (
         "tests/fixtures/sparklin_drive.cir",
         "../rustomp-dsp/tests/generated/sparklin_drive.rs",
@@ -21,6 +21,11 @@ const CASES: [(&str, &str, &str); 2] = [
         "tests/fixtures/bjt_stage.cir",
         "../rustomp-dsp/tests/generated/bjt_stage.rs",
         "bjt_stage.cir",
+    ),
+    (
+        "tests/fixtures/inductor_rl.cir",
+        "../rustomp-dsp/tests/generated/inductor_rl.rs",
+        "inductor_rl.cir",
     ),
 ];
 
@@ -223,4 +228,84 @@ fn plain_resistor_with_mega_typo_warns_but_still_generates() {
     );
     assert!(gen.warnings[0].contains("R1"));
     assert!(gen.warnings[0].contains("1meg"));
+}
+
+// ---------------------------------------------------------------------------
+// M1：电感（`L`）
+//
+// 两条护栏来自 M0 的实测（DEVLOG E102）：
+//   ① ngspice 的 `L` **没有** DCR 参数，多一个 token 会被静默当成别的意思（差 10×）；
+//   ② `K`（互感）现在还没实现 —— 静默忽略会让变压器变成两个独立电感。
+// ---------------------------------------------------------------------------
+
+/// `L` 只接受 `<名> <节点a> <节点b> <值>`；多出来的 token 必须**报错**。
+#[test]
+fn inductor_with_extra_token_is_rejected() {
+    let err = rustomp_import::import_str("rl.cir", "L1 in out 10m 0.1\nR1 out 0 100\n")
+        .err()
+        .expect("`L1 in out 10m 0.1` 应该报错");
+    let msg = err.to_string();
+    assert!(msg.contains("串联电阻"), "应提示 DCR 要写成串联电阻：{msg}");
+    assert!(msg.contains("ic="), "应说明 ic= 暂不支持：{msg}");
+}
+
+/// 缺数值的电感也要报错（不能默认 0 H / 被当成导线）。
+#[test]
+fn inductor_without_value_is_rejected() {
+    let err = rustomp_import::import_str("rl.cir", "L1 in out\nR1 out 0 100\n")
+        .err()
+        .expect("缺电感量应该报错");
+    assert!(err.to_string().contains("电感缺少数值"));
+}
+
+/// `K` 现在必须**报错**（M2 才实现）；静默忽略 = 变压器退化成两个独立电感。
+#[test]
+fn coupling_k_is_rejected_for_now() {
+    let err = rustomp_import::import_str("tr.cir", "L1 a 0 10m\nL2 b 0 2.5m\nK1 L1 L2 0.98\n")
+        .err()
+        .expect("`K` 应该报错");
+    let msg = err.to_string();
+    assert!(msg.contains("暂不支持"), "应说明暂不支持：{msg}");
+    assert!(msg.contains("两个独立电感"), "应说明静默忽略的后果：{msg}");
+}
+
+/// 不认识的元件前缀要留提示（以前是 `Ok(None)` 静默丢）。
+#[test]
+fn unknown_element_prefix_is_reported() {
+    let c = rustomp_import::import_str("x.cir", "R1 a 0 1k\nB1 b 0 V=sin(1)\n")
+        .expect("B 源只提示，不该让整份网表失败");
+    assert!(
+        c.notes.iter().any(|n| n.contains("不认识的元件前缀")),
+        "应有提示，实际 notes = {:?}",
+        c.notes
+    );
+}
+
+/// 电感**不占未知量**：同一拓扑把 `L` 换成 `R`，未知量个数必须一样。
+#[test]
+fn inductor_adds_no_unknowns() {
+    let with_l = gen_from_spice(
+        "l.cir",
+        "* @rustomp in=VS1 out=out\nVS1 in 0 DC 0 AC 0.1\nL1 in out 10m\nR1 out 0 100\n",
+    )
+    .expect("生成失败");
+    let with_r = gen_from_spice(
+        "r.cir",
+        "* @rustomp in=VS1 out=out\nVS1 in 0 DC 0 AC 0.1\nR1 in out 1\nR2 out 0 100\n",
+    )
+    .expect("生成失败");
+    assert!(
+        with_l.code.contains("net.inductor("),
+        "应该生成 net.inductor(...)"
+    );
+    assert_eq!(
+        with_l.unknowns, with_r.unknowns,
+        "电感不该增加未知量（{} vs {}）",
+        with_l.unknowns, with_r.unknowns
+    );
+    assert!(
+        with_l.notes.iter().any(|n| n.contains("1 mΩ")),
+        "应提示 DC 用 1 mΩ 代替：{:?}",
+        with_l.notes
+    );
 }

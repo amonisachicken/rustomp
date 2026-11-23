@@ -417,6 +417,7 @@ impl Union {
 pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, String> {
     let mut notes = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
+    let mut saw_inductor = false;
     let mut dirs = parse_directives(&circuit.notes)?;
 
     // 兼容老写法：`param` 里的元素名应是**网表里的元件名**（`RP1A`），
@@ -714,6 +715,32 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
                     fmt_f64(v)
                 ));
                 elem_count += 1;
+            }
+            ElementKind::Inductor => {
+                let l = parse_value(&e.value)
+                    .ok_or_else(|| format!("{}：读不出电感量 `{}`", e.name, e.value))?;
+                if !(l.is_finite() && l > 0.0) {
+                    return Err(format!(
+                        "{}：电感量必须是正数（收到 `{}` = {l} H）",
+                        e.name, e.value
+                    ));
+                }
+                let (na, nb) = (idx(&e.nodes[0]), idx(&e.nodes[1]));
+                body.push(format!(
+                    "    // {} ({} H) {}—{}；DC 时等价于 1 mΩ（DCR 请写成串联电阻）",
+                    e.name,
+                    e.value,
+                    canon(&e.nodes[0]),
+                    canon(&e.nodes[1])
+                ));
+                body.push(format!(
+                    "    net.inductor({}, {}, {}, 0.0);",
+                    node_expr(na, &node_index),
+                    node_expr(nb, &node_index),
+                    fmt_f64(l)
+                ));
+                elem_count += 1;
+                saw_inductor = true;
             }
             ElementKind::Diode => {
                 let model = e
@@ -1076,6 +1103,13 @@ pub fn generate(circuit: &ImportedCircuit, opts: &Options) -> Result<Generated, 
     code.push_str("    /// 削波活动量（0..1）→ 引擎做快起慢落包络 → GUI 的 LED\n");
     code.push_str("    fn activity(&self) -> f32 {\n        self.activity\n    }\n}\n");
 
+    if saw_inductor {
+        notes.push(
+            "电感在 DC 用 1 mΩ 代替（理想 L 在 DC 是短路）；ngspice 的 `L` 没有 DCR 参数，\
+             绕线电阻请写成串联电阻（`L1 in mid 10m` + `RDCR mid out 0.1`）"
+                .to_string(),
+        );
+    }
     Ok(Generated {
         code,
         notes,

@@ -7,7 +7,7 @@
 //!
 //! 没有 ngspice 时自动跳过（运放那组不需要 ngspice）。
 
-use rustomp_dsp::{Netlist, BC549C, BC559C, D_1N4148, GND, J201, NMOS_2N7000, OP07};
+use rustomp_dsp::{Element, Netlist, BC549C, BC559C, D_1N4148, GND, J201, NMOS_2N7000, OP07};
 use rustomp_oracle::Oracle;
 
 const LIB: &str = include_str!("../../../devices/devices.lib");
@@ -496,4 +496,199 @@ fn dc_solution_satisfies_kcl() {
     );
     assert!(net.last_dc_resid.is_finite() && net.last_dc_resid <= 1e-6);
     assert!(!net.last_dc_retried, "P0 修好后这里不该再需要重试");
+}
+
+// ---------------------------------------------------------------------------
+// 电感（M0）：理想 L + 绕线电阻 `rdc`，后向欧拉伴生模型。
+//
+// 验收用**解析解**为主（比 oracle 更硬），ngspice 只作交叉验证：
+//   RL 阶跃  i(t) = (V/R)·(1 − e^(−t/τ))，τ = L/(R + rdc)
+//   LC 振铃  f0 = 1/(2π√(LC))
+//   DC       电感 = rdc（理想 L 在 DC 是短路，会毁掉矩阵）
+// ---------------------------------------------------------------------------
+
+/// RL 阶跃：与解析解比，并确认**一阶收敛**（dt 变小误差应显著变小）。
+#[test]
+fn inductor_rl_step_matches_analytic() {
+    const V: f64 = 1.0;
+    const R: f64 = 100.0;
+    const RDC: f64 = 0.1;
+    const L: f64 = 10e-3;
+    let tau = L / (R + RDC);
+    let i_ss = V / (R + RDC);
+
+    let mut worsts = Vec::new();
+    for &dt in &[tau / 20.0, tau / 80.0] {
+        // 节点：1 = 源正（in），2 = out，支路 3
+        let mut net = Netlist::<4>::new();
+        net.inductor(1, 2, L, RDC)
+            .resistor(2, GND, R)
+            .voltage_source(3, 1, GND, 0.0);
+        net.solve_dc();
+        net.set_voltage(0, V);
+
+        let n = (5.0 * tau / dt) as usize;
+        let mut worst = 0.0f64;
+        for k in 1..=n {
+            let v = net.step(dt);
+            let t = k as f64 * dt;
+            // 流过 R 的电流 = 电感电流（串联）
+            let i = v[2] / R;
+            let exact = i_ss * (1.0 - (-t / tau).exp());
+            worst = worst.max((i - exact).abs() / i_ss);
+        }
+        println!(
+            "  RL 阶跃 dt=τ/{:.0}：最大相对误差 {:.2} %",
+            tau / dt,
+            worst * 100.0
+        );
+        assert!(
+            worst < 0.03,
+            "dt={dt:.3e} 时误差 {:.2}% 超过 3%",
+            worst * 100.0
+        );
+        worsts.push(worst);
+    }
+    // 后向欧拉是一阶：dt 缩小 4 倍，误差应明显下降
+    assert!(worsts[1] < worsts[0] * 0.5, "一阶收敛不成立：{:?}", worsts);
+}
+
+/// 同一个 RL 阶跃与 ngspice 对拍（ngspice 默认梯形 + 变步长，这里按固定 dt 重采样）。
+#[test]
+fn inductor_rl_step_matches_ngspice() {
+    let Some(oracle) = Oracle::discover_or_skip() else {
+        return;
+    };
+    const R: f64 = 100.0;
+    const RDC: f64 = 0.1;
+    const L: f64 = 10e-3;
+    let tau = L / (R + RDC);
+    let dt = tau / 40.0;
+
+    // ⚠️ ngspice 的 `L` **没有** DCR 参数（第 4 个 token 会被当成别的意思，实测差了 10×），
+    // 所以 DCR 必须用串联电阻表达 —— 这也是真实网表里变压器/电感的常见写法。
+    let body = format!(
+        "V1 in 0 PULSE(0 1 0 1n 1n 1 2)\nL1 in mid {L}\nRL mid out {RDC}\nR1 out 0 {R}\n.tran {dt} {}\n",
+        6.0 * tau
+    );
+    let raw = oracle
+        .run_netlist(&format!("{LIB}\n{body}.end\n"))
+        .expect("ngspice 运行失败");
+    let i_spice: Vec<f64> = raw
+        .resample("v(out)", dt)
+        .expect("resample 失败")
+        .iter()
+        .map(|v| v / R)
+        .collect();
+
+    // 节点：1 = in，2 = out，支路 3
+    let mut net = Netlist::<4>::new();
+    net.inductor(1, 2, L, RDC)
+        .resistor(2, GND, R)
+        .voltage_source(3, 1, GND, 0.0);
+    net.solve_dc();
+    net.set_voltage(0, 1.0);
+
+    let mut worst = 0.0f64;
+    let mut worst_at = (0usize, 0.0f64, 0.0f64);
+    let mut checked = 0;
+    let i_ss = 1.0 / (R + RDC);
+    for (k, &i_sp) in i_spice.iter().enumerate().skip(1) {
+        let v = net.step(dt);
+        let i = v[2] / R;
+        let err = (i - i_sp).abs() / i_ss;
+        if err > worst {
+            worst = err;
+            worst_at = (k, i, i_sp);
+        }
+        checked += 1;
+    }
+    println!(
+        "  最差点 k={} 我们={:.6e} A  ngspice={:.6e} A",
+        worst_at.0, worst_at.1, worst_at.2
+    );
+    println!("\n=== 电感 RL 阶跃（vs ngspice，梯形）===");
+    println!("  检查 {checked} 点，最大相对偏差 {:.2} %", worst * 100.0);
+    assert!(checked > 100, "采样点太少");
+    assert!(
+        worst < 0.05,
+        "与 ngspice 偏差 {:.2}% 超过 5%",
+        worst * 100.0
+    );
+}
+
+/// LC 谐振频率：`f0 = 1/(2π√(LC))`（用 `v(mid)` 穿过稳态值的时刻量周期）。
+#[test]
+fn inductor_lc_ring_frequency_matches_analytic() {
+    const L: f64 = 0.1;
+    const C: f64 = 1e-6;
+    const RDC: f64 = 1e-3; // 1 mΩ：Q ≈ 1000，两个周期内几乎不衰减
+    let f0 = 1.0 / (2.0 * std::f64::consts::PI * (L * C).sqrt());
+    let dt = 1.0 / 192_000.0;
+
+    // 节点：1 = in，2 = mid，支路 3
+    let mut net = Netlist::<4>::new();
+    net.inductor(1, 2, L, RDC)
+        .capacitor(2, GND, C)
+        .voltage_source(3, 1, GND, 0.0);
+    net.solve_dc();
+    net.set_voltage(0, 1.0);
+
+    // 阶跃后 v(mid) 在 0..2 V 之间振铃，穿过 1 V（= 稳态值）的时刻间隔是半个周期
+    let n = (5.0 / f0 / dt) as usize; // 5 个周期
+    let mut crossings: Vec<f64> = Vec::new();
+    let mut prev = net.step(dt)[2] - 1.0;
+    for k in 2..=n {
+        let v = net.step(dt);
+        let cur = v[2] - 1.0;
+        if prev * cur < 0.0 {
+            // 线性插值求过零点
+            let t0 = (k - 1) as f64 * dt;
+            crossings.push(t0 + dt * prev.abs() / (prev.abs() + cur.abs()));
+        }
+        prev = cur;
+    }
+    assert!(crossings.len() >= 4, "过零点太少（{} 个）", crossings.len());
+    let half_periods: Vec<f64> = crossings.windows(2).map(|w| w[1] - w[0]).collect();
+    let measured = 1.0 / (2.0 * half_periods[0]);
+    let err = (measured - f0).abs() / f0;
+    println!("\n=== 电感 + 电容 振铃 ===");
+    println!(
+        "  f0（解析）={f0:.2} Hz，实测 {measured:.2} Hz（差 {:.2} %）",
+        err * 100.0
+    );
+    println!("  后续半周期：{half_periods:?}");
+    assert!(err < 0.01, "谐振频率偏差 {:.2}% 超过 1%", err * 100.0);
+}
+
+/// DC 时电感 = 绕线电阻；`reset()` 后靠 DC 解初始化 `i_prev`，**首拍不许跳**。
+#[test]
+fn inductor_dc_is_winding_resistance_and_reset_has_no_thump() {
+    // 10 V → L(rdc=2 Ω) → R(8 Ω) → GND：DC 电流 1 A，L 上 2 V、out 8 V
+    let mut net = Netlist::<4>::new();
+    net.inductor(1, 2, 1.0, 2.0)
+        .resistor(2, GND, 8.0)
+        .voltage_source(3, 1, GND, 10.0);
+    let v = net.solve_dc();
+    assert!((v[2] - 8.0).abs() < 1e-6, "out = {:.6} V，应为 8 V", v[2]);
+    assert!((v[1] - v[2] - 2.0).abs() < 1e-6, "L 上应降 2 V");
+    assert!(net.last_dc_resid <= 1e-6, "DC 残差 {:e}", net.last_dc_resid);
+    assert!(!net.last_dc_retried, "正常电路不该走重试通道");
+
+    // DC 解应把电感电流提交成 1 A
+    let i_dc = match &net.elems[0] {
+        Element::Inductor { i_prev, .. } => *i_prev,
+        other => panic!("第一个元件不是电感：{other:?}"),
+    };
+    assert!((i_dc - 1.0).abs() < 1e-6, "DC 电流 {i_dc:.6} A，应为 1 A");
+
+    // 复位后重解 → 首拍必须还在稳态（否则插件加载/切回时会"砰"一声）
+    net.reset();
+    net.solve_dc();
+    let v1 = net.step(1.0 / 192_000.0);
+    assert!(
+        (v1[2] - 8.0).abs() < 1e-3,
+        "复位后首拍 out = {:.4} V，跳变了",
+        v1[2]
+    );
 }

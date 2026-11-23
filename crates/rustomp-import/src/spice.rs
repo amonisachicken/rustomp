@@ -74,9 +74,16 @@ impl Importer for SpiceNetlist {
                 continue;
             }
             match parse_element(line) {
-                Ok(Some(el)) => elements.push(el),
-                Ok(None) => {}
-                Err(e) => notes.push(format!("跳过无法解析的行：{line}（{e}）")),
+                Parsed::Element(el) => elements.push(el),
+                Parsed::Skip => {}
+                Parsed::Warn(msg) => notes.push(msg),
+                // 致命：整份网表失败（不再"记录一条 note 然后当作没看见"）
+                Parsed::Fatal(msg) => {
+                    return Err(ImportError::Parse(format!(
+                        "{}：{msg}\n（出问题的行：{line}）",
+                        path.display()
+                    )))
+                }
             }
         }
 
@@ -121,22 +128,36 @@ fn join_continuations(content: &str) -> Vec<String> {
     out
 }
 
-/// 解析一行元件。返回 `Ok(None)` 表示"认识但不需要保留"。
-fn parse_element(line: &str) -> Result<Option<Element>, String> {
+/// 一行元件的解析结果。
+///
+/// 分成四态是必要的：以前"解析失败"会被**降级成 note 然后跳过这一行**，
+/// 于是一个写错的电感/耦合会静默消失（变压器直接变成两个互不相干的电感）。
+enum Parsed {
+    /// 认识的元件
+    Element(Element),
+    /// 认识但不需要保留（例如已经被上层处理掉的行）
+    Skip,
+    /// 不认识的元件前缀：保留原文并提示（可能改变电路行为）
+    Warn(String),
+    /// 语法/未实现：**必须失败**，不能静默丢
+    Fatal(String),
+}
+
+fn parse_element(line: &str) -> Parsed {
     let tokens: Vec<&str> = line.split_whitespace().collect();
     if tokens.len() < 3 {
-        return Err("字段不足".into());
+        return Parsed::Fatal("字段不足（至少 `<名> <节点a> <节点b> …`）".into());
     }
     let name = tokens[0].to_string();
     let kind_char = name.chars().next().unwrap().to_ascii_lowercase();
 
     let el = match kind_char {
-        'r' | 'c' | 'l' => {
+        'r' | 'c' => {
             // R<name> a b value
-            let kind = match kind_char {
-                'r' => ElementKind::Resistor,
-                'c' => ElementKind::Capacitor,
-                _ => ElementKind::Inductor,
+            let kind = if kind_char == 'r' {
+                ElementKind::Resistor
+            } else {
+                ElementKind::Capacitor
             };
             Element {
                 name,
@@ -145,6 +166,42 @@ fn parse_element(line: &str) -> Result<Option<Element>, String> {
                 value: tokens.get(3).copied().unwrap_or("0").to_string(),
                 model: None,
             }
+        }
+        // 电感：**只接受 `<名> a b <值>`**。
+        //
+        // ngspice 的 `L` 没有 DCR 参数（`L1 a b 10m 0.1` 的第 4 个 token 会被当成别的意思，
+        // 实测差 10×），DCR 必须写成串联电阻。所以多出来的 token 一律报错，
+        // 不做"猜用户想写什么"（踩过 M0 的坑，见 DEVLOG E102）。
+        'l' => {
+            if tokens.len() < 4 {
+                return Parsed::Fatal(format!(
+                    "{name}：电感缺少数值（`{name} <节点a> <节点b> <电感量>`，单位 H，可写 `10m`/`1u`）"
+                ));
+            }
+            if tokens.len() > 4 {
+                let extra = tokens[4..].join(" ");
+                return Parsed::Fatal(format!(
+                    "{name}：`L` 只接受 `<节点a> <节点b> <电感量>`，多出来的 `{extra}` 读不懂。\n\
+                     · 绕线电阻（DCR）在 SPICE 里要写成**串联电阻**：`L1 in mid 10m` + `RDCR mid out 0.1`\n\
+                     · 初始电流 `ic=` 暂不支持"
+                ));
+            }
+            Element {
+                name,
+                kind: ElementKind::Inductor,
+                nodes: vec![tokens[1].to_string(), tokens[2].to_string()],
+                value: tokens[3].to_string(),
+                model: None,
+            }
+        }
+        // 互感/耦合：M1 还没实现。**必须报错**：静默忽略会得到"两个互不相干的电感"，
+        // 声音全错但没有任何征兆。
+        'k' => {
+            return Parsed::Fatal(format!(
+                "{name}：互感/耦合（`K`）暂不支持。\n\
+                 现在会被静默忽略 → 变压器会退化成两个独立电感，所以这里直接报错。\n\
+                 先用两个独立电感（没有 K）验证别的部分，或等 M2 的耦合电感支持"
+            ));
         }
         'd' => {
             // D<name> anode cathode model  （模型名可省略 = 默认二极管）
@@ -170,7 +227,7 @@ fn parse_element(line: &str) -> Result<Option<Element>, String> {
         }
         'q' => {
             if tokens.len() < 5 {
-                return Err("BJT 字段不足".into());
+                return Parsed::Fatal("BJT 字段不足".into());
             }
             let model = tokens.last().map(|s| s.to_string());
             let kind = ElementKind::Npn; // 极性由模型名决定，codegen 再判定
@@ -223,9 +280,14 @@ fn parse_element(line: &str) -> Result<Option<Element>, String> {
                 model,
             }
         }
-        _ => return Ok(None),
+        // 其它前缀（B/F/H/T/S/W/G…）：不认识就明说，不要静默丢
+        _ => {
+            return Parsed::Warn(format!(
+                "{name}：不认识的元件前缀 `{kind_char}`，**已忽略**（可能改变电路行为）"
+            ))
+        }
     };
-    Ok(Some(el))
+    Parsed::Element(el)
 }
 
 #[cfg(test)]

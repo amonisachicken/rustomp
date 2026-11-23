@@ -498,6 +498,29 @@ pub enum Element {
         c: f64,
         v_prev: f64,
     },
+    /// 电感（后向欧拉伴随模型；ngspice 的 `L` 是**理想**电感，没有磁芯模型）。
+    ///
+    /// 模型 = 理想电感 **串联绕线电阻** `rdc`（真实绕组本来就有 DCR）：
+    ///
+    /// ```text
+    /// v = rdc·i + L·di/dt
+    /// BE: i_n = g·v_n + h ，g = 1/(rdc + L/dt)，h = g·(L/dt)·i_{n-1}
+    /// DC: 电感退化成 rdc（g = 1/rdc，h = 0）
+    /// ```
+    ///
+    /// 为什么带 `rdc`：理想 L 在 DC 是**短路**，会和节点合并/理想源一起把矩阵搞奇异；
+    /// `floor_resistance` 把 0 夹到 1 mΩ（与电位器端点同一个约定），所以 `rdc = 0`
+    /// 不会炸，但会牺牲条件数 —— 导入阶段应当提示用户写真实 DCR。
+    Inductor {
+        a: usize,
+        b: usize,
+        /// 电感量（H）
+        l: f64,
+        /// 绕线电阻（Ω）
+        rdc: f64,
+        /// 上一拍的电流（A），流向 `a → b`
+        i_prev: f64,
+    },
     /// 运放（单极点宏模型；`branch` 是输出电压源支路）
     OpAmp {
         model: OpAmpModel,
@@ -650,6 +673,26 @@ impl Element {
                 sys.conductance(a, b, g);
                 sys.current_source(a, b, -g * v_prev);
             }
+            Element::Inductor {
+                a,
+                b,
+                l,
+                rdc,
+                i_prev,
+            } => {
+                // DC：电感就是它的绕线电阻（理想 L 在 DC 是短路 → 矩阵奇异）
+                let r = floor_resistance(rdc);
+                if dc || dt <= 0.0 {
+                    sys.resistor(a, b, r);
+                    return;
+                }
+                // 后向欧拉（L 稳定，不会像显式格式那样振铃）：
+                //   i_n = g·v_n + h,  g = 1/(rdc + L/dt),  h = g·(L/dt)·i_{n-1}
+                let l = l.max(0.0);
+                let g = 1.0 / (r + l / dt);
+                let h = g * (l / dt) * i_prev;
+                sys.stamp_lin(a, b, g, h);
+            }
             Element::OpAmp {
                 model,
                 state,
@@ -690,12 +733,32 @@ impl Element {
     /// `dc = true` 时**不应用压摆率限制** —— 直流工作点没有"每步最多变化多少"的概念。
     /// （踩过：`solve_dc` 用 dt=1 提交，运放状态被压摆率钳到 `SR/fs`，于是第一拍带着
     /// 错误的初始偏移，凭空多出一个瞬态。）
-    pub fn commit(&mut self, v: &[f64], _dt: f64, dc: bool) {
+    pub fn commit(&mut self, v: &[f64], dt: f64, dc: bool) {
         match self {
             Element::Capacitor { a, b, v_prev, .. } => {
                 let va = if *a == GND { 0.0 } else { v[*a] };
                 let vb = if *b == GND { 0.0 } else { v[*b] };
                 *v_prev = va - vb;
+            }
+            // 电感状态：用**提交点的电压**反算这一拍的电流（与装配时的 g/h 同一套公式）
+            Element::Inductor {
+                a,
+                b,
+                l,
+                rdc,
+                i_prev,
+            } => {
+                let va = if *a == GND { 0.0 } else { v[*a] };
+                let vb = if *b == GND { 0.0 } else { v[*b] };
+                let r = floor_resistance(*rdc);
+                let l = (*l).max(0.0);
+                *i_prev = if dc || dt <= 0.0 {
+                    // DC：L 就是 rdc，电流直接由电压算出（**复位后的首拍靠它**）
+                    (va - vb) / r
+                } else {
+                    let g = 1.0 / (r + l / dt);
+                    g * (va - vb) + g * (l / dt) * *i_prev
+                };
             }
             Element::Bjt {
                 model,
@@ -882,6 +945,18 @@ impl<const N: usize> Netlist<N> {
             b,
             c,
             v_prev: 0.0,
+        })
+    }
+    /// 电感：`l` 是电感量（H），`rdc` 是绕线电阻（Ω，DC 时电感就等于它）。
+    ///
+    /// `rdc = 0` 会被 `floor_resistance` 夹到 1 mΩ；真实电路请写真实 DCR。
+    pub fn inductor(&mut self, a: usize, b: usize, l: f64, rdc: f64) -> &mut Self {
+        self.push(Element::Inductor {
+            a,
+            b,
+            l,
+            rdc,
+            i_prev: 0.0,
         })
     }
     pub fn diode(&mut self, model: Diode, a: usize, k: usize) -> &mut Self {
@@ -1512,6 +1587,9 @@ impl<const N: usize> Netlist<N> {
         for e in &mut self.elems {
             if let Element::Capacitor { v_prev, .. } = e {
                 *v_prev = 0.0;
+            }
+            if let Element::Inductor { i_prev, .. } = e {
+                *i_prev = 0.0;
             }
             if let Element::Bjt {
                 q,

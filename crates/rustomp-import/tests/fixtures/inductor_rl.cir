@@ -1,0 +1,10 @@
+* RL 低通（M1 夹具：单电感）
+*
+* 注意：ngspice 的 `L` **没有** DCR 参数，绕线电阻必须写成串联电阻
+* （`L1 ... 10m 0.1` 的第 4 个 token 会被当成别的意思，实测差 10×，见 DEVLOG E102）。
+VS1 in 0 DC 0 AC 0.2 SIN(0 0.2 1k)
+L1 in n1 10m
+RDCR n1 out 0.1
+R1 out 0 100
+* @rustomp in=VS1 out=out
+.end
