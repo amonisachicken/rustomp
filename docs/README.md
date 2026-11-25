@@ -18,6 +18,7 @@ README 只放"能开工"的摘要，细节都在这里。
 | [`declarative-build.md`](declarative-build.md) | 声明式构建：生成平面 vs 打包平面、后端契约、平台矩阵 | 改打包/生成契约 |
 | [`component-library.md`](component-library.md) | 元件库精度规范：档位、逐器件推荐、验收模板 | 加器件 / 调模型 |
 | [`circuit-import.md`](circuit-import.md) | 电路导入与映射：可插拔 Importer、指令、映射分层 | 接新网表/设计器 |
+| [`tube-design.md`](tube-design.md) | **电子管电路的设计与验收要点**：直流/低频拐点、电平预算、过采样倍数、CPU、宿主 reset/NaN、12 项验收清单 | 做电子管插件 / 级联出现爆音掉采样 |
 
 **组件与工具文档**
 

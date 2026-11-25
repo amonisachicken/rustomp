@@ -103,10 +103,7 @@ impl Triode {
         let (ip, dip_de1) = match self.law {
             TriodeLaw::V96 => {
                 let p = e1.powf(self.ex);
-                (
-                    2.0 * p / self.kg1,
-                    2.0 * self.ex * (p / e1) / self.kg1,
-                )
+                (2.0 * p / self.kg1, 2.0 * self.ex * (p / e1) / self.kg1)
             }
             TriodeLaw::V97 => {
                 let r = e1 / self.kg1;
